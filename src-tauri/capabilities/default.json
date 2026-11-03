@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for TORI Download Manager",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}
+

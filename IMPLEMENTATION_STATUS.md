@@ -1,6 +1,6 @@
 # TORI Download Manager (TDM) — Implementation Status
 
-Last Updated: Gate 8.5 Clean Build, Release Stabilization & Real-World Verification Complete & Verified
+Last Updated: Gate 9 Complete Production UI Implementation Complete & Verified
 Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.0.26100.0)
 
 ---
@@ -67,6 +67,11 @@ Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.
 | **Gate 8.5** | Complete Workspace Regression Pass | **VERIFIED** | `cargo test --workspace -- --test-threads=1` | 83 tests passing across 11 test suites (0 failed, 0 ignored). | Full protocol coverage (HTTP, HLS, DASH, Torrent, Live, Native Host). |
 | **Gate 8.5** | Robust NSIS Installer & Sidecar Packaging | **VERIFIED** | `cargo tauri bundle --bundles nsis` | Created `target\release\bundle\nsis\TORI Download Manager_0.1.0_x64-setup.exe` (15.52 MB). | `hooks.nsh` verified with `--register`/`--unregister` and browser manifest. |
 | **Gate 8.5** | Process Tree Resource & Low-Memory Profiling | **VERIFIED** | `powershell -ExecutionPolicy Bypass -File scripts/profile_matrix.ps1` | Measured full process hierarchy across 8 scenarios; core engine RAM 1-14 MB private, full UI tree 167.6 MB idle. | Measured Peak Working Set, Private Bytes, Threads, Handles, and Sockets. |
+| **Gate 9** | Production Design System & Tokens | **VERIFIED** | `ui/src/tokens.css`, `ui/src/App.css` matching `design/tori-design/` | 100% visual fidelity to `tori-app-ndm-pro.html`, `tokens.css`, custom fonts, radii, spacing, colors. | Exact Light, Dark (`[data-theme="dark"]`), and System Auto themes. |
+| **Gate 9** | Custom Pre-crafted SVG Iconography | **VERIFIED** | `ui/public/icons/` (toolbar, chips, settings-tabs) | All generic/lucide icons eliminated; uses official 24px toolbar, 20px chips, and 26px settings SVG assets. | As-is pixel fidelity without icon distortion. |
+| **Gate 9** | Real Action Wiring & IPC Commands | **VERIFIED** | `create_download`, `pause_download`, `resume_download`, `delete_download`, `get_download_chunks`, `open_file`, etc. | All controls wired to persistent engine; zero mock progress; real chunk segment visualizer. | SQLite checkpoint durability preserved. |
+| **Gate 9** | Real Windows Executable Launch & Verification | **VERIFIED** | `powershell -ExecutionPolicy Bypass -File scripts/verify_desktop_ui.ps1` | Desktop app launched and verified; 166.91 MB working set / 47.32 MB private memory; clean shutdown. | Verified with 2-process tree (Tauri + WebView2). |
+| **Gate 9** | Production Package with Gate 9 UI | **VERIFIED** | `cargo tauri bundle --bundles nsis` | Created `target\release\bundle\nsis\TORI Download Manager_0.1.0_x64-setup.exe` (15.56 MB). | SHA-256: `C0DB6FDF35483BCC9F48A35BF9951B087882FF7D7DEAFCAA87C61D6CE2824016`. |
 
 ---
 
