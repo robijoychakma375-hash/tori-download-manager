@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import type { CategoryKey, DownloadJob } from '../types';
 import { typeOfJob, getChipSrc } from '../utils';
 
@@ -32,17 +32,44 @@ export const SideBar: React.FC<SideBarProps> = ({
   onSelectCategory,
   downloads,
 }) => {
-  const getCount = (cat: CategoryKey): number => {
-    switch (cat) {
-      case 'all':
-        return downloads.length;
-      case 'unf':
-        return downloads.filter((d) => d.state !== 'completed').length;
-      case 'fin':
-        return downloads.filter((d) => d.state === 'completed').length;
-      default:
-        return downloads.filter((d) => typeOfJob(d) === cat).length;
+  const counts = useMemo(() => {
+    let unf = 0;
+    let fin = 0;
+    let video = 0;
+    let music = 0;
+    let compressed = 0;
+    let programs = 0;
+    let documents = 0;
+
+    for (let i = 0; i < downloads.length; i++) {
+      const d = downloads[i];
+      if (d.state === 'completed') {
+        fin++;
+      } else {
+        unf++;
+      }
+      const cat = typeOfJob(d);
+      if (cat === 'Video') video++;
+      else if (cat === 'Music') music++;
+      else if (cat === 'Compressed') compressed++;
+      else if (cat === 'Programs') programs++;
+      else if (cat === 'Documents') documents++;
     }
+
+    return {
+      all: downloads.length,
+      unf,
+      fin,
+      Video: video,
+      Music: music,
+      Compressed: compressed,
+      Programs: programs,
+      Documents: documents,
+    };
+  }, [downloads]);
+
+  const getCount = (cat: CategoryKey): number => {
+    return counts[cat] ?? 0;
   };
 
   return (

@@ -273,9 +273,11 @@ async fn test_native_host_process_e2e_stdin_stdout_download() {
     };
 
     let temp_dir = tempdir().unwrap();
+    let test_pipe = format!(r"\\.\pipe\tdm-test-e2e-{}", uuid::Uuid::new_v4());
 
     let mut child = Command::new(&exe_to_run)
         .env("TORI_DATA_DIR", temp_dir.path())
+        .env("TORI_IPC_PIPE", &test_pipe)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

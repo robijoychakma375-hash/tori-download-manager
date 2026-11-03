@@ -15,9 +15,10 @@ use crate::engine::adaptive::{AdaptiveConfig, AdaptiveScheduler};
 use crate::engine::client::build_http_client;
 use crate::engine::events::{DownloadEvent, EventBus};
 use crate::engine::governor::{ConcurrencyGovernor, GovernorConfig};
+use crate::engine::limiter::BandwidthLimiter;
 use crate::engine::planner::plan_chunks;
 use crate::engine::probe::{probe_url, sanitize_filename};
-use crate::engine::worker::{download_chunk, download_stream};
+use crate::engine::worker::{download_chunk_with_options, download_stream_with_options};
 use crate::engine::writer::PartFileWriter;
 use crate::error::{EngineError, Result};
 use crate::types::{ChunkRecord, DownloadJob, DownloadProgress, JobState, JobType, Priority};
@@ -32,6 +33,11 @@ pub struct DownloadManager {
     active_tokens: Arc<Mutex<HashMap<String, CancellationToken>>>,
     stop_tokens: Arc<Mutex<HashMap<String, CancellationToken>>>,
     max_active_jobs: Arc<AtomicUsize>,
+    rate_limiter: Arc<BandwidthLimiter>,
+    max_connections_per_download: Arc<AtomicUsize>,
+    max_retries: Arc<AtomicUsize>,
+    dynamic_segmentation: Arc<std::sync::atomic::AtomicBool>,
+    default_download_dir: Arc<Mutex<Option<String>>>,
 }
 
 impl DownloadManager {
@@ -63,7 +69,67 @@ impl DownloadManager {
             active_tokens: Arc::new(Mutex::new(HashMap::new())),
             stop_tokens: Arc::new(Mutex::new(HashMap::new())),
             max_active_jobs: Arc::new(AtomicUsize::new(4)),
+            rate_limiter: Arc::new(BandwidthLimiter::new(0)),
+            max_connections_per_download: Arc::new(AtomicUsize::new(16)),
+            max_retries: Arc::new(AtomicUsize::new(3)),
+            dynamic_segmentation: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            default_download_dir: Arc::new(Mutex::new(None)),
         })
+    }
+
+    pub fn rate_limiter(&self) -> &Arc<BandwidthLimiter> {
+        &self.rate_limiter
+    }
+
+    pub fn set_speed_limit(&self, limit_bps: u64) {
+        self.rate_limiter.set_rate_limit(limit_bps);
+    }
+
+    pub fn speed_limit(&self) -> u64 {
+        self.rate_limiter.rate_limit()
+    }
+
+    pub fn set_max_connections_per_download(&self, con: usize) {
+        let c = con.clamp(1, 32);
+        self.max_connections_per_download.store(c, Ordering::SeqCst);
+        self.governor.set_limits(c.max(16), (c / 2).max(4));
+        self.adaptive_scheduler.set_max_concurrency(c);
+    }
+
+    pub fn max_connections_per_download(&self) -> usize {
+        self.max_connections_per_download.load(Ordering::Relaxed)
+    }
+
+    pub fn set_max_retries(&self, retries: usize) {
+        self.max_retries.store(retries, Ordering::SeqCst);
+    }
+
+    pub fn max_retries(&self) -> usize {
+        self.max_retries.load(Ordering::Relaxed)
+    }
+
+    pub fn set_dynamic_segmentation(&self, enabled: bool) {
+        self.dynamic_segmentation.store(enabled, Ordering::SeqCst);
+    }
+
+    pub fn is_dynamic_segmentation_enabled(&self) -> bool {
+        self.dynamic_segmentation.load(Ordering::Relaxed)
+    }
+
+    pub fn set_min_split_size(&self, size: u64) {
+        self.adaptive_scheduler.set_min_split_size(size);
+    }
+
+    pub fn min_split_size(&self) -> u64 {
+        self.adaptive_scheduler.min_split_size()
+    }
+
+    pub fn set_default_download_dir(&self, dir: Option<String>) {
+        *self.default_download_dir.lock().unwrap() = dir;
+    }
+
+    pub fn default_download_dir(&self) -> Option<String> {
+        self.default_download_dir.lock().unwrap().clone()
     }
 
     pub fn max_active_jobs(&self) -> usize {
@@ -181,7 +247,13 @@ impl DownloadManager {
         let temp_path = dir.join(temp_filename);
 
         let id = Uuid::new_v4().to_string();
-        let chunks = plan_chunks(&id, probe.total_bytes, probe.supports_ranges);
+        let con = self.max_connections_per_download();
+        let chunks = crate::engine::planner::plan_chunks_with_concurrency(
+            &id,
+            probe.total_bytes,
+            probe.supports_ranges,
+            con,
+        );
 
         let job = DownloadJob {
             id: id.clone(),
@@ -239,6 +311,9 @@ impl DownloadManager {
             &self.active_tokens,
             &self.stop_tokens,
             &self.max_active_jobs,
+            &self.rate_limiter,
+            &self.max_retries,
+            &self.dynamic_segmentation,
         )
     }
 
@@ -254,6 +329,9 @@ impl DownloadManager {
         active_tokens: &Arc<Mutex<HashMap<String, CancellationToken>>>,
         stop_tokens: &Arc<Mutex<HashMap<String, CancellationToken>>>,
         max_active_jobs: &Arc<AtomicUsize>,
+        rate_limiter: &Arc<BandwidthLimiter>,
+        max_retries: &Arc<AtomicUsize>,
+        dynamic_segmentation: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<()> {
         let job = match db.get_job(id)? {
             Some(j) => j,
@@ -296,6 +374,12 @@ impl DownloadManager {
         let active_tokens_c = active_tokens.clone();
         let stop_tokens_c = stop_tokens.clone();
         let max_jobs_c = max_active_jobs.clone();
+        let limiter_c = rate_limiter.clone();
+        let max_retries_c = max_retries.load(Ordering::Relaxed) as u32;
+        let dynamic_seg_c = dynamic_segmentation.load(Ordering::Relaxed);
+        let limiter_for_queued = rate_limiter.clone();
+        let retries_for_queued = max_retries.clone();
+        let dynamic_for_queued = dynamic_segmentation.clone();
         let download_id = id.to_string();
 
         tokio::spawn(async move {
@@ -309,6 +393,9 @@ impl DownloadManager {
                 download_id.clone(),
                 cancel_token,
                 stop_token,
+                limiter_c,
+                max_retries_c,
+                dynamic_seg_c,
             )
             .await;
 
@@ -354,6 +441,9 @@ impl DownloadManager {
                         &active_tokens_c,
                         &stop_tokens_c,
                         &max_jobs_c,
+                        &limiter_for_queued,
+                        &retries_for_queued,
+                        &dynamic_for_queued,
                     );
                 }
             }
@@ -433,7 +523,13 @@ impl DownloadManager {
         let _ = fs::remove_file(&job.temp_path);
         self.db.reset_job_for_restart(id)?;
 
-        let chunks = plan_chunks(&job.id, job.total_bytes, job.is_resumable);
+        let con = self.max_connections_per_download();
+        let chunks = crate::engine::planner::plan_chunks_with_concurrency(
+            &job.id,
+            job.total_bytes,
+            job.is_resumable,
+            con,
+        );
         self.db.save_chunks(&chunks)?;
 
         self.start_download(id)
@@ -477,6 +573,9 @@ impl DownloadManager {
         download_id: String,
         cancel_token: CancellationToken,
         stop_token: CancellationToken,
+        rate_limiter: Arc<BandwidthLimiter>,
+        max_retries: u32,
+        dynamic_segmentation: bool,
     ) -> Result<()> {
         let job = match db.get_job(&download_id)? {
             Some(j) => j,
@@ -653,7 +752,7 @@ impl DownloadManager {
                 Arc::new(Mutex::new(HashMap::new()));
             let mut join_set: JoinSet<Result<(usize, u64)>> = JoinSet::new();
 
-            let max_concurrency = adaptive_scheduler.config.max_concurrency;
+            let max_concurrency = adaptive_scheduler.max_concurrency();
 
             // Spawn initial workers
             for chunk in &chunks {
@@ -685,10 +784,11 @@ impl DownloadManager {
                 let db_c = db.clone();
                 let cancel_c = cancel_token.clone();
                 let counter_c = total_downloaded_atomic.clone();
+                let limiter_c = rate_limiter.clone();
 
                 join_set.spawn(async move {
                     let _p = permit;
-                    let res = download_chunk(
+                    let res = download_chunk_with_options(
                         &client_c,
                         &url_c,
                         etag_c.as_deref(),
@@ -699,6 +799,8 @@ impl DownloadManager {
                         &cancel_c,
                         Some(bound),
                         Some(progress),
+                        Some(&limiter_c),
+                        Some(max_retries),
                         |written| {
                             counter_c.fetch_add(written, Ordering::Relaxed);
                         },
@@ -784,10 +886,11 @@ impl DownloadManager {
                         let db_c = db.clone();
                         let cancel_c = cancel_token.clone();
                         let counter_c = total_downloaded_atomic.clone();
+                        let limiter_c = rate_limiter.clone();
 
                         join_set.spawn(async move {
                             let _p = permit;
-                            let res = download_chunk(
+                            let res = download_chunk_with_options(
                                 &client_c,
                                 &url_c,
                                 etag_c.as_deref(),
@@ -798,6 +901,8 @@ impl DownloadManager {
                                 &cancel_c,
                                 Some(bound),
                                 Some(progress),
+                                Some(&limiter_c),
+                                Some(max_retries),
                                 |written| {
                                     counter_c.fetch_add(written, Ordering::Relaxed);
                                 },
@@ -806,7 +911,7 @@ impl DownloadManager {
                             res.map(|()| (chunk_copy.chunk_index, chunk_copy.written_bytes))
                         });
                     }
-                } else if join_set.len() < max_concurrency {
+                } else if dynamic_segmentation && join_set.len() < max_concurrency {
                     // Safe Straggler Tail Splitting:
                     if let Some(plan) = adaptive_scheduler.evaluate_straggler_split(&current_chunks)
                     {
@@ -879,10 +984,11 @@ impl DownloadManager {
                                     let db_c = db.clone();
                                     let cancel_c = cancel_token.clone();
                                     let counter_c = total_downloaded_atomic.clone();
+                                    let limiter_c = rate_limiter.clone();
 
                                     join_set.spawn(async move {
                                         let _p = permit;
-                                        let res = download_chunk(
+                                        let res = download_chunk_with_options(
                                             &client_c,
                                             &url_c,
                                             etag_c.as_deref(),
@@ -893,6 +999,8 @@ impl DownloadManager {
                                             &cancel_c,
                                             Some(bound),
                                             Some(progress),
+                                            Some(&limiter_c),
+                                            Some(max_retries),
                                             |written| {
                                                 counter_c.fetch_add(written, Ordering::Relaxed);
                                             },
@@ -922,13 +1030,15 @@ impl DownloadManager {
             let url = job.resolved_url.clone().unwrap_or_else(|| job.url.clone());
             let counter = total_downloaded_atomic.clone();
 
-            let bytes_written = download_stream(
+            let bytes_written = download_stream_with_options(
                 &client,
                 &url,
                 &writer,
                 &db,
                 &download_id,
                 &cancel_token,
+                Some(&rate_limiter),
+                Some(max_retries),
                 |written| {
                     counter.fetch_add(written, Ordering::Relaxed);
                 },

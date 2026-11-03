@@ -18,6 +18,17 @@ use crate::protocol::{
 
 pub const IPC_PIPE_NAME: &str = r"\\.\pipe\tori-download-manager-ipc";
 
+/// Resolves the IPC Named Pipe name, checking for `TORI_IPC_PIPE` environment variable override for test isolation.
+pub fn get_ipc_pipe_name() -> String {
+    if let Ok(pipe) = std::env::var("TORI_IPC_PIPE") {
+        let trimmed = pipe.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    IPC_PIPE_NAME.to_string()
+}
+
 /// Starts the asynchronous Windows Named Pipe IPC Server on a specific pipe name.
 pub async fn run_ipc_server_on_pipe(
     pipe_name: &str,
@@ -71,13 +82,13 @@ pub async fn run_ipc_server_on_pipe(
     }
 }
 
-/// Starts the asynchronous Windows Named Pipe IPC Server on default IPC_PIPE_NAME.
+/// Starts the asynchronous Windows Named Pipe IPC Server on default IPC_PIPE_NAME (or TORI_IPC_PIPE override).
 pub async fn run_ipc_server(
     manager: Arc<DownloadManager>,
     db: Database,
     shutdown_token: CancellationToken,
 ) {
-    run_ipc_server_on_pipe(IPC_PIPE_NAME, manager, db, shutdown_token).await;
+    run_ipc_server_on_pipe(&get_ipc_pipe_name(), manager, db, shutdown_token).await;
 }
 
 async fn handle_client_connection(
@@ -97,7 +108,7 @@ async fn handle_client_connection(
 
 /// Attempts to connect to the persistent engine Named Pipe.
 pub fn try_connect_engine() -> io::Result<NamedPipeClient> {
-    ClientOptions::new().open(IPC_PIPE_NAME)
+    ClientOptions::new().open(get_ipc_pipe_name())
 }
 
 /// Locates the `tori-download-manager.exe` desktop binary.
@@ -151,6 +162,9 @@ pub async fn ensure_engine_running() -> bool {
         if let Ok(dir) = std::env::var("TORI_DATA_DIR") {
             cmd.env("TORI_DATA_DIR", dir);
         }
+        if let Ok(pipe) = std::env::var("TORI_IPC_PIPE") {
+            cmd.env("TORI_IPC_PIPE", pipe);
+        }
         let _ = cmd.spawn();
 
         // Wait up to 1500ms for Named Pipe to become ready
@@ -192,7 +206,7 @@ pub async fn forward_to_pipe(pipe_name: &str, msg: &NativeMessage) -> io::Result
     })
 }
 
-/// Forwards a `NativeMessage` to the persistent desktop engine over default IPC_PIPE_NAME.
+/// Forwards a `NativeMessage` to the persistent desktop engine over default IPC_PIPE_NAME (or TORI_IPC_PIPE override).
 pub async fn forward_to_persistent_engine(msg: &NativeMessage) -> io::Result<NativeResponse> {
-    forward_to_pipe(IPC_PIPE_NAME, msg).await
+    forward_to_pipe(&get_ipc_pipe_name(), msg).await
 }

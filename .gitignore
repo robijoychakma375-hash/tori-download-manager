@@ -1,0 +1,8 @@
+target/
+node_modules/
+dist/
+.tdm-data/
+*.tdm-part
+*.sqlite-wal
+*.sqlite-shm
+

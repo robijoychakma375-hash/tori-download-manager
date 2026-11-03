@@ -14,6 +14,8 @@ pub async fn create_download(
 ) -> Result<DownloadJob, String> {
     let dest_dir = if let Some(d) = destination {
         PathBuf::from(d)
+    } else if let Some(def) = state.manager.default_download_dir() {
+        PathBuf::from(def)
     } else {
         get_default_download_path()
     };
@@ -235,6 +237,99 @@ pub async fn window_maximize(window: tauri::Window) -> Result<(), String> {
 #[tauri::command]
 pub async fn window_close(window: tauri::Window) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())
+}
+
+pub fn apply_settings_to_manager(
+    manager: &tdm_core::DownloadManager,
+    settings: &serde_json::Value,
+) {
+    if let Some(con) = settings.get("con").and_then(|v| v.as_u64()) {
+        manager.set_max_connections_per_download(con as usize);
+    }
+    if let Some(maxa) = settings.get("maxa").and_then(|v| v.as_u64()) {
+        manager.set_max_active_jobs(maxa as usize);
+    }
+    if let Some(retries) = settings.get("retries").and_then(|v| v.as_u64()) {
+        manager.set_max_retries(retries as usize);
+    }
+    if let Some(dyn_seg) = settings.get("dyn").and_then(|v| v.as_bool()) {
+        manager.set_dynamic_segmentation(dyn_seg);
+    }
+    if let Some(dir) = settings.get("dir").and_then(|v| v.as_str()) {
+        if !dir.trim().is_empty() {
+            manager.set_default_download_dir(Some(dir.to_string()));
+        }
+    }
+
+    // Bandwidth limiter
+    let lim_mode = settings
+        .get("limMode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("off");
+    if lim_mode == "on" {
+        let lim_v = settings.get("limV").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let lim_u = settings
+            .get("limU")
+            .and_then(|v| v.as_str())
+            .unwrap_or("MiB/s");
+        let mult: f64 = if lim_u == "KiB/s" {
+            1024.0
+        } else {
+            1024.0 * 1024.0
+        };
+        let bps = (lim_v * mult).max(1024.0) as u64;
+        manager.set_speed_limit(bps);
+    } else {
+        manager.set_speed_limit(0);
+    }
+
+    // Minimum part size
+    if let Some(mps) = settings.get("mps").and_then(|v| v.as_f64()) {
+        let mps_u = settings
+            .get("mpsU")
+            .and_then(|v| v.as_str())
+            .unwrap_or("MiB");
+        let mult: f64 = if mps_u == "KiB" {
+            1024.0
+        } else {
+            1024.0 * 1024.0
+        };
+        let split_size = (mps * mult).max(65536.0) as u64;
+        manager.set_min_split_size(split_size);
+    }
+}
+
+#[tauri::command]
+pub async fn update_engine_settings(
+    settings: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    apply_settings_to_manager(&state.manager, &settings);
+    let serialized = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
+    state
+        .manager
+        .database()
+        .set_setting("app_settings", &serialized)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_engine_settings(
+    state: State<'_, AppState>,
+) -> Result<Option<serde_json::Value>, String> {
+    match state
+        .manager
+        .database()
+        .get_setting("app_settings")
+        .map_err(|e| e.to_string())?
+    {
+        Some(s) => {
+            let val: serde_json::Value = serde_json::from_str(&s).map_err(|e| e.to_string())?;
+            Ok(Some(val))
+        }
+        None => Ok(None),
+    }
 }
 
 fn get_default_download_path() -> PathBuf {

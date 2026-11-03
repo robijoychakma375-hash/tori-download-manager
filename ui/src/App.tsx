@@ -105,7 +105,7 @@ export function App() {
     return () => mql.removeEventListener('change', listener);
   }, [settings.theme]);
 
-  // Persist settings
+  // Persist settings to localStorage and push to Rust backend engine
   const handleUpdateSettings = (newSettings: AppSettings) => {
     setSettings(newSettings);
     try {
@@ -113,20 +113,46 @@ export function App() {
     } catch (err) {
       console.error('Failed to store settings:', err);
     }
+    invoke('update_engine_settings', { settings: newSettings }).catch((err) => {
+      console.error('Failed to push settings to Rust engine:', err);
+    });
   };
+
+  // Synchronize settings with Rust backend on startup
+  useEffect(() => {
+    const syncSettings = async () => {
+      try {
+        const backendSettings = await invoke<AppSettings | null>('get_engine_settings');
+        if (backendSettings) {
+          setSettings((prev) => {
+            const merged = { ...prev, ...backendSettings };
+            try {
+              localStorage.setItem('tori_settings_v2', JSON.stringify(merged));
+            } catch {
+              // ignore
+            }
+            return merged;
+          });
+        } else {
+          await invoke('update_engine_settings', { settings });
+        }
+      } catch (err) {
+        console.error('Failed to sync engine settings:', err);
+      }
+    };
+    syncSettings();
+  }, []);
 
   // Load downloads from SQLite backend
   const loadDownloads = useCallback(async () => {
     try {
       const list = await invoke<DownloadJob[]>('list_downloads');
       setDownloads(list || []);
-      if (!selectedId && list && list.length > 0) {
-        setSelectedId(list[0].id);
-      }
+      setSelectedId((prev) => (prev ? prev : list && list.length > 0 ? list[0].id : null));
     } catch (err) {
       console.error('Failed to load downloads:', err);
     }
-  }, [selectedId]);
+  }, []);
 
   // Initial setup: downloads, default download folder, extension check
   useEffect(() => {

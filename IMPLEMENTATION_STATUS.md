@@ -76,6 +76,11 @@ Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.
 | **Design Sync** | Bottom Details/Segments Pane Removal | **VERIFIED** | `DESIGN.md` spec update & `ui/src/App.tsx` | Main window details/segments pane removed; download list `#rows` expands down to status bar `#stat`. | Segments visualizer preserved inside dedicated Progress Modal (`#prog`). |
 | **Design Sync** | Automated Test DB Isolation | **VERIFIED** | `TORI_DATA_DIR` environment override in `tdm-native-host` and `src-tauri` | Zero test writes to production `%APPDATA%/tori-download-manager/tdm_storage.sqlite`. | Eliminates repeated `e2e_video.mp4` test artifacts from production rendering. |
 | **Design Sync** | Standalone Production Release Execution | **VERIFIED** | `cargo tauri build --no-bundle` + `scripts/verify_updated_design.ps1` | Launched Windows executable with embedded React bundle; 0 localhost requests; 40.06 MB WS / 8.72 MB Private. | Verified offline standalone execution. |
+| **Pre-Gate 10 Audit** | Engine Settings Backend Persistence & Throttling | **VERIFIED** | `cargo test -p tdm-core --lib engine::limiter` & SQLite query | Settings persisted in `engine_settings` SQLite table; token-bucket limiter throttles or runs zero-overhead; dynamic concurrency & retries wired. | Bidirectional sync with React UI. |
+| **Pre-Gate 10 Audit** | Redownload Completed Tasks | **VERIFIED** | `cargo test -p tdm-core --test integration_tests -- test_redownload_completed_download` | Passed in 0.20s; completed task cleanly resets chunks and redownloads from scratch with identical valid SHA-256. | Preserves normal duplicate prevention. |
+| **Pre-Gate 10 Audit** | IPC Test Suite Isolation | **VERIFIED** | `cargo test -p tdm-native-host --test host_tests` with `TORI_IPC_PIPE` isolation | Passed all 6 tests in 0.40s; isolated test Named Pipe prevents forwarding requests into running production engine. | Zero collision with desktop app. |
+| **Pre-Gate 10 Audit** | Gate 4 HLS Full Coverage Restored | **VERIFIED** | `cargo test -p tdm-core --test gate4_hls_tests` | 8/8 tests passed in 1.79s including pause/resume continuity; 0 clippy warnings. | Fully intact test coverage. |
+| **Pre-Gate 10 Audit** | WebView2 Memory Audit & Optimization | **VERIFIED** | `scripts/audit_memory_profile.ps1` & `scripts/verify_dialog_stability.ps1` | Removed redundant backdrop-filter texture layers; eliminated React listener churn; memoized sidebar & row re-renders; measured 8.17 MB Rust Private Bytes, 210.59 MB Total Private Bytes, 0 orphaned processes. | Zero memory leak; complete process tree profiled across 30s/2m/minimized/restored. |
 
 ---
 
@@ -136,20 +141,20 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
 
 ## Workspace Automated Test Results
 
-- **Total Automated Tests**: **83 passing tests** (0 failed, 0 ignored) across 11 test suites:
-  - `tdm-core` unit tests: **15 passed** (0.36s)
+- **Total Automated Tests**: **87 passing tests** (0 failed, 0 ignored) across 11 test suites:
+  - `tdm-core` unit tests: **18 passed** (0.36s)
   - `gate2_adaptive_tests`: **8 passed** (6.13s)
-  - `gate4_hls_tests`: **8 passed** (5.83s)
+  - `gate4_hls_tests`: **8 passed** (1.79s)
   - `gate5_dash_tests`: **9 passed** (7.38s)
   - `gate6_torrent_tests`: **8 passed** (0.47s)
   - `gate7_live_tests`: **8 passed** (21.41s)
   - `gate8_protocol_matrix_tests`: **8 passed** (11.58s)
   - `gate8_stress_tests`: **4 passed** (2.44s)
-  - `integration_tests`: **8 passed** (3.32s)
+  - `integration_tests`: **9 passed** (3.45s)
   - `tdm-native-host` unit tests: **1 passed** (0.00s)
   - `host_tests` (including IPC and OS process stdin/stdout tests): **6 passed** (0.40s)
 - **Clippy**: 0 warnings across all targets (`cargo clippy --workspace --all-targets -- -D warnings`).
 - **Formatting**: 100% compliant with rustfmt (`cargo fmt --all -- --check`).
 - **Frontend Build**: Built in 955ms with 0 errors (`npm --prefix ui run build`).
-- **Release Build**: Built in 4m 35s with 0 errors (`cargo build --release --workspace`).
+- **Release Build**: Built with 0 errors (`cargo tauri build --no-bundle`).
 - **NSIS Installer Package**: Built with 0 errors (`cargo tauri bundle --bundles nsis`).

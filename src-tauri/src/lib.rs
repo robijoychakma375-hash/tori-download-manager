@@ -56,6 +56,13 @@ pub fn run() {
             .expect("Failed to initialize TDM Download Manager"),
     );
 
+    // Restore persisted engine settings from SQLite if present
+    if let Ok(Some(saved)) = db.get_setting("app_settings") {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&saved) {
+            commands::apply_settings_to_manager(&manager, &val);
+        }
+    }
+
     // Launch the single-instance persistent Windows Named Pipe IPC Server
     let ipc_manager = manager.clone();
     let ipc_db = db.clone();
@@ -119,6 +126,8 @@ pub fn run() {
             window_minimize,
             window_maximize,
             window_close,
+            update_engine_settings,
+            get_engine_settings,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running TORI Download Manager desktop application");

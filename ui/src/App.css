@@ -54,7 +54,6 @@ button {
   white-space: pre;
   cursor: default;
   flex: none;
-  backdrop-filter: blur(20px);
 }
 
 .dot {
@@ -386,7 +385,6 @@ label.cb {
   padding: 0 14px;
   background: linear-gradient(var(--tb1), var(--tb2));
   border-bottom: 1px solid var(--tbl);
-  backdrop-filter: blur(24px);
   flex: none;
 }
 
@@ -484,7 +482,6 @@ label.cb {
   padding: 12px 10px;
   overflow-y: auto;
   overflow-x: hidden;
-  backdrop-filter: blur(30px);
   flex: none;
 }
 
@@ -791,7 +788,6 @@ label.cb {
   font-weight: 500;
   color: var(--mut);
   flex: none;
-  backdrop-filter: blur(20px);
 }
 
 #stat .gd {

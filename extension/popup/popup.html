@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TORI Download Manager</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body class="dark-theme">
+  <div class="popup-container">
+    <!-- Top Header -->
+    <header class="popup-header">
+      <div class="header-brand">
+        <div class="brand-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">TORI</h1>
+          <p class="brand-subtitle">Media Interceptor v2.0</p>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <div id="desktopStatusBadge" class="status-pill status-checking" title="Click to refresh desktop status">
+          <span class="status-dot"></span>
+          <span id="desktopStatusText">Connecting...</span>
+        </div>
+        <button id="themeToggleBtn" class="icon-btn" title="Toggle Light / Dark Theme">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="popup-tabs">
+      <button id="tabDetectedBtn" class="tab-btn active">
+        <span>Detected Media</span>
+        <span id="detectedCountBadge" class="tab-count">0</span>
+      </button>
+      <button id="tabDownloadsBtn" class="tab-btn">
+        <span>Desktop Queue</span>
+        <span id="downloadsCountBadge" class="tab-count">0</span>
+      </button>
+    </nav>
+
+    <!-- Quick URL Intake Bar -->
+    <div class="quick-intake">
+      <form id="quickDownloadForm">
+        <input type="text" id="quickUrlInput" placeholder="Paste custom media or download link..." autocomplete="off" />
+        <select id="quickPrioritySelect" title="Select priority">
+          <option value="high">High</option>
+          <option value="normal" selected>Normal</option>
+          <option value="low">Low</option>
+        </select>
+        <button type="submit" id="quickSubmitBtn">Download</button>
+      </form>
+    </div>
+
+    <!-- Main Content Area -->
+    <main class="popup-content">
+      <!-- Section 1: Detected Media List -->
+      <section id="detectedSection" class="content-section active">
+        <div id="mediaListContainer" class="media-list">
+          <!-- Dynamic cards injected here -->
+        </div>
+
+        <div id="noMediaState" class="empty-state">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+            <line x1="7" y1="2" x2="7" y2="22"></line>
+            <line x1="17" y1="2" x2="17" y2="22"></line>
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+            <line x1="2" y1="7" x2="7" y2="7"></line>
+            <line x1="2" y1="17" x2="7" y2="17"></line>
+            <line x1="17" y1="17" x2="22" y2="17"></line>
+            <line x1="17" y1="7" x2="22" y2="7"></line>
+          </svg>
+          <p class="empty-title">No Media Detected on Current Tab</p>
+          <p class="empty-desc">Play any HTML5 video or audio stream on this page to automatically capture download links.</p>
+        </div>
+      </section>
+
+      <!-- Section 2: Active Desktop Tasks -->
+      <section id="downloadsSection" class="content-section">
+        <div id="downloadsListContainer" class="media-list">
+          <!-- Dynamic desktop jobs injected here -->
+        </div>
+
+        <div id="noDownloadsState" class="empty-state">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <p class="empty-title">Queue is Empty</p>
+          <p class="empty-desc">Click 'Download' on any detected media above or paste a link to dispatch to the TORI engine.</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- Toast Feedback Container -->
+    <div id="popupToast" class="popup-toast"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+
