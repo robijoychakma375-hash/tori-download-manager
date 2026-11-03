@@ -1,98 +1,501 @@
 /**
  * TORI Download Manager — Content Overlay Styles
+ * Faithful implementation of Design Source A (.pill, .pn, .ph, .seg, .fl, .fr, .pf, .btn)
  */
 
-.tori-overlay-container {
+:root {
+  --tori-win: #f5f5f8;
+  --tori-panel: #ffffff;
+  --tori-pline: rgba(0, 0, 0, 0.08);
+  --tori-txt: #1d1d1f;
+  --tori-mut: #86868b;
+  --tori-blue: #4f46e5;
+  --tori-green: #1faa59;
+  --tori-bad: #e5484d;
+  --tori-fline: rgba(0, 0, 0, 0.16);
+  --tori-b1: #ffffff;
+  --tori-b2: #f7f7f9;
+  --tori-bline: rgba(0, 0, 0, 0.14);
+  --tori-accent: #6366f1;
+}
+
+[data-theme="dark"] .tori-mp,
+.tori-dark .tori-mp,
+.tori-dark {
+  --tori-win: #232326;
+  --tori-panel: #2b2b30;
+  --tori-pline: rgba(255, 255, 255, 0.08);
+  --tori-txt: #f2f2f4;
+  --tori-mut: #98989f;
+  --tori-blue: #a5a8ff;
+  --tori-green: #32d74b;
+  --tori-bad: #ff6b6b;
+  --tori-fline: rgba(255, 255, 255, 0.15);
+  --tori-b1: #4a4a50;
+  --tori-b2: #3e3e43;
+  --tori-bline: rgba(255, 255, 255, 0.13);
+  --tori-accent: #818cf8;
+}
+
+/* Media Overlay Host */
+.tori-mp {
   position: absolute;
+  z-index: 2147483640;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: var(--tori-txt);
+  line-height: normal;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.tori-mp.pos-top-right {
   top: 12px;
   right: 12px;
-  z-index: 2147483640;
-  pointer-events: auto;
-  opacity: 0.15;
-  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  align-items: flex-end;
 }
 
-.tori-overlay-container:hover,
-video:hover + .tori-overlay-container {
-  opacity: 1;
-  transform: translateY(-2px);
+.tori-mp.pos-top-left {
+  top: 12px;
+  left: 12px;
+  align-items: flex-start;
 }
 
-.tori-overlay-btn {
+.tori-mp.pos-bottom-right {
+  bottom: 48px;
+  right: 12px;
+  align-items: flex-end;
+}
+
+.tori-mp.pos-bottom-left {
+  bottom: 48px;
+  left: 12px;
+  align-items: flex-start;
+}
+
+/* Pill Trigger */
+.tori-pill {
+  all: unset;
+  cursor: pointer;
+  box-sizing: border-box;
+  height: 32px;
+  border-radius: 16px;
+  padding: 0 8px 0 5px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  background: rgba(19, 27, 46, 0.88);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.35);
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  gap: 7px;
+  background: color-mix(in srgb, var(--tori-panel) 88%, transparent);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28), 0 0 0 0.5px var(--tori-bline);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--tori-txt);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+
+.tori-pill:hover {
+  transform: scale(1.03);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35), 0 0 0 0.5px var(--tori-bline);
+}
+
+.tori-pill .tori-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(#7679ff, #4f46e5);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 1px 3px rgba(79, 70, 229, 0.5);
+  flex: none;
+}
+
+.tori-pill .tori-logo svg {
+  width: 13px;
+  height: 13px;
+  stroke: #ffffff;
+  fill: none;
+  stroke-width: 2.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tori-pill em {
+  font-style: normal;
+  background: var(--tori-pline);
+  border-radius: 8px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  color: var(--tori-mut);
+  font-weight: 600;
+}
+
+/* Media Format Selection Panel */
+.tori-pn {
+  width: 320px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--tori-panel) 94%, transparent);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.38), 0 0 0 0.5px var(--tori-bline);
+  overflow: hidden;
+  display: none;
+  animation: tori-pop 0.16s ease-out;
+  color: var(--tori-txt);
+  text-align: left;
+}
+
+.tori-pn.on {
+  display: block;
+}
+
+@keyframes tori-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Header */
+.tori-ph {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px 10px;
+}
+
+.tori-ph b {
+  display: block;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 210px;
+  color: var(--tori-txt);
+}
+
+.tori-ph span {
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
+  color: var(--tori-mut);
+}
+
+.tori-ph .tori-x {
+  all: unset;
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--tori-mut);
+  font-size: 17px;
+  flex: none;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  transition: all 0.2s ease;
+  line-height: 1;
 }
 
-.tori-overlay-btn:hover {
-  background: #6366f1;
+.tori-ph .tori-x:hover {
+  background: #ff5f57;
   color: #ffffff;
-  border-color: #818cf8;
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
 }
 
-.tori-overlay-btn.tori-loading {
-  opacity: 0.7;
-  cursor: wait;
+/* Media Icon Chip */
+.tori-ft {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: linear-gradient(var(--c, #ff453a), color-mix(in srgb, var(--c, #ff453a) 68%, #000000));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), inset 0 0.5px 0 rgba(255, 255, 255, 0.4);
 }
 
-/* Toast Notification in Web Page */
+.tori-ft svg {
+  width: 15px;
+  height: 15px;
+  stroke: #ffffff;
+  fill: none;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Tabs */
+.tori-seg {
+  margin: 0 12px 6px;
+  height: 25px;
+  border-radius: 8px;
+  padding: 2px;
+  background: var(--tori-pline);
+  display: flex;
+  gap: 2px;
+}
+
+.tori-seg button {
+  all: unset;
+  flex: 1;
+  text-align: center;
+  line-height: 21px;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 11.5px;
+  color: var(--tori-mut);
+  cursor: pointer;
+}
+
+.tori-seg button.on {
+  background: var(--tori-b1);
+  color: var(--tori-txt);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+/* Format List */
+.tori-fl {
+  padding: 0 6px;
+  max-height: 196px;
+  overflow-y: auto;
+}
+
+.tori-fl::-webkit-scrollbar {
+  width: 5px;
+}
+
+.tori-fl::-webkit-scrollbar-thumb {
+  background: var(--tori-fline);
+  border-radius: 3px;
+}
+
+.tori-fr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.tori-fr:hover {
+  background: var(--tori-pline);
+}
+
+.tori-fr.on {
+  background: linear-gradient(#7679ff, #5b5ef0);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(91, 94, 240, 0.35);
+}
+
+.tori-rd {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--tori-fline);
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.tori-fr.on .tori-rd {
+  border-color: #ffffff;
+}
+
+.tori-fr.on .tori-rd::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.tori-q {
+  font-weight: 600;
+  width: 52px;
+  flex: none;
+}
+
+.tori-tg {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: var(--tori-pline);
+  color: var(--tori-mut);
+  letter-spacing: 0.02em;
+  flex: none;
+}
+
+.tori-fr.on .tori-tg {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.tori-tg.hd {
+  background: rgba(99, 102, 241, 0.16);
+  color: var(--tori-accent);
+}
+
+.tori-fr.on .tori-tg.hd {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.tori-cd {
+  flex: 1;
+  color: var(--tori-mut);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tori-fr.on .tori-cd {
+  color: #e6e7ff;
+}
+
+.tori-sz {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  flex: none;
+}
+
+/* Panel Footer */
+.tori-pf {
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--tori-pline);
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tori-sv {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--tori-mut);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tori-sv svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+
+.tori-sv b {
+  color: var(--tori-txt);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tori-ac {
+  display: flex;
+  gap: 8px;
+}
+
+/* Buttons */
+.tori-btn {
+  all: unset;
+  height: 30px;
+  border-radius: 8px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 500;
+  font-size: 12px;
+  background: linear-gradient(var(--tori-b1), var(--tori-b2));
+  border: 1px solid var(--tori-bline);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: transform 0.08s, filter 0.12s;
+  color: var(--tori-txt);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.tori-btn:active {
+  transform: scale(0.97);
+}
+
+.tori-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tori-btn.f {
+  flex: 1;
+}
+
+.tori-btn.sq {
+  width: 30px;
+  padding: 0;
+  flex: none;
+}
+
+.tori-btn.def {
+  background: linear-gradient(#7679ff, #4f46e5);
+  border-color: #4338ca;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.4);
+}
+
+.tori-btn.ok {
+  background: linear-gradient(#34d27b, #1faa59);
+  border-color: #168a46;
+  color: #ffffff;
+}
+
+/* Toast */
 #tori-page-toast {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
-  z-index: 2147483647;
-  padding: 10px 16px;
-  border-radius: 8px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 13px;
-  font-weight: 500;
-  color: #f8fafc;
-  background: #0f172a;
-  border: 1px solid #334155;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  left: 50%;
+  bottom: 36px;
+  transform: translate(-50%, 16px);
   opacity: 0;
-  transform: translateY(12px);
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  background: color-mix(in srgb, var(--tori-panel) 92%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 20px;
+  padding: 8px 16px 8px 10px;
+  font-weight: 600;
+  font-size: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.22s, transform 0.22s;
+  z-index: 2147483647;
   pointer-events: none;
+  color: var(--tori-txt);
+  border: 1px solid var(--tori-bline);
 }
 
-#tori-page-toast.tori-toast-visible {
+#tori-page-toast.on {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate(-50%, 0);
 }
-
-#tori-page-toast.tori-toast-success {
-  border-color: #10b981;
-  color: #34d399;
-}
-
-#tori-page-toast.tori-toast-error {
-  border-color: #ef4444;
-  color: #f87171;
-}
-
-#tori-page-toast.tori-toast-warn {
-  border-color: #f59e0b;
-  color: #fbbf24;
-}
-
-#tori-page-toast.tori-toast-info {
-  border-color: #6366f1;
-  color: #818cf8;
-}
-

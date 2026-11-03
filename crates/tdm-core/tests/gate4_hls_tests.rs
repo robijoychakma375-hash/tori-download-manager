@@ -41,7 +41,10 @@ fn generate_test_ts_segment(out_path: &std::path::Path, duration_sec: u32) -> Ve
         .arg("-f")
         .arg("lavfi")
         .arg("-i")
-        .arg(format!("testsrc=duration={}:size=160x120:rate=10", duration_sec))
+        .arg(format!(
+            "testsrc=duration={}:size=160x120:rate=10",
+            duration_sec
+        ))
         .arg("-c:v")
         .arg("libx264")
         .arg("-pix_fmt")
@@ -235,9 +238,15 @@ async fn test_hls_real_mpeg_ts_stream_download_and_muxing() {
         .expect("Failed to create HLS download job");
 
     assert_eq!(job.job_type, JobType::HlsVod);
-    assert!(job.filename.ends_with(".mp4"), "Expected target filename to be .mp4, got {}", job.filename);
+    assert!(
+        job.filename.ends_with(".mp4"),
+        "Expected target filename to be .mp4, got {}",
+        job.filename
+    );
 
-    manager.start_download(&job.id).expect("Failed to start HLS download");
+    manager
+        .start_download(&job.id)
+        .expect("Failed to start HLS download");
 
     // 4. Wait for download and remuxing completion
     let state = wait_for_job_terminal(&manager, &job.id, Duration::from_secs(15))
@@ -247,12 +256,22 @@ async fn test_hls_real_mpeg_ts_stream_download_and_muxing() {
 
     // 5. Verify the output MP4 file exists and validate with ffprobe
     let output_file = std::path::Path::new(&job.target_path);
-    assert!(output_file.exists(), "Target MP4 file does not exist on disk");
-    assert!(fs::metadata(output_file).unwrap().len() > 1024, "Output file size too small");
+    assert!(
+        output_file.exists(),
+        "Target MP4 file does not exist on disk"
+    );
+    assert!(
+        fs::metadata(output_file).unwrap().len() > 1024,
+        "Output file size too small"
+    );
 
     let duration = probe_duration(output_file).expect("FFprobe validation failed on output MP4");
     println!("FFprobe verified duration: {:.2}s", duration);
-    assert!((1.5..=2.5).contains(&duration), "Duration {:.2}s outside expected 2s range", duration);
+    assert!(
+        (1.5..=2.5).contains(&duration),
+        "Duration {:.2}s outside expected 2s range",
+        duration
+    );
 
     cancel.cancel();
 }
@@ -364,7 +383,11 @@ async fn test_hls_aes128_encrypted_stream_download_and_muxing() {
     let output_file = std::path::Path::new(&job.target_path);
     assert!(output_file.exists());
     let dur = probe_duration(output_file).expect("Encrypted stream output probe failed");
-    assert!((0.8..=1.5).contains(&dur), "Duration {:.2}s outside expected 1s range", dur);
+    assert!(
+        (0.8..=1.5).contains(&dur),
+        "Duration {:.2}s outside expected 1s range",
+        dur
+    );
 
     cancel.cancel();
 }
@@ -474,7 +497,11 @@ async fn test_hls_master_playlist_with_separate_audio_rendition() {
     let output_file = std::path::Path::new(&job.target_path);
     assert!(output_file.exists());
     let dur = probe_duration(output_file).expect("Dual stream output probe failed");
-    assert!((0.7..=1.5).contains(&dur), "Duration {:.2}s outside expected range", dur);
+    assert!(
+        (0.7..=1.5).contains(&dur),
+        "Duration {:.2}s outside expected range",
+        dur
+    );
 
     cancel.cancel();
 }
@@ -581,7 +608,11 @@ async fn test_hls_byterange_segments_download_and_muxing() {
     let output_file = std::path::Path::new(&job.target_path);
     assert!(output_file.exists());
     let dur = probe_duration(output_file).expect("Byte-range output probe failed");
-    assert!((1.5..=2.5).contains(&dur), "Duration {:.2}s outside expected 2s range", dur);
+    assert!(
+        (1.5..=2.5).contains(&dur),
+        "Duration {:.2}s outside expected 2s range",
+        dur
+    );
 
     cancel.cancel();
 }
@@ -690,7 +721,10 @@ async fn test_hls_pause_and_resume_continuity() {
         tokio::time::sleep(Duration::from_millis(50)).await;
         wait_count += 1;
     }
-    assert!(seg0_file.exists(), "seg_000000.ts should have been downloaded");
+    assert!(
+        seg0_file.exists(),
+        "seg_000000.ts should have been downloaded"
+    );
 
     // Pause download immediately
     manager.pause_download(&job.id).unwrap();
@@ -709,7 +743,10 @@ async fn test_hls_pause_and_resume_continuity() {
     assert!(paused, "Download should transition to Paused state");
 
     // Verify seg0 is preserved in .hls_parts while paused
-    assert!(seg0_file.exists(), "seg0 should be preserved on disk across pause");
+    assert!(
+        seg0_file.exists(),
+        "seg0 should be preserved on disk across pause"
+    );
     let initial_seg0_requests = seg0_requests.load(Ordering::SeqCst);
     assert!(initial_seg0_requests >= 1);
 

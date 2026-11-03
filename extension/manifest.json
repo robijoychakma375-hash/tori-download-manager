@@ -20,6 +20,10 @@
       "128": "icons/icon-128.png"
     }
   },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -43,4 +47,3 @@
     "<all_urls>"
   ]
 }
-

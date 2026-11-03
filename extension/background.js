@@ -24,6 +24,27 @@ const STREAMING_MIMES = [
 // In-memory cache for fast synchronous access
 const tabMediaCache = new Map();
 
+// Extension configuration synchronized with storage
+let extSettings = {
+  cap: true,
+  min: 1,
+  badge: true,
+  sites: ['docs.google.com', 'mail.google.com', 'github.com'],
+  types: ['zip', 'rar', '7z', 'iso', 'exe', 'dmg', 'pdf', 'mp4', 'mp3'],
+};
+
+chrome.storage.local.get(['tori_settings'], (res) => {
+  if (res.tori_settings) {
+    extSettings = { ...extSettings, ...res.tori_settings };
+  }
+});
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.tori_settings?.newValue) {
+    extSettings = { ...extSettings, ...changes.tori_settings.newValue };
+  }
+});
+
 /**
  * Native Messaging helper with timeout and graceful error reporting
  */
@@ -214,6 +235,36 @@ async function recordCandidate(tabId, candidate) {
     return;
   }
 
+  // Check if capture is globally enabled
+  if (extSettings.cap === false) {
+    return;
+  }
+
+  // Check excluded sites
+  try {
+    const u = new URL(candidate.url);
+    const host = u.hostname.toLowerCase();
+    if (
+      extSettings.sites &&
+      extSettings.sites.some((s) => {
+        const clean = s.trim().toLowerCase();
+        return host === clean || host.endsWith('.' + clean);
+      })
+    ) {
+      return;
+    }
+  } catch (_) {}
+
+  // Check minimum file size if known and candidate is direct
+  if (
+    extSettings.min > 0 &&
+    candidate.size_bytes &&
+    candidate.size_bytes < extSettings.min * 1024 * 1024 &&
+    candidate.type === 'direct'
+  ) {
+    return;
+  }
+
   let list = tabMediaCache.get(tabId) || [];
 
   // Deduplicate by URL
@@ -228,10 +279,14 @@ async function recordCandidate(tabId, candidate) {
   list.push(candidate);
   tabMediaCache.set(tabId, list);
 
-  // Update badge
-  const count = list.length;
-  await chrome.action.setBadgeText({ tabId, text: String(count) });
-  await chrome.action.setBadgeBackgroundColor({ tabId, color: '#6366f1' });
+  // Update badge if enabled
+  if (extSettings.badge !== false) {
+    const count = list.length;
+    await chrome.action.setBadgeText({ tabId, text: String(count) });
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: '#6366f1' });
+  } else {
+    await chrome.action.setBadgeText({ tabId, text: '' });
+  }
 }
 
 // -------------------------------------------------------------------------
@@ -339,6 +394,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'PING_DESKTOP') {
     sendNativeMessage({ action: 'ping' }).then(sendResponse);
     return true; // Keep channel open for async response
+  }
+
+  if (message.action === 'SHOW_DESKTOP') {
+    sendNativeMessage({ action: 'show_window' }).then(sendResponse);
+    return true;
   }
 
   if (message.action === 'START_DOWNLOAD') {

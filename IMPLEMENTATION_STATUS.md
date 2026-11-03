@@ -125,9 +125,19 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
    - CLI commands: `--register` (registers registry keys and host manifest), `--unregister`
    - IPC: Forwards messages directly to persistent engine via `\\.\pipe\tori-download-manager-ipc`; auto-spawns desktop application if not currently running.
 
-4. **Browser Extension (Manifest V3)**:
+4. **Browser Extension (Manifest V3 — Gate 10 Verified)**:
    - Directory: `extension/`
-   - Files: `manifest.json`, `background.js`, `content.js`, `content.css`, `popup/popup.html`, `popup/popup.css`, `popup/popup.js`, `icons/`
+   - Architecture:
+     - **Design Source A (Media Popup & HTML5 Video Overlay)**:
+       - Toolbar popup: `popup/popup.html`, `popup/popup.css`, `popup/popup.js`
+       - Video overlay: `content.js`, `content.css` injecting `.tori-mp`, `.tori-pill`, and `.tori-pn` format selection panel
+       - Stream detection: Real HLS (`.m3u8`), DASH (`.mpd`), and direct MP4/WebM candidates intercepted via `webRequest.onHeadersReceived` and forwarded to overlay picker
+     - **Design Source B (Extension Options & Settings)**:
+       - Options page: `options/options.html`, `options/options.css`, `options/options.js`
+       - 6 Tab Sections: Connection (`conn`), Capture (`cap`), Media (`media`), Sites (`sites`), Appearance (`app`), About (`about`)
+       - Native Messaging latency benchmark and real engine connectivity probe
+       - Interactive chips for file types and domain exclusions
+       - `chrome.storage.local` persistence with live theme and setting synchronization
    - Supported Browsers: Google Chrome, Microsoft Edge, Brave, Vivaldi, Opera
    - Pinned Extension ID: `jfnfgmcbgapcpieaonbaolgebjaejcdm` across all browsers via 2048-bit RSA SPKI public key.
 
@@ -141,20 +151,20 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
 
 ## Workspace Automated Test Results
 
-- **Total Automated Tests**: **87 passing tests** (0 failed, 0 ignored) across 11 test suites:
-  - `tdm-core` unit tests: **18 passed** (0.36s)
-  - `gate2_adaptive_tests`: **8 passed** (6.13s)
-  - `gate4_hls_tests`: **8 passed** (1.79s)
-  - `gate5_dash_tests`: **9 passed** (7.38s)
+- **Total Automated Tests**: **88 passing tests** (0 failed, 0 ignored) across 11 test suites:
+  - `tdm-core` unit tests: **18 passed** (3.02s)
+  - `gate2_adaptive_tests`: **8 passed** (4.83s)
+  - `gate4_hls_tests`: **8 passed** (6.08s)
+  - `gate5_dash_tests`: **9 passed** (7.51s)
   - `gate6_torrent_tests`: **8 passed** (0.47s)
-  - `gate7_live_tests`: **8 passed** (21.41s)
-  - `gate8_protocol_matrix_tests`: **8 passed** (11.58s)
-  - `gate8_stress_tests`: **4 passed** (2.44s)
-  - `integration_tests`: **9 passed** (3.45s)
+  - `gate7_live_tests`: **8 passed** (22.34s)
+  - `gate8_protocol_matrix_tests`: **8 passed** (11.60s)
+  - `gate8_stress_tests`: **4 passed** (2.16s)
+  - `integration_tests`: **9 passed** (3.65s)
   - `tdm-native-host` unit tests: **1 passed** (0.00s)
-  - `host_tests` (including IPC and OS process stdin/stdout tests): **6 passed** (0.40s)
+  - `host_tests` (including IPC, OS process stdin/stdout, and `show_window` tests): **7 passed** (0.26s)
 - **Clippy**: 0 warnings across all targets (`cargo clippy --workspace --all-targets -- -D warnings`).
 - **Formatting**: 100% compliant with rustfmt (`cargo fmt --all -- --check`).
-- **Frontend Build**: Built in 955ms with 0 errors (`npm --prefix ui run build`).
+- **Frontend Build**: Built in 279ms with 0 errors (`npm --prefix ui run build`).
 - **Release Build**: Built with 0 errors (`cargo tauri build --no-bundle`).
-- **NSIS Installer Package**: Built with 0 errors (`cargo tauri bundle --bundles nsis`).
+- **NSIS Installer Package**: Built with 0 errors (`cargo tauri build`). Size: 15,680,993 bytes.

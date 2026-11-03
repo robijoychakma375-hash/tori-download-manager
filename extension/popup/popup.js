@@ -1,378 +1,247 @@
-// TORI Download Manager - Extension Popup Controller
+/**
+ * TORI Download Manager — Extension Popup Controller
+ * Implements Design Source A with real Native Messaging engine integration.
+ */
 
-document.addEventListener('DOMContentLoaded', () => {
-  // Elements
-  const desktopStatusBadge = document.getElementById('desktopStatusBadge');
-  const desktopStatusText = document.getElementById('desktopStatusText');
-  const themeToggleBtn = document.getElementById('themeToggleBtn');
+const P = {
+  dl: 'M12 4v10M8 10l4 4 4-4M5 19h14',
+  cp: 'M9 9h10v11H9zM5 15V4h10',
+  set: 'M4 7h10M18 7h2M4 17h2M10 17h10M16 7a2 2 0 100 .01M8 17a2 2 0 100 .01',
+  op: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
+  ck: 'M5 12l5 5 9-10',
+};
 
-  const tabDetectedBtn = document.getElementById('tabDetectedBtn');
-  const tabDownloadsBtn = document.getElementById('tabDownloadsBtn');
-  const detectedSection = document.getElementById('detectedSection');
-  const downloadsSection = document.getElementById('downloadsSection');
-  const detectedCountBadge = document.getElementById('detectedCountBadge');
-  const downloadsCountBadge = document.getElementById('downloadsCountBadge');
+const G = {
+  Video: ['#ff453a', 'M9 6.5v11l9-5.5z'],
+  Music: ['#ff375f', 'M9 18V6l10-2v12M7 20a2 2 0 100-4 2 2 0 000 4zM17 18a2 2 0 100-4 2 2 0 000 4z'],
+  Compressed: ['#bf5af2', 'M12 3v10M10 6h4M10 9h4M8 13h8v6H8z'],
+  Other: ['#8e8e93', 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z'],
+};
 
-  const mediaListContainer = document.getElementById('mediaListContainer');
-  const noMediaState = document.getElementById('noMediaState');
-  const downloadsListContainer = document.getElementById('downloadsListContainer');
-  const noDownloadsState = document.getElementById('noDownloadsState');
+function chip(k) {
+  const meta = G[k] || G.Other;
+  return `<i class="ft" style="--c:${meta[0]}"><svg viewBox="0 0 24 24"><path d="${meta[1]}"/></svg></i>`;
+}
 
-  const quickDownloadForm = document.getElementById('quickDownloadForm');
-  const quickUrlInput = document.getElementById('quickUrlInput');
-  const quickPrioritySelect = document.getElementById('quickPrioritySelect');
-  const popupToast = document.getElementById('popupToast');
-
-  let currentTabId = null;
-  let activeTabName = 'detected';
-  let queuePollInterval = null;
-
-  // 1. Initialize Theme
-  chrome.storage.local.get(['tori_theme'], (result) => {
-    if (result.tori_theme === 'light') {
-      document.body.classList.remove('dark-theme');
-      document.body.classList.add('light-theme');
-    } else {
-      document.body.classList.remove('light-theme');
-      document.body.classList.add('dark-theme');
-    }
-  });
-
-  themeToggleBtn.addEventListener('click', () => {
-    const isLight = document.body.classList.contains('light-theme');
-    if (isLight) {
-      document.body.classList.remove('light-theme');
-      document.body.classList.add('dark-theme');
-      chrome.storage.local.set({ tori_theme: 'dark' });
-    } else {
-      document.body.classList.remove('dark-theme');
-      document.body.classList.add('light-theme');
-      chrome.storage.local.set({ tori_theme: 'light' });
-    }
-  });
-
-  // 2. Toast Notification Helper
-  function showToast(message, isSuccess = true) {
-    popupToast.textContent = message;
-    popupToast.className = 'popup-toast show ' + (isSuccess ? 'toast-success' : 'toast-error');
-    setTimeout(() => {
-      popupToast.classList.remove('show');
-    }, 2800);
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  let val = bytes;
+  while (val >= 1024 && i < units.length - 1) {
+    val /= 1024;
+    i++;
   }
+  return `${val.toFixed(val >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
 
-  // 3. Tab Switching
-  tabDetectedBtn.addEventListener('click', () => {
-    activeTabName = 'detected';
-    tabDetectedBtn.classList.add('active');
-    tabDownloadsBtn.classList.remove('active');
-    detectedSection.classList.add('active');
-    downloadsSection.classList.remove('active');
-    if (queuePollInterval) {
-      clearInterval(queuePollInterval);
-      queuePollInterval = null;
+function showToast(text, isError = false) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.innerHTML = `<i class="ft" style="--c:${isError ? '#e5484d' : '#30c75e'}"><svg viewBox="0 0 24 24"><path d="${P.ck}"/></svg></i><span>${text}</span>`;
+  el.classList.add('on');
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => el.classList.remove('on'), 2000);
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const statusPill = document.getElementById('statusPill');
+  const statusText = document.getElementById('statusText');
+  const captureToggle = document.getElementById('captureToggle');
+  const mediaCountHeader = document.getElementById('mediaCountHeader');
+  const mediaList = document.getElementById('mediaList');
+  const recentList = document.getElementById('recentList');
+  const openToriBtn = document.getElementById('openToriBtn');
+  const optionsBtn = document.getElementById('optionsBtn');
+
+  // 1. Sync theme from options/storage
+  chrome.storage.local.get(['tori_theme', 'tori_settings'], (res) => {
+    const theme = res.tori_theme || res.tori_settings?.theme || 'system';
+    const isDark =
+      theme === 'dark' ||
+      (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+
+    if (res.tori_settings && typeof res.tori_settings.cap === 'boolean') {
+      captureToggle.checked = res.tori_settings.cap;
     }
-    loadDetectedMedia();
   });
 
-  tabDownloadsBtn.addEventListener('click', () => {
-    activeTabName = 'downloads';
-    tabDownloadsBtn.classList.add('active');
-    tabDetectedBtn.classList.remove('active');
-    downloadsSection.classList.add('active');
-    detectedSection.classList.remove('active');
-    loadDesktopQueue();
-    // Poll queue while queue tab is active (every 1.5s)
-    if (!queuePollInterval) {
-      queuePollInterval = setInterval(loadDesktopQueue, 1500);
-    }
+  // 2. Capture toggle handler
+  captureToggle.addEventListener('change', () => {
+    chrome.storage.local.get(['tori_settings'], (res) => {
+      const settings = res.tori_settings || {};
+      settings.cap = captureToggle.checked;
+      chrome.storage.local.set({ tori_settings: settings });
+      showToast(captureToggle.checked ? 'Capture enabled' : 'Capture disabled');
+    });
   });
 
-  // 4. Desktop Status Check
-  function checkDesktopStatus() {
-    desktopStatusBadge.className = 'status-pill status-checking';
-    desktopStatusText.textContent = 'Checking...';
+  // 3. Open Tori button handler
+  openToriBtn.addEventListener('click', () => {
+    showToast('Opening Tori…');
+    chrome.runtime.sendMessage({ action: 'SHOW_DESKTOP' }, () => {
+      window.close();
+    });
+  });
 
-    chrome.runtime.sendMessage({ action: 'PING_DESKTOP' }, (response) => {
-      if (chrome.runtime.lastError || !response || !response.success) {
-        desktopStatusBadge.className = 'status-pill status-offline';
-        desktopStatusText.textContent = 'Desktop Offline';
-        desktopStatusBadge.title = (response && response.error) ? response.error : 'TORI native desktop host not responding';
+  // 4. Options button handler
+  optionsBtn.addEventListener('click', () => {
+    chrome.runtime.openOptionsPage();
+  });
+
+  // 5. Check desktop connection status
+  function updateConnectionStatus() {
+    chrome.runtime.sendMessage({ action: 'PING_DESKTOP' }, (res) => {
+      if (chrome.runtime.lastError || !res || res.status !== 'ok') {
+        statusPill.className = 'st bad';
+        statusText.textContent = 'Desktop Offline';
       } else {
-        desktopStatusBadge.className = 'status-pill status-connected';
-        desktopStatusText.textContent = 'Connected';
-        desktopStatusBadge.title = `Host PID: ${response.pid || 'running'}`;
+        statusPill.className = 'st';
+        statusText.textContent = `Connected · TORI Engine v${res.version || '2.0'}`;
       }
     });
   }
+  updateConnectionStatus();
 
-  desktopStatusBadge.addEventListener('click', checkDesktopStatus);
+  // 6. Query media on current tab
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && tab.id) {
+      chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
+        const items = res?.media || [];
+        mediaCountHeader.textContent = `Media on this page · ${items.length}`;
 
-  // Format bytes helper
-  function formatBytes(bytes) {
-    if (!bytes || bytes <= 0) return 'Unknown size';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  }
+        if (items.length === 0) {
+          mediaList.innerHTML = '<div class="empty-state">No media detected on this page</div>';
+        } else {
+          mediaList.innerHTML = items
+            .map((item, idx) => {
+              const isAudio =
+                item.type === 'audio' ||
+                (item.content_type && item.content_type.startsWith('audio/'));
+              const cat = isAudio ? 'Music' : 'Video';
+              const sizeStr = item.size_bytes ? ` · ${formatBytes(item.size_bytes)}` : '';
+              const formatStr = item.format || 'MP4';
+              const sub = `${formatStr}${sizeStr}`;
 
-  // Format speed helper
-  function formatSpeed(bps) {
-    if (!bps || bps <= 0) return '';
-    return formatBytes(bps) + '/s';
-  }
-
-  // 5. Load Detected Media for Current Active Tab
-  function loadDetectedMedia() {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs || tabs.length === 0) return;
-      currentTabId = tabs[0].id;
-
-      chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: currentTabId }, (response) => {
-        if (!response || !response.success) return;
-
-        const mediaItems = response.items || [];
-        detectedCountBadge.textContent = mediaItems.length;
-
-        if (mediaItems.length === 0) {
-          mediaListContainer.innerHTML = '';
-          noMediaState.style.display = 'flex';
-          return;
-        }
-
-        noMediaState.style.display = 'none';
-        mediaListContainer.innerHTML = '';
-
-        mediaItems.forEach((item) => {
-          const card = document.createElement('div');
-          card.className = 'media-card';
-
-          const isDASH = item.format === 'mpd' || item.category === 'dash' || (item.url && item.url.includes('.mpd'));
-          const isHls = item.format === 'm3u8' || item.category === 'hls' || (item.url && item.url.includes('.m3u8'));
-          const isTorrent = item.category === 'torrent' || item.format === 'TORRENT' || item.format === 'MAGNET' || (item.url && (item.url.startsWith('magnet:') || item.url.includes('.torrent')));
-          const isLive = item.category === 'live' || (item.url && (item.url.startsWith('rtsp://') || item.url.startsWith('rtmp://') || item.url.startsWith('rtmps://') || item.url.startsWith('srt://') || item.url.startsWith('udp://')));
-          
-          let badgeClass = 'badge-video';
-          let badgeLabel = (item.format || 'MEDIA').toUpperCase();
-          if (isLive) {
-            badgeClass = 'badge-stream';
-            badgeLabel = 'LIVE STREAM';
-          } else if (isTorrent) {
-            badgeClass = 'badge-stream';
-            badgeLabel = item.format || 'TORRENT';
-          } else if (isDASH) {
-            badgeClass = 'badge-stream';
-            badgeLabel = 'DASH VOD';
-          } else if (isHls) {
-            badgeClass = 'badge-stream';
-            badgeLabel = 'HLS VOD';
-          } else if (item.category === 'audio') {
-            badgeClass = 'badge-audio';
-          }
-
-          const sizeText = item.size ? formatBytes(item.size) : (isLive ? 'Live Stream Recording' : (isHls ? 'Adaptive HLS Stream' : (isDASH ? 'Adaptive DASH Stream' : (isTorrent ? 'BitTorrent P2P' : 'Direct file'))));
-
-          card.innerHTML = `
-            <div class="media-card-top">
-              <div class="media-info">
-                <div class="media-filename" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</div>
-                <div class="media-url" title="${escapeHtml(item.url)}">${escapeHtml(item.url)}</div>
-                <div class="media-meta">
-                  <span class="badge ${badgeClass}">${badgeLabel}</span>
-                  <span class="media-size">${sizeText}</span>
+              return `
+              <div class="row">
+                ${chip(cat)}
+                <div class="t">
+                  <b>${escapeHtml(item.filename || 'media_video')}</b>
+                  <span class="s">${escapeHtml(sub)}</span>
                 </div>
-              </div>
-              <div class="media-actions">
-                <button class="btn-download" data-url="${escapeHtml(item.url)}" data-filename="${escapeHtml(item.filename)}">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                  Download
-                </button>
-              </div>
-            </div>
-          `;
+                <button class="btn mb def" data-idx="${idx}">Download</button>
+              </div>`;
+            })
+            .join('');
 
-          // Attach click handler for download
-          const dlBtn = card.querySelector('.btn-download');
-          dlBtn.addEventListener('click', () => {
-            dlBtn.disabled = true;
-            dlBtn.textContent = 'Starting...';
+          // Bind download buttons
+          mediaList.querySelectorAll('button[data-idx]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              const idx = parseInt(btn.dataset.idx, 10);
+              const target = items[idx];
+              if (!target) return;
 
-            chrome.runtime.sendMessage({
-              action: 'START_DOWNLOAD',
-              url: item.url,
-              filename: item.filename,
-              priority: 'normal',
-              }, (dlRes) => {
-                if (chrome.runtime.lastError || !dlRes || !dlRes.success) {
-                  const errMsg = (dlRes && dlRes.error) ? dlRes.error : 'Failed to reach TORI';
-                  showToast(errMsg, false);
-                  dlBtn.disabled = false;
-                  dlBtn.textContent = 'Download';
-                } else if (dlRes.status === 'already_exists') {
-                  showToast('Job already active or completed in TORI', true);
-                  dlBtn.textContent = 'In Queue';
-                } else {
-                  showToast('Download started in TORI engine!', true);
-                  dlBtn.textContent = 'Added';
-                  // Auto-switch to desktop queue
-                  setTimeout(() => {
-                    tabDownloadsBtn.click();
-                  }, 600);
+              btn.textContent = 'Sending…';
+              chrome.runtime.sendMessage(
+                {
+                  action: 'START_DOWNLOAD',
+                  url: target.url,
+                  filename: target.filename,
+                  priority: 'high',
+                },
+                (dlRes) => {
+                  if (dlRes && dlRes.status === 'ok') {
+                    btn.textContent = 'Sent';
+                    btn.classList.add('ok');
+                    showToast('Sent to Tori');
+                    loadRecentDownloads();
+                  } else if (dlRes && dlRes.status === 'already_exists') {
+                    btn.textContent = 'Active';
+                    showToast('Already in download queue');
+                  } else {
+                    btn.textContent = 'Retry';
+                    showToast(dlRes?.message || 'Download failed', true);
+                  }
                 }
-              });
+              );
             });
+          });
+        }
+      });
+    }
+  } catch (err) {
+    console.warn('Failed to query current tab media:', err);
+  }
+
+  // 7. Load recent downloads from persistent engine
+  function loadRecentDownloads() {
+    chrome.runtime.sendMessage({ action: 'GET_DOWNLOADS' }, (res) => {
+      const jobs = res?.jobs || [];
+      if (jobs.length === 0) {
+        recentList.innerHTML = '<div class="empty-state">No recent downloads</div>';
+        return;
+      }
+
+      // Show top 3 recent downloads
+      const recent = jobs.slice(0, 3);
+      recentList.innerHTML = recent
+        .map((j) => {
+          const total = j.total_bytes || 0;
+          const downloaded = j.downloaded_bytes || 0;
+          const percent =
+            total > 0
+              ? Math.min(100, Math.floor((downloaded / total) * 100))
+              : j.state === 'completed'
+              ? 100
+              : 0;
+          const isComplete = j.state === 'completed';
+          const isPaused = j.state === 'paused';
+          const isFailed = j.state === 'failed';
+
+          let statusLabel = `${percent}%`;
+          let barClass = '';
+          if (isComplete) {
+            statusLabel = 'Done';
+            barClass = 'dn';
+          } else if (isPaused) {
+            statusLabel = 'Paused';
+            barClass = 'pz';
+          } else if (isFailed) {
+            statusLabel = 'Failed';
+            barClass = 'pz';
           }
 
-          mediaListContainer.appendChild(card);
-        });
-      });
+          const cat = j.job_type === 'Torrent' ? 'Compressed' : 'Video';
+
+          return `
+          <div class="row">
+            ${chip(cat)}
+            <div class="t">
+              <b>${escapeHtml(j.filename || 'download')}</b>
+              <div class="bar"><i class="${barClass}" style="width:${percent}%"></i></div>
+            </div>
+            <span class="s" style="font-size:11px;font-weight:600;min-width:36px;text-align:right;color:${
+              isComplete ? 'var(--green)' : isFailed ? 'var(--bad)' : 'var(--mut)'
+            }">${statusLabel}</span>
+          </div>`;
+        })
+        .join('');
     });
   }
 
-  // 6. Load Desktop Queue
-  function loadDesktopQueue() {
-    chrome.runtime.sendMessage({ action: 'GET_DOWNLOADS' }, (response) => {
-      if (chrome.runtime.lastError || !response || !response.success) {
-        downloadsCountBadge.textContent = '0';
-        downloadsListContainer.innerHTML = '';
-        noDownloadsState.style.display = 'flex';
-        return;
-      }
-
-      const downloads = response.downloads || [];
-      downloadsCountBadge.textContent = downloads.length;
-
-      if (downloads.length === 0) {
-        downloadsListContainer.innerHTML = '';
-        noDownloadsState.style.display = 'flex';
-        return;
-      }
-
-      noDownloadsState.style.display = 'none';
-      downloadsListContainer.innerHTML = '';
-
-      downloads.forEach((job) => {
-        const card = document.createElement('div');
-        card.className = 'media-card';
-
-        const total = job.total_bytes || 0;
-        const current = job.downloaded_bytes || 0;
-        const percent = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
-        const state = (job.state || 'Unknown').toLowerCase();
-
-        let stateBadgeClass = 'badge-video';
-        if (state === 'completed') stateBadgeClass = 'badge-audio';
-        else if (state === 'failed' || state === 'cancelled') stateBadgeClass = 'badge-unsupported';
-        else if (state === 'paused') stateBadgeClass = 'badge-stream';
-
-        card.innerHTML = `
-          <div class="media-card-top">
-            <div class="media-info">
-              <div class="media-filename" title="${escapeHtml(job.filename)}">${escapeHtml(job.filename)}</div>
-              <div class="media-meta">
-                <span class="badge ${stateBadgeClass}">${escapeHtml(job.state)}</span>
-                <span class="media-size">${formatBytes(current)} / ${formatBytes(total)} (${percent}%)</span>
-                ${job.priority ? `<span class="media-size" style="text-transform:capitalize;">[${escapeHtml(job.priority)}]</span>` : ''}
-              </div>
-            </div>
-            <div class="media-actions">
-              ${(state === 'downloading' || state === 'queued')
-                ? `<button class="btn-action-small btn-pause" data-id="${job.id}">Pause</button>`
-                : (state === 'paused'
-                    ? `<button class="btn-action-small btn-resume" data-id="${job.id}">Resume</button>`
-                    : '')
-              }
-              ${(state !== 'completed')
-                ? `<button class="btn-action-small btn-cancel" data-id="${job.id}" style="color:var(--color-danger);">Cancel</button>`
-                : ''
-              }
-            </div>
-          </div>
-          ${(state === 'downloading' || state === 'paused') ? `
-            <div class="queue-progress-bar-bg">
-              <div class="queue-progress-bar-fill" style="width: ${percent}%;"></div>
-            </div>
-          ` : ''}
-          ${job.error_message ? `<div style="font-size:11px; color:var(--color-danger); margin-top:4px;">${escapeHtml(job.error_message)}</div>` : ''}
-        `;
-
-        // Wire Action Buttons
-        const pauseBtn = card.querySelector('.btn-pause');
-        if (pauseBtn) {
-          pauseBtn.addEventListener('click', () => {
-            chrome.runtime.sendMessage({ action: 'PAUSE_DOWNLOAD', id: job.id }, () => {
-              loadDesktopQueue();
-            });
-          });
-        }
-
-        const resumeBtn = card.querySelector('.btn-resume');
-        if (resumeBtn) {
-          resumeBtn.addEventListener('click', () => {
-            chrome.runtime.sendMessage({ action: 'RESUME_DOWNLOAD', id: job.id }, () => {
-              loadDesktopQueue();
-            });
-          });
-        }
-
-        const cancelBtn = card.querySelector('.btn-cancel');
-        if (cancelBtn) {
-          cancelBtn.addEventListener('click', () => {
-            chrome.runtime.sendMessage({ action: 'CANCEL_DOWNLOAD', id: job.id }, () => {
-              loadDesktopQueue();
-            });
-          });
-        }
-
-        downloadsListContainer.appendChild(card);
-      });
-    });
-  }
-
-  // 7. Quick Intake Form
-  quickDownloadForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const rawUrl = quickUrlInput.value.trim();
-    if (!rawUrl) return;
-
-    if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
-      showToast('Only HTTP and HTTPS URLs are supported', false);
-      return;
-    }
-
-    const priority = quickPrioritySelect.value || 'normal';
-    quickUrlInput.disabled = true;
-
-    chrome.runtime.sendMessage({
-      action: 'START_DOWNLOAD',
-      url: rawUrl,
-      priority: priority,
-    }, (response) => {
-      quickUrlInput.disabled = false;
-      if (chrome.runtime.lastError || !response || !response.success) {
-        const errMsg = (response && response.error) ? response.error : 'Failed to dispatch to TORI';
-        showToast(errMsg, false);
-      } else {
-        showToast('Download started in TORI engine!', true);
-        quickUrlInput.value = '';
-        tabDownloadsBtn.click();
-      }
-    });
-  });
-
-  // Utility to prevent XSS
-  function escapeHtml(text) {
-    if (!text) return '';
-    return String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
-  // Initial runs
-  checkDesktopStatus();
-  loadDetectedMedia();
+  loadRecentDownloads();
+  // Refresh recent downloads periodically while popup is open
+  const pollTimer = setInterval(loadRecentDownloads, 2000);
+  window.addEventListener('unload', () => clearInterval(pollTimer));
 });
 
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}

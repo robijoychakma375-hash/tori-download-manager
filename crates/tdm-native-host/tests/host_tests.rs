@@ -55,6 +55,28 @@ async fn test_native_host_ping_pong() {
 }
 
 #[tokio::test]
+async fn test_native_host_show_window() {
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().join("host_test_show_win.sqlite");
+    let db = Database::open(&db_path).unwrap();
+    let manager = DownloadManager::new(db.clone(), EventBus::default()).unwrap();
+
+    let msg = NativeMessage {
+        action: "show_window".to_string(),
+        url: None,
+        filename: None,
+        destination: None,
+        priority: None,
+        job_id: None,
+    };
+
+    let resp = handle_message(msg, &manager, &db).await;
+    assert_eq!(resp.status, "ok");
+    assert_eq!(resp.action, "show_window");
+    assert!(resp.message.as_ref().unwrap().contains("Window focus"));
+}
+
+#[tokio::test]
 async fn test_native_host_start_download_and_deduplication() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
