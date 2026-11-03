@@ -361,3 +361,44 @@ async fn test_server_downloads_crud_lifecycle() {
     srv_cancel.cancel();
     shutdown.cancel();
 }
+
+#[tokio::test]
+async fn test_server_rejects_webpage_download_urls() {
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().join("server_test_reject_webpage.sqlite");
+    let db = Database::open(&db_path).unwrap();
+    let event_bus = EventBus::default();
+    let manager = Arc::new(DownloadManager::new(db.clone(), event_bus).unwrap());
+    let shutdown = CancellationToken::new();
+
+    let (port, token) = start_server(manager, db.clone(), shutdown.clone())
+        .await
+        .unwrap();
+
+    let client = reqwest::Client::new();
+    let base_url = format!("http://127.0.0.1:{}", port);
+
+    let create_body = serde_json::json!({
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "filename": "watch.mp4",
+    });
+
+    let resp = client
+        .post(format!("{}/api/v1/downloads", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &token)
+        .json(&create_body)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 400);
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["status"], "error");
+    assert!(json["message"]
+        .as_str()
+        .unwrap()
+        .contains("Video watch page URLs cannot be downloaded directly"));
+
+    shutdown.cancel();
+}

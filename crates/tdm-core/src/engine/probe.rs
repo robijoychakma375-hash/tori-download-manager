@@ -101,6 +101,19 @@ pub async fn probe_url(client: &Client, raw_url: &str) -> Result<ProbeResult> {
         )));
     }
 
+    // Explicitly reject video portal webpage URLs (e.g. YouTube watch pages) that are not direct media streams
+    let lower_raw = trimmed.to_lowercase();
+    if (lower_raw.contains("youtube.com/watch") || lower_raw.contains("youtu.be/"))
+        && !lower_raw.contains(".mp4")
+        && !lower_raw.contains(".m3u8")
+        && !lower_raw.contains(".mpd")
+    {
+        return Err(EngineError::InvalidUrl(
+            "Video watch page URLs cannot be downloaded directly. TORI requires a direct playable media stream, HLS (.m3u8), or DASH (.mpd) URL."
+                .to_string(),
+        ));
+    }
+
     // Attempt 1: HEAD request
     let head_response = client
         .head(raw_url)
@@ -115,6 +128,7 @@ pub async fn probe_url(client: &Client, raw_url: &str) -> Result<ProbeResult> {
     let mut head_etag: Option<String> = None;
     let mut head_last_modified: Option<String> = None;
     let mut head_accept_ranges_bytes = false;
+    let mut response_content_type: Option<String> = None;
 
     if let Ok(resp) = head_response {
         let status = resp.status();
@@ -123,6 +137,13 @@ pub async fn probe_url(client: &Client, raw_url: &str) -> Result<ProbeResult> {
         if status.is_success() {
             can_use_head = true;
             let headers = resp.headers();
+
+            if let Some(ct) = headers
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+            {
+                response_content_type = Some(ct.to_string());
+            }
 
             if let Some(cd) = headers
                 .get(CONTENT_DISPOSITION)
@@ -183,6 +204,13 @@ pub async fn probe_url(client: &Client, raw_url: &str) -> Result<ProbeResult> {
             resolved_url = resp.url().to_string();
             let headers = resp.headers();
 
+            if let Some(ct) = headers
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+            {
+                response_content_type = Some(ct.to_string());
+            }
+
             if filename_from_header.is_none() {
                 if let Some(cd) = headers
                     .get(CONTENT_DISPOSITION)
@@ -235,12 +263,31 @@ pub async fn probe_url(client: &Client, raw_url: &str) -> Result<ProbeResult> {
         .map(|e| !e.starts_with("W/"))
         .unwrap_or(false);
 
-    let filename = filename_from_header.unwrap_or_else(|| extract_filename_from_url(&resolved_url));
-
     let is_hls =
         resolved_url.to_lowercase().contains(".m3u8") || raw_url.to_lowercase().contains(".m3u8");
     let is_dash =
         resolved_url.to_lowercase().contains(".mpd") || raw_url.to_lowercase().contains(".mpd");
+
+    let has_filename_header = filename_from_header.is_some();
+    if !is_hls && !is_dash {
+        if let Some(ref ct) = response_content_type {
+            let lower_ct = ct.to_lowercase();
+            let lower_url = resolved_url.to_lowercase();
+            let is_html_mime = lower_ct.starts_with("text/html")
+                || lower_ct.starts_with("application/xhtml")
+                || lower_ct.starts_with("text/vnd.wap.wml");
+            let has_explicit_html_ext = lower_url.ends_with(".html") || lower_url.ends_with(".htm");
+
+            if is_html_mime && !has_filename_header && !has_explicit_html_ext {
+                return Err(EngineError::InvalidUrl(
+                    "URL returned an HTML webpage rather than a direct media stream or downloadable file. Webpage URLs cannot be downloaded directly as media."
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    let filename = filename_from_header.unwrap_or_else(|| extract_filename_from_url(&resolved_url));
     let (final_total_bytes, final_supports_ranges) = if is_hls || is_dash {
         (None, true)
     } else {
@@ -393,5 +440,46 @@ mod tests {
         assert_eq!(sanitize_filename("trailing_dots..."), "trailing_dots");
         assert_eq!(sanitize_filename("   "), "download.bin");
         assert_eq!(sanitize_filename("nul"), "_nul");
+    }
+
+    #[tokio::test]
+    async fn test_probe_rejects_youtube_watch_urls() {
+        let client = reqwest::Client::new();
+        let res = probe_url(&client, "https://www.youtube.com/watch?v=dQw4w9WgXcQ").await;
+        assert!(res.is_err());
+        let err = res.err().unwrap().to_string();
+        assert!(err.contains("Video watch page URLs cannot be downloaded directly"));
+    }
+
+    #[tokio::test]
+    async fn test_probe_rejects_html_webpage_responses() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let html = "<!DOCTYPE html><html><body>Article Page</body></html>";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    html.len(),
+                    html
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let test_url = format!("http://127.0.0.1:{}/article_news_item", port);
+        let res = probe_url(&client, &test_url).await;
+        assert!(res.is_err());
+        let err = res.err().unwrap().to_string();
+        assert!(err.contains("URL returned an HTML webpage rather than a direct media stream"));
     }
 }

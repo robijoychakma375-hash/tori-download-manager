@@ -1,6 +1,6 @@
 # TORI Download Manager (TDM) — Implementation Status
 
-Last Updated: Gate 10.2 Localhost Port-Based Browser Integration Complete & Verified
+Last Updated: Gate 10.4 Media Extraction & Webpage Download Rejection Complete & Verified (96 Automated Tests Passing)
 Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.0.26100.0)
 
 ---
@@ -83,6 +83,7 @@ Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.
 | **Pre-Gate 10 Audit** | WebView2 Memory Audit & Optimization | **VERIFIED** | `scripts/audit_memory_profile.ps1` & `scripts/verify_dialog_stability.ps1` | Removed redundant backdrop-filter texture layers; eliminated React listener churn; memoized sidebar & row re-renders; measured 8.17 MB Rust Private Bytes, 210.59 MB Total Private Bytes, 0 orphaned processes. | Zero memory leak; complete process tree profiled across 30s/2m/minimized/restored. |
 | **Gate 10** | Custom Browser Extension UI (Popup, Overlay & Options) | **VERIFIED** | `extension/` manual loading and test suite | Design Source A (Media popup & Video overlay) and Design Source B (6-tab Options/Settings) matching HTML/CSS specs. | Full MV3 service worker with pinned ID `jfnfgmcbgapcpieaonbaolgebjaejcdm`. |
 | **Gate 10.2** | Localhost Port-Based Browser Integration Server | **VERIFIED** | `cargo test -p tdm-native-host --test server_tests` & `node scripts/verify_gate10_2.js` | 5/5 automated Rust tests + 16/16 Node e2e verification steps passed. Binds exclusively to `127.0.0.1:6800` (no 0.0.0.0). Defeats DNS rebinding (400), blocks web origins (403), allows extension CORS, requires cryptographic token auth (401), full CRUD + SSE events. | Dual integration: high-performance localhost HTTP API + optional Native Messaging bootstrap. |
+| **Gate 10.4** | Media Extraction & Webpage Download Rejection | **VERIFIED** | `cargo test --workspace` (96 tests) & `node scripts/verify_gate10_4.js` | Traced failed "watch" job to `window.location.href` fallback & mock formats; purged all fabricated sizes (420 MB, 210 MB, etc.); added MIME-type HTML detection & watch page URL rejection in Rust engine; verified controlled `flower.mp4` download completing 100% (1,120,000 bytes) on disk. | Zero fake downloads; displays honest "Source Unavailable" on protected/MSE blob streams. |
 
 ---
 

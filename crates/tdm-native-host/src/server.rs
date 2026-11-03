@@ -360,6 +360,21 @@ async fn handle_create_download(
         ));
     }
 
+    // Video portal watch page rejection: webpage URLs are not direct media downloads
+    if (lower_url.contains("youtube.com/watch") || lower_url.contains("youtu.be/"))
+        && !lower_url.contains(".mp4")
+        && !lower_url.contains(".m3u8")
+        && !lower_url.contains(".mpd")
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Video watch page URLs cannot be downloaded directly. TORI requires a direct playable media stream, HLS (.m3u8), or DASH (.mpd) URL."
+            })),
+        ));
+    }
+
     // Duplicate check
     if let Ok(jobs) = state.db.list_jobs() {
         if let Some(existing) = jobs.iter().find(|j| {
@@ -420,13 +435,19 @@ async fn handle_create_download(
                 message: Some("Download created and started in TORI".to_string()),
             }))
         }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "status": "error",
-                "message": format!("Failed to create download: {}", e)
-            })),
-        )),
+        Err(e) => {
+            let status = match e {
+                tdm_core::EngineError::InvalidUrl(_) => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            Err((
+                status,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": format!("Failed to create download: {}", e)
+                })),
+            ))
+        }
     }
 }
 

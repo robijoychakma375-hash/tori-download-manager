@@ -116,7 +116,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         mediaCountHeader.textContent = `Media on this page · ${items.length}`;
 
         if (items.length === 0) {
-          mediaList.innerHTML = '<div class="empty-state">No media detected on this page</div>';
+          mediaList.innerHTML = `
+            <div class="empty-state" style="padding:16px 12px;text-align:center">
+              <div style="font-weight:600;margin-bottom:4px">No downloadable media detected</div>
+              <div style="font-size:11px;color:var(--mut);line-height:1.4">Protected or blob-based streaming (e.g. YouTube watch pages) does not expose direct downloadable files.</div>
+            </div>`;
         } else {
           mediaList.innerHTML = items
             .map((item, idx) => {

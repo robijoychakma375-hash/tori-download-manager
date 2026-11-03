@@ -470,6 +470,39 @@
   color: #ffffff;
 }
 
+.tori-btn.dis,
+.tori-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+  filter: grayscale(0.6);
+  background: var(--tori-pline);
+  border-color: var(--tori-bline);
+  color: var(--tori-mut);
+  box-shadow: none;
+}
+
+.tori-empty-box {
+  padding: 16px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  align-items: center;
+  text-align: center;
+}
+
+.tori-empty-box b {
+  font-size: 12.5px;
+  color: var(--tori-txt);
+}
+
+.tori-empty-box p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--tori-mut);
+  line-height: 1.45;
+}
+
 /* Toast */
 #tori-page-toast {
   position: fixed;

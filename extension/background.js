@@ -275,7 +275,18 @@ function classifyMedia(url, mimeType) {
  */
 async function recordCandidate(tabId, candidate) {
   if (tabId < 0) return;
-  if (!candidate.url || candidate.url.startsWith('blob:') || candidate.url.startsWith('data:')) {
+  if (!candidate.url || candidate.url.startsWith('blob:') || candidate.url.startsWith('data:') || candidate.url.startsWith('javascript:')) {
+    return;
+  }
+
+  // Reject webpage URLs that are not direct media streams
+  const lowerCand = candidate.url.toLowerCase();
+  if (
+    lowerCand.includes('youtube.com/watch') ||
+    lowerCand.includes('youtu.be/') ||
+    lowerCand.endsWith('.html') ||
+    lowerCand.endsWith('.htm')
+  ) {
     return;
   }
 
@@ -497,6 +508,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'START_DOWNLOAD') {
+    const rawUrl = (message.url || '').trim();
+    const lower = rawUrl.toLowerCase();
+
+    if (!rawUrl || rawUrl.startsWith('blob:') || rawUrl.startsWith('data:') || rawUrl.startsWith('javascript:')) {
+      sendResponse({
+        status: 'error',
+        message: 'Invalid or blob-based media stream. Direct media URL required.',
+      });
+      return false;
+    }
+
+    if (
+      lower.includes('youtube.com/watch') ||
+      lower.includes('youtu.be/') ||
+      lower.endsWith('.html') ||
+      lower.endsWith('.htm')
+    ) {
+      sendResponse({
+        status: 'error',
+        message: 'Webpage or watch portal URLs cannot be downloaded directly as media. Playable stream required.',
+      });
+      return false;
+    }
+
     callDesktopApi('/api/v1/downloads', 'POST', {
       url: message.url,
       filename: message.filename,

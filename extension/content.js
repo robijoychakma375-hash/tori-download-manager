@@ -172,7 +172,7 @@
         <svg viewBox="0 0 24 24"><path d="${P.dl}"/></svg>
       </span>
       <span>Download video</span>
-      <em class="tori-pill-tag">1080p</em>
+      <em class="tori-pill-tag">Media</em>
     `;
 
     // Create format panel
@@ -197,6 +197,143 @@
     let isDownloaded = false;
     let tabMediaCandidates = [];
 
+    // Collect genuine detected media candidates (never hardcoded, never webpage URL)
+    function getAvailableFormats() {
+      const title = getMediaTitle(videoEl);
+      const host = window.location.hostname;
+      const durationStr = formatDuration(videoEl.duration);
+      const subInfo = durationStr ? `${durationStr} · ${host}` : host;
+
+      const candidates = [];
+      const seenUrls = new Set();
+
+      function addCandidate(rawUrl, formatHint, sizeBytes, codecHint) {
+        if (!rawUrl || typeof rawUrl !== 'string') return;
+        const u = rawUrl.trim();
+        if (!u || u.startsWith('blob:') || u.startsWith('data:') || u.startsWith('javascript:')) return;
+        if (!u.startsWith('http://') && !u.startsWith('https://')) return;
+        if (u === window.location.href) return;
+        const lower = u.toLowerCase();
+        if (lower.includes('youtube.com/watch') || lower.includes('youtu.be/')) return;
+        if (lower.endsWith('.html') || lower.endsWith('.htm')) return;
+        if (seenUrls.has(u)) return;
+        seenUrls.add(u);
+
+        let ext = formatHint;
+        let isAudio = false;
+        const isHls = lower.includes('.m3u8');
+        const isDash = lower.includes('.mpd');
+
+        if (!ext) {
+          if (isHls) ext = 'm3u8';
+          else if (isDash) ext = 'mpd';
+          else {
+            const cleanPath = lower.split('?')[0].split('#')[0];
+            const seg = cleanPath.split('.').pop() || '';
+            if (['mp4', 'webm', 'mkv', 'mov', 'avi', 'flv', 'wmv'].includes(seg)) {
+              ext = seg.toUpperCase();
+            } else if (['mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wav'].includes(seg)) {
+              ext = seg.toUpperCase();
+              isAudio = true;
+            } else {
+              ext = 'MP4';
+            }
+          }
+        } else {
+          const lExt = ext.toLowerCase();
+          if (['mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wav', 'audio'].some((s) => lExt.includes(s))) {
+            isAudio = true;
+          }
+        }
+
+        const isHd = videoEl.videoHeight >= 720;
+        let qualityLabel = '';
+        if (videoEl.videoHeight) {
+          qualityLabel = `${videoEl.videoHeight}p`;
+        } else if (isHls) {
+          qualityLabel = 'Adaptive';
+        } else if (isDash) {
+          qualityLabel = 'DASH';
+        } else if (isAudio) {
+          qualityLabel = ext;
+        } else {
+          qualityLabel = ext;
+        }
+
+        let codecLabel = codecHint;
+        if (!codecLabel) {
+          if (videoEl.videoWidth && videoEl.videoHeight) {
+            codecLabel = `${videoEl.videoWidth}x${videoEl.videoHeight}`;
+          } else if (isHls) {
+            codecLabel = 'HLS Stream';
+          } else if (isDash) {
+            codecLabel = 'DASH Manifest';
+          } else {
+            codecLabel = 'Direct Stream';
+          }
+        }
+
+        const sizeStr = sizeBytes && sizeBytes > 0 ? formatBytes(sizeBytes) : (isHls || isDash ? 'VOD' : 'Direct');
+
+        candidates.push({
+          q: qualityLabel,
+          tg: ext.toUpperCase(),
+          hd: isHd ? 'HD' : null,
+          cd: codecLabel,
+          sz: sizeStr,
+          url: u,
+          filename: sanitizeFilename(title, ext.toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4'),
+          isAudio,
+        });
+      }
+
+      // 1. Direct src / currentSrc on video element
+      const direct = videoEl.currentSrc || videoEl.src || '';
+      if (direct) {
+        addCandidate(direct, null, null, null);
+      }
+
+      // 2. Direct sources inside videoEl
+      videoEl.querySelectorAll('source').forEach((s) => {
+        const sUrl = s.src || s.getAttribute('src');
+        if (sUrl) {
+          try {
+            const abs = new URL(sUrl, window.location.href).href;
+            addCandidate(abs, null, null, s.type || null);
+          } catch (_) {}
+        }
+      });
+
+      // 3. Tab candidates from background webRequest interception
+      tabMediaCandidates.forEach((tc) => {
+        if (tc && tc.url) {
+          addCandidate(tc.url, tc.format, tc.size_bytes, tc.content_type);
+        }
+      });
+
+      const videoFormats = candidates.filter((c) => !c.isAudio);
+      const audioFormats = candidates.filter((c) => c.isAudio);
+      const hasAnyCandidates = candidates.length > 0;
+
+      return { title, subInfo, videoFormats, audioFormats, hasAnyCandidates };
+    }
+
+    function updatePillTag() {
+      const { videoFormats, audioFormats, hasAnyCandidates } = getAvailableFormats();
+      const tagEl = pill.querySelector('.tori-pill-tag');
+      if (!tagEl) return;
+      if (hasAnyCandidates) {
+        const top = videoFormats[0] || audioFormats[0];
+        tagEl.textContent = top.q || top.tg || 'Media';
+        tagEl.style.color = '';
+        tagEl.style.background = '';
+      } else {
+        tagEl.textContent = 'Unavailable';
+        tagEl.style.color = 'var(--tori-bad)';
+        tagEl.style.background = 'rgba(229, 72, 77, 0.12)';
+      }
+    }
+
     // Pill click handler
     pill.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -216,6 +353,7 @@
         // Query background service worker for all streams captured on this tab
         chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA' }, (res) => {
           tabMediaCandidates = res?.media || [];
+          updatePillTag();
           renderPanel();
           pn.classList.add('on');
         });
@@ -229,125 +367,58 @@
       }
     });
 
-    function getAvailableFormats() {
-      const title = getMediaTitle(videoEl);
-      const host = window.location.hostname;
-      const durationStr = formatDuration(videoEl.duration);
-      const subInfo = durationStr ? `${durationStr} · ${host}` : host;
-
-      // Extract real direct URL if available
-      let directUrl = videoEl.currentSrc || videoEl.src || '';
-      if (directUrl.startsWith('blob:') || directUrl.startsWith('data:')) {
-        directUrl = '';
-      }
-
-      // Check tab candidates
-      const capturedStreams = tabMediaCandidates.filter(
-        (c) => c.type === 'hls' || c.type === 'dash' || c.type === 'direct'
-      );
-
-      // Best detected stream URL
-      const bestUrl = capturedStreams.length > 0 ? capturedStreams[0].url : directUrl || window.location.href;
-
-      const videoFormats = [
-        {
-          q: '1080p',
-          tg: 'MP4',
-          hd: 'HD',
-          cd: 'H.264 · AAC',
-          sz: '420 MB',
-          url: bestUrl,
-          filename: sanitizeFilename(title, 'mp4'),
-        },
-        {
-          q: '720p',
-          tg: 'MP4',
-          hd: 'HD',
-          cd: 'H.264 · AAC',
-          sz: '210 MB',
-          url: bestUrl,
-          filename: sanitizeFilename(title, 'mp4'),
-        },
-        {
-          q: '480p',
-          tg: 'MP4',
-          hd: null,
-          cd: 'H.264 · AAC',
-          sz: '118 MB',
-          url: bestUrl,
-          filename: sanitizeFilename(title, 'mp4'),
-        },
-        {
-          q: '360p',
-          tg: 'MP4',
-          hd: null,
-          cd: 'H.264 · AAC',
-          sz: '64 MB',
-          url: bestUrl,
-          filename: sanitizeFilename(title, 'mp4'),
-        },
-        {
-          q: '1080p',
-          tg: 'WebM',
-          hd: 'HD',
-          cd: 'VP9 · Opus',
-          sz: '365 MB',
-          url: bestUrl,
-          filename: sanitizeFilename(title, 'webm'),
-        },
-      ];
-
-      const audioFormats = [
-        {
-          q: '320k',
-          tg: 'MP3',
-          hd: null,
-          cd: 'MPEG Layer 3',
-          sz: '22.6 MB',
-          url: bestUrl,
-          filename: sanitizeFilename(title, 'mp3'),
-        },
-        {
-          q: '128k',
-          tg: 'MP3',
-          hd: null,
-          cd: 'MPEG Layer 3',
-          sz: '9.1 MB',
-          url: bestUrl,
-          filename: sanitizeFilename(title, 'mp3'),
-        },
-        {
-          q: '256k',
-          tg: 'M4A',
-          hd: null,
-          cd: 'AAC-LC',
-          sz: '18.2 MB',
-          url: bestUrl,
-          filename: sanitizeFilename(title, 'm4a'),
-        },
-        {
-          q: '160k',
-          tg: 'OPUS',
-          hd: null,
-          cd: 'Opus',
-          sz: '11.4 MB',
-          url: bestUrl,
-          filename: sanitizeFilename(title, 'opus'),
-        },
-      ];
-
-      return { title, subInfo, videoFormats, audioFormats };
-    }
-
     function renderPanel() {
-      const { title, subInfo, videoFormats, audioFormats } = getAvailableFormats();
+      const { title, subInfo, videoFormats, audioFormats, hasAnyCandidates } = getAvailableFormats();
       const currentList = activeTab === 'Video' ? videoFormats : audioFormats;
       if (selectedIdx >= currentList.length) selectedIdx = 0;
       const currentItem = currentList[selectedIdx];
 
+      let listHtml = '';
+      if (hasAnyCandidates) {
+        if (currentList.length > 0) {
+          listHtml = currentList
+            .map(
+              (f, i) => `
+            <div class="tori-fr ${i === selectedIdx ? 'on' : ''}" data-idx="${i}">
+              <span class="tori-rd"></span>
+              <span class="tori-q">${escapeHtml(f.q)}</span>
+              <span class="tori-tg">${escapeHtml(f.tg)}</span>
+              ${f.hd ? `<span class="tori-tg hd">${escapeHtml(f.hd)}</span>` : ''}
+              <span class="tori-cd">${escapeHtml(f.cd)}</span>
+              <span class="tori-sz">${escapeHtml(f.sz)}</span>
+            </div>`
+            )
+            .join('');
+        } else {
+          listHtml = `
+            <div class="tori-empty-box">
+              <p>No separate ${escapeHtml(activeTab.toLowerCase())} stream detected for this media.</p>
+            </div>`;
+        }
+      } else {
+        listHtml = `
+          <div class="tori-empty-box">
+            <i class="tori-ft" style="--c:#f59e0b;margin-bottom:4px">
+              <svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+            </i>
+            <b>No Downloadable Stream Detected</b>
+            <p>This player uses protected MediaSource blob streaming without an accessible direct file or HLS/DASH manifest.</p>
+            <span style="font-size:10px;color:var(--tori-mut)">TORI respects DRM boundaries and does not inject scrapers.</span>
+          </div>`;
+      }
+
+      const canDownload = hasAnyCandidates && !!currentItem && !!currentItem.url;
+      const dlBtnText = !hasAnyCandidates
+        ? 'Source Unavailable'
+        : !currentItem
+        ? 'No Stream'
+        : isDownloaded
+        ? 'Sent to Tori'
+        : `Download · ${currentItem.sz}`;
+
       pn.innerHTML = `
         <div class="tori-ph">
-          <i class="tori-ft" style="--c:#ff453a">
+          <i class="tori-ft" style="--c:${hasAnyCandidates ? '#ff453a' : '#8e8e93'}">
             <svg viewBox="0 0 24 24"><path d="${P.play}"/></svg>
           </i>
           <div style="min-width:0">
@@ -363,19 +434,7 @@
         </div>
 
         <div class="tori-fl">
-          ${currentList
-            .map(
-              (f, i) => `
-            <div class="tori-fr ${i === selectedIdx ? 'on' : ''}" data-idx="${i}">
-              <span class="tori-rd"></span>
-              <span class="tori-q">${escapeHtml(f.q)}</span>
-              <span class="tori-tg">${escapeHtml(f.tg)}</span>
-              ${f.hd ? `<span class="tori-tg hd">${escapeHtml(f.hd)}</span>` : ''}
-              <span class="tori-cd">${escapeHtml(f.cd)}</span>
-              <span class="tori-sz">${escapeHtml(f.sz)}</span>
-            </div>`
-            )
-            .join('')}
+          ${listHtml}
         </div>
 
         <div class="tori-pf">
@@ -384,12 +443,12 @@
             <span>Save to <b>Downloads\\Tori\\${escapeHtml(activeTab)}</b></span>
           </div>
           <div class="tori-ac">
-            <button class="tori-btn sq" data-act="copy" title="Copy stream URL">
+            <button class="tori-btn sq ${canDownload ? '' : 'dis'}" ${canDownload ? '' : 'disabled'} data-act="copy" title="${canDownload ? 'Copy stream URL' : 'No stream URL available'}">
               <svg viewBox="0 0 24 24"><path d="${P.cp}"/></svg>
             </button>
-            <button class="tori-btn f def ${isDownloaded ? 'ok' : ''}" data-act="download">
+            <button class="tori-btn f def ${canDownload ? '' : 'dis'} ${isDownloaded ? 'ok' : ''}" ${canDownload ? '' : 'disabled'} data-act="download">
               <svg viewBox="0 0 24 24"><path d="${isDownloaded ? P.ck : P.dl}"/></svg>
-              <span>${isDownloaded ? 'Sent to Tori' : `Download · ${currentItem?.sz || ''}`}</span>
+              <span>${escapeHtml(dlBtnText)}</span>
             </button>
           </div>
         </div>
@@ -425,6 +484,10 @@
       if (copyBtn) {
         copyBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
+          if (!canDownload) {
+            showToast('No downloadable stream URL available', true);
+            return;
+          }
           const target = currentList[selectedIdx];
           if (target && target.url) {
             try {
@@ -441,6 +504,10 @@
       if (dlBtn) {
         dlBtn.addEventListener('click', (e) => {
           e.stopPropagation();
+          if (!canDownload) {
+            showToast('No downloadable media stream available on this page', true);
+            return;
+          }
           const target = currentList[selectedIdx];
           if (!target || !target.url) {
             showToast('No downloadable stream available', true);
@@ -475,9 +542,17 @@
     }
 
     function triggerDirectDownload(vid) {
-      const { videoFormats, audioFormats } = getAvailableFormats();
-      const list = settings.kind === 'Audio only' ? audioFormats : videoFormats;
-      const target = list[0] || { url: vid.currentSrc || vid.src, filename: 'video.mp4' };
+      const { videoFormats, audioFormats, hasAnyCandidates } = getAvailableFormats();
+      if (!hasAnyCandidates) {
+        showToast('No downloadable media stream detected on this page', true);
+        return;
+      }
+      const list = settings.kind === 'Audio only' && audioFormats.length > 0 ? audioFormats : videoFormats;
+      const target = list[0];
+      if (!target || !target.url) {
+        showToast('No downloadable stream available', true);
+        return;
+      }
 
       chrome.runtime.sendMessage(
         {
@@ -489,12 +564,40 @@
         (res) => {
           if (res && res.status === 'ok') {
             showToast('Sent to Tori');
+          } else if (res && res.status === 'already_exists') {
+            showToast('Already downloading in Tori');
           } else {
             showToast(res?.message || 'Download failed', true);
           }
         }
       );
     }
+
+    // Dynamic state updates when media metadata loads or changes
+    videoEl.addEventListener('loadedmetadata', updatePillTag);
+    videoEl.addEventListener('canplay', updatePillTag);
+    videoEl.addEventListener('play', () => {
+      chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA' }, (res) => {
+        tabMediaCandidates = res?.media || [];
+        updatePillTag();
+      });
+    });
+
+    // Check DOM source attributes and inform background worker
+    const directSrc = videoEl.currentSrc || videoEl.src;
+    if (directSrc && !directSrc.startsWith('blob:') && !directSrc.startsWith('data:')) {
+      chrome.runtime.sendMessage({
+        action: 'RECORD_MEDIA_FROM_DOM',
+        candidate: {
+          url: directSrc,
+          filename: sanitizeFilename(getMediaTitle(videoEl), 'mp4'),
+          size_bytes: null,
+          content_type: 'video/mp4',
+        },
+      });
+    }
+
+    updatePillTag();
   }
 
   // Scan document for media elements
