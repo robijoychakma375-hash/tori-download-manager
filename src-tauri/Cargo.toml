@@ -12,6 +12,9 @@ doctest = false
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
 [dependencies]
 tdm-core = { path = "../crates/tdm-core" }
 tdm-native-host = { path = "../crates/tdm-native-host" }

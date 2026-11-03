@@ -34,8 +34,10 @@ pub fn run() {
         return;
     }
 
-    // Data directory resolution: %APPDATA%/tori-download-manager
-    let data_dir = if let Ok(app_data) = std::env::var("APPDATA") {
+    // Data directory resolution: TORI_DATA_DIR or %APPDATA%/tori-download-manager
+    let data_dir = if let Ok(override_dir) = std::env::var("TORI_DATA_DIR") {
+        PathBuf::from(override_dir)
+    } else if let Ok(app_data) = std::env::var("APPDATA") {
         PathBuf::from(app_data).join("tori-download-manager")
     } else {
         PathBuf::from(".tdm-data")

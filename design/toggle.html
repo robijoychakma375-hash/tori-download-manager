@@ -1,0 +1,12 @@
+<!doctype html><meta charset=utf-8><title>Toggle reference</title>
+<link rel="stylesheet" href="tokens.css">
+<style>body{font:13px -apple-system,Segoe UI,sans-serif;padding:30px;background:var(--win);color:var(--txt)}
+.swl{position:relative;display:inline-block;width:40px;height:24px;vertical-align:middle;margin-right:14px}
+.swl input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;z-index:1}
+.sw-track{position:absolute;inset:0;border-radius:12px;background:var(--fline);transition:background .18s}
+.sw-knob{position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .18s}
+.swl input:checked+.sw-track{background:linear-gradient(#7679ff,#4f46e5)}
+.swl input:checked+.sw-track .sw-knob{transform:translateX(16px)}
+p{margin:14px 0}</style>
+<p><label class="swl"><input type="checkbox" checked><span class="sw-track"><span class="sw-knob"></span></span></label>Enabled</p>
+<p><label class="swl"><input type="checkbox"><span class="sw-track"><span class="sw-knob"></span></span></label>Disabled</p>

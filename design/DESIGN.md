@@ -20,3 +20,7 @@ Main window (toolbar, sidebar, download list, details pane, status bar), progres
 
 ## Later (extension and popup)
 Add new demo HTMLs in this folder and keep sharing `tokens.css` and `icons/`.
+
+## Updates
+- The bottom details/segments pane is removed from the design. Do not render it (no file name line, no "Segments", no segment bars). The download list fills the space down to the status bar.
+- Toggle switch: build it from real elements, not pseudo-elements or a styled native checkbox. Track 40x24, radius 12, knob 18x18 white circle at left 3 / top 3, checked moves the knob by translateX(16px), checked track = linear-gradient(#7679ff, #4f46e5), unchecked track = var(--fline). See `.swl`, `.sw-track`, `.sw-knob` in `tori-app-ndm-pro.html`.

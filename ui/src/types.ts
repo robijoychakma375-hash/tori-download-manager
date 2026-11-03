@@ -88,7 +88,11 @@ export interface AppSettings {
   lm: boolean;
   track: boolean;
   dns: string;
+  proxy?: string;
+  port?: number;
+  key?: string;
+  cap?: boolean;
   theme: 'light' | 'dark' | 'system';
   motion: boolean;
-  details: boolean;
+  details?: boolean;
 }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { TitleBar } from './TitleBar';
+import { ToggleSwitch } from './ToggleSwitch';
 import type { AppSettings } from '../types';
 
 interface SettingsModalProps {
@@ -14,24 +15,98 @@ type TabKey = 'appearance' | 'engine' | 'integration' | 'about';
 interface NavTab {
   key: TabKey;
   label: string;
-  iconPath: string;
 }
 
 const TABS: NavTab[] = [
-  { key: 'appearance', label: 'Appearance', iconPath: '/icons/settings-tabs/appearance.svg' },
-  { key: 'engine', label: 'Download Engine', iconPath: '/icons/settings-tabs/download-engine.svg' },
-  { key: 'integration', label: 'Browser Integration', iconPath: '/icons/settings-tabs/browser-integration.svg' },
-  { key: 'about', label: 'About', iconPath: '/icons/settings-tabs/about.svg' },
+  { key: 'appearance', label: 'Appearance' },
+  { key: 'engine', label: 'Download Engine' },
+  { key: 'integration', label: 'Browser Integration' },
+  { key: 'about', label: 'About' },
 ];
+
+const renderTabIcon = (key: TabKey) => {
+  switch (key) {
+    case 'appearance':
+      return (
+        <svg
+          viewBox="0 0 24 24"
+          width="26"
+          height="26"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 3v18" />
+          <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" />
+        </svg>
+      );
+    case 'engine':
+      return (
+        <svg
+          viewBox="0 0 24 24"
+          width="26"
+          height="26"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M13 3L5 14h6l-1 7 8-11h-6z" />
+        </svg>
+      );
+    case 'integration':
+      return (
+        <svg
+          viewBox="0 0 24 24"
+          width="26"
+          height="26"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" />
+        </svg>
+      );
+    case 'about':
+      return (
+        <svg
+          viewBox="0 0 24 24"
+          width="26"
+          height="26"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v6M12 7.5v.01" />
+        </svg>
+      );
+  }
+};
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
   onUpdateSettings,
   onClose,
 }) => {
-  const [currentTab, setCurrentTab] = useState<TabKey>('appearance');
+  const [currentTab, setCurrentTab] = useState<TabKey>('engine');
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [hostStatus, setHostStatus] = useState<string | null>(null);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const flash = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2400);
+  };
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     const updated = { ...settings, [key]: value };
@@ -56,14 +131,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleCycleProxy = () => {
+    const list = ['none', 'system', 'manual'];
+    const curIdx = list.indexOf(settings.proxy || 'none');
+    const next = list[(curIdx + 1) % list.length];
+    update('proxy', next);
+  };
+
+  const handleCycleDns = () => {
+    const list = ['System DNS', 'Cloudflare (1.1.1.1)', 'Google (8.8.8.8)'];
+    const curIdx = list.indexOf(settings.dns || 'System DNS');
+    const next = list[(curIdx + 1) % list.length];
+    update('dns', next);
+  };
+
+  const handleCopyKey = () => {
+    try {
+      navigator.clipboard.writeText(settings.key || 'tori_live_api_key_v2');
+      flash('API key copied');
+    } catch {
+      flash('Could not copy key');
+    }
+  };
+
+  const handleRegenKey = () => {
+    const newKey = 'tori_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+    update('key', newKey);
+    flash('New API key generated');
+  };
+
+  const proxyLabel = () => {
+    if (settings.proxy === 'system') return 'System proxy will be used';
+    if (settings.proxy === 'manual') return 'Manual proxy configured';
+    return 'No Proxy will be used';
+  };
+
   return (
     <>
       <div id="dim" onClick={onClose} />
-      <div className="win pop" id="setw">
+      <div className="win pop" id="setw" style={{ width: 820, height: 650 }}>
         <TitleBar title="Settings" onClose={onClose} isModal />
 
         <div className="ptabs" id="ptabsrow">
-          {TABS.map(({ key, label, iconPath }) => {
+          {TABS.map(({ key, label }) => {
             const isSelected = currentTab === key;
             return (
               <button
@@ -71,17 +181,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 className={`pt ${isSelected ? 'on' : ''}`}
                 onClick={() => setCurrentTab(key)}
               >
-                <img
-                  src={iconPath}
-                  alt={label}
-                  width={26}
-                  height={26}
-                  style={{
-                    filter: isSelected
-                      ? 'invert(42%) sepia(85%) saturate(3015%) hue-rotate(224deg) brightness(98%) contrast(92%)'
-                      : 'grayscale(100%) opacity(60%)',
-                  }}
-                />
+                {renderTabIcon(key)}
                 {label}
               </button>
             );
@@ -91,58 +191,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div id="prefbody">
           {/* ================= APPEARANCE ================= */}
           {currentTab === 'appearance' && (
-            <>
-              <div className="scard">
-                <div className="sr">
-                  <div>
-                    <b>Theme</b>
-                    <span className="sub">Light, dark, or follow the system</span>
-                  </div>
-                  <div className="sc">
-                    <select
-                      className="sl"
-                      value={settings.theme}
-                      onChange={(e) => update('theme', e.target.value as AppSettings['theme'])}
-                      style={{ width: 140 }}
-                    >
-                      <option value="light">Light</option>
-                      <option value="dark">Dark</option>
-                      <option value="system">System (auto)</option>
-                    </select>
-                  </div>
+            <div className="scard">
+              <div className="sr">
+                <div>
+                  <b>Theme</b>
+                  <span className="sub">Light, dark, or follow the system</span>
                 </div>
-
-                <div className="sr">
-                  <div>
-                    <b>Reduce Animations</b>
-                    <span className="sub">Maximum smoothness on slower PCs</span>
-                  </div>
-                  <div className="sc">
-                    <input
-                      type="checkbox"
-                      className="sw"
-                      checked={settings.motion}
-                      onChange={(e) => update('motion', e.target.checked)}
-                    />
-                  </div>
-                </div>
-
-                <div className="sr">
-                  <div>
-                    <b>Show Segments Pane</b>
-                    <span className="sub">Shows the segments bar at the bottom of the window</span>
-                  </div>
-                  <div className="sc">
-                    <input
-                      type="checkbox"
-                      className="sw"
-                      checked={settings.details}
-                      onChange={(e) => update('details', e.target.checked)}
-                    />
-                  </div>
+                <div className="sc">
+                  <select
+                    className="sl"
+                    value={settings.theme}
+                    onChange={(e) => update('theme', e.target.value as AppSettings['theme'])}
+                    style={{ width: 140 }}
+                  >
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                    <option value="system">System (auto)</option>
+                  </select>
                 </div>
               </div>
-            </>
+
+              <div className="sr">
+                <div>
+                  <b>Reduce Animations</b>
+                  <span className="sub">Maximum smoothness on slower PCs</span>
+                </div>
+                <div className="sc">
+                  <ToggleSwitch
+                    checked={settings.motion}
+                    onChange={(checked) => update('motion', checked)}
+                    ariaLabel="Reduce Animations"
+                  />
+                </div>
+              </div>
+            </div>
           )}
 
           {/* ================= DOWNLOAD ENGINE ================= */}
@@ -161,6 +243,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onChange={(e) => update('dir', e.target.value)}
                       style={{ width: 270 }}
                     />
+                    <button
+                      className="btn"
+                      style={{ minWidth: 0 }}
+                      onClick={async () => {
+                        try {
+                          const dir = await invoke<string>('get_default_download_dir');
+                          if (dir) update('dir', dir);
+                        } catch (err) {
+                          console.error(err);
+                        }
+                      }}
+                    >
+                      Choose…
+                    </button>
                   </div>
                 </div>
 
@@ -170,11 +266,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <span className="sub">{settings.sort ? 'Enabled' : 'Disabled'}</span>
                   </div>
                   <div className="sc">
-                    <input
-                      type="checkbox"
-                      className="sw"
+                    <ToggleSwitch
                       checked={settings.sort}
-                      onChange={(e) => update('sort', e.target.checked)}
+                      onChange={(checked) => update('sort', checked)}
+                      ariaLabel="Use Category By Default"
                     />
                   </div>
                 </div>
@@ -201,7 +296,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
 
-                <div className={`sr ${settings.limMode === 'off' ? 'dis' : ''}`}>
+                <div className={`sr ${settings.limMode === 'off' ? 'dis' : ''}`} id="r-limv">
                   <div>
                     <b>Global Speed Limit</b>
                     <span className="sub">
@@ -293,11 +388,138 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <span className="sub">{settings.dyn ? 'Enabled' : 'Disabled'}</span>
                   </div>
                   <div className="sc">
-                    <input
-                      type="checkbox"
-                      className="sw"
+                    <ToggleSwitch
                       checked={settings.dyn}
-                      onChange={(e) => update('dyn', e.target.checked)}
+                      onChange={(checked) => update('dyn', checked)}
+                      ariaLabel="Dynamic Part Creation"
+                    />
+                  </div>
+                </div>
+
+                <div className="sr">
+                  <div>
+                    <b>Minimum Part Size</b>
+                    <span className="sub">
+                      {(settings.mps || 512).toFixed(2)} {settings.mpsU || 'KiB'}
+                    </span>
+                  </div>
+                  <div className="sc">
+                    <input
+                      className="in"
+                      type="number"
+                      min={1}
+                      value={settings.mps || 512}
+                      onChange={(e) => update('mps', parseFloat(e.target.value) || 512)}
+                      style={{ width: 84 }}
+                    />
+                    <select
+                      className="sl"
+                      value={settings.mpsU || 'KiB'}
+                      onChange={(e) => update('mpsU', e.target.value as 'KiB' | 'MiB')}
+                      style={{ width: 84 }}
+                    >
+                      <option value="KiB">KiB</option>
+                      <option value="MiB">MiB</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="scard">
+                <div className="sr">
+                  <div>
+                    <b>Per Host Settings</b>
+                    <span className="sub">Custom speed & thread limits per domain</span>
+                  </div>
+                  <div className="sc">
+                    <button className="btn" style={{ minWidth: 0 }} onClick={() => flash('Per host settings (configured)')}>
+                      Change
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="scard">
+                <div className="sr">
+                  <div>
+                    <b>Use Proxy</b>
+                    <span className="sub">{proxyLabel()}</span>
+                  </div>
+                  <div className="sc">
+                    <button className="btn" style={{ minWidth: 0 }} onClick={handleCycleProxy}>
+                      Change Proxy
+                    </button>
+                  </div>
+                </div>
+
+                <div className="sr">
+                  <div>
+                    <b>DNS</b>
+                    <span className="sub">{settings.dns || 'System DNS'}</span>
+                  </div>
+                  <div className="sc">
+                    <button className="btn" style={{ minWidth: 0 }} onClick={handleCycleDns}>
+                      Change
+                    </button>
+                  </div>
+                </div>
+
+                <div className="sr">
+                  <div>
+                    <b>Default User-Agent</b>
+                    <span className="sub">{settings.ua ? 'Custom' : 'Default'}</span>
+                  </div>
+                  <div className="sc">
+                    <input
+                      className="in"
+                      value={settings.ua}
+                      onChange={(e) => update('ua', e.target.value)}
+                      placeholder="Default"
+                      style={{ width: 270 }}
+                    />
+                  </div>
+                </div>
+
+                <div className="sr">
+                  <div>
+                    <b>Ignore SSL Certificates</b>
+                    <span className="sub">{settings.ssl ? 'Enabled' : 'Disabled'}</span>
+                  </div>
+                  <div className="sc">
+                    <ToggleSwitch
+                      checked={settings.ssl}
+                      onChange={(checked) => update('ssl', checked)}
+                      ariaLabel="Ignore SSL Certificates"
+                    />
+                  </div>
+                </div>
+
+                <div className="sr">
+                  <div>
+                    <b>Use Server's Last-Modified Time</b>
+                    <span className="sub">{settings.lm ? 'Enabled' : 'Disabled'}</span>
+                  </div>
+                  <div className="sc">
+                    <ToggleSwitch
+                      checked={settings.lm}
+                      onChange={(checked) => update('lm', checked)}
+                      ariaLabel="Use Server's Last-Modified Time"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="scard">
+                <div className="sr">
+                  <div>
+                    <b>Track Deleted Files On Disk</b>
+                    <span className="sub">{settings.track ? 'Enabled' : 'Disabled'}</span>
+                  </div>
+                  <div className="sc">
+                    <ToggleSwitch
+                      checked={settings.track}
+                      onChange={(checked) => update('track', checked)}
+                      ariaLabel="Track Deleted Files On Disk"
                     />
                   </div>
                 </div>
@@ -312,20 +534,77 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="sr">
                   <div>
                     <b>Enable Browser Integration</b>
-                    <span className="sub">
-                      Intercept media requests and one-click capture via Native Messaging
-                    </span>
+                    <span className="sub">{settings.cap !== false ? 'Enabled' : 'Disabled'}</span>
                   </div>
                   <div className="sc">
-                    <input
-                      type="checkbox"
-                      className="sw"
-                      checked={settings.track}
-                      onChange={(e) => update('track', e.target.checked)}
+                    <ToggleSwitch
+                      checked={settings.cap !== false}
+                      onChange={(checked) => update('cap', checked)}
+                      ariaLabel="Enable Browser Integration"
                     />
                   </div>
                 </div>
 
+                <div className={`sr ${settings.cap === false ? 'dis' : ''}`} id="r-port">
+                  <div>
+                    <b>Server Port</b>
+                    <span className="sub">Listening on 127.0.0.1:{settings.port || 7070}</span>
+                  </div>
+                  <div className="sc">
+                    <input
+                      className="in"
+                      type="number"
+                      min={1024}
+                      max={65535}
+                      value={settings.port || 7070}
+                      onChange={(e) => update('port', parseInt(e.target.value, 10) || 7070)}
+                      style={{ width: 90 }}
+                      disabled={settings.cap === false}
+                    />
+                  </div>
+                </div>
+
+                <div className={`sr ${settings.cap === false ? 'dis' : ''}`} id="r-key">
+                  <div>
+                    <b>API Key</b>
+                    <span className="sub">Paste this key into the browser extension to connect it</span>
+                  </div>
+                  <div className="sc">
+                    <input
+                      className="in"
+                      id="keyin"
+                      type={showApiKey ? 'text' : 'password'}
+                      readOnly
+                      value={settings.key || 'tori_live_api_key_v2'}
+                      style={{ width: 210, fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 12 }}
+                      disabled={settings.cap === false}
+                    />
+                    <button
+                      className="btn"
+                      style={{ minWidth: 0 }}
+                      onClick={() => setShowApiKey(!showApiKey)}
+                    >
+                      {showApiKey ? 'Hide' : 'Show'}
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ minWidth: 0 }}
+                      onClick={handleCopyKey}
+                    >
+                      Copy
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ minWidth: 0 }}
+                      onClick={handleRegenKey}
+                    >
+                      Regenerate
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="scard">
                 <div className="sr">
                   <div>
                     <b>Native Messaging Host</b>
@@ -346,7 +625,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </span>
                   </div>
                   <div className="sc">
-                    <span className="green">Active</span>
+                    <span className="green" style={{ fontWeight: 600 }}>Active</span>
                   </div>
                 </div>
               </div>
@@ -385,12 +664,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </svg>
 
               <h2 style={{ margin: '14px 0 2px', fontSize: 20, color: 'var(--txt)' }}>
-                TORI Download Manager
+                Tori Download Manager
               </h2>
-              <div className="mut">Version 2.0.0 (Gate 9 Production Release)</div>
+              <div className="mut">Version 2.0.0 (Production Release)</div>
 
               <p className="mut" style={{ margin: '14px 0 24px', lineHeight: '20px' }}>
-                High-performance Windows multi-connection download engine.
+                Fast, resumable downloads with a browser extension.
                 <br />
                 Direct HTTP partitioned ranges, RFC 8216 HLS, ISO/IEC 23009-1 MPEG-DASH,
                 <br />
@@ -418,6 +697,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
         </div>
 
+        {toast && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 60,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: 'rgba(0,0,0,0.8)',
+              color: '#fff',
+              padding: '6px 14px',
+              borderRadius: 6,
+              fontSize: 12,
+              zIndex: 100,
+            }}
+          >
+            {toast}
+          </div>
+        )}
+
         <div className="foot">
           <button className="btn def" onClick={onClose}>
             Done
@@ -427,4 +725,3 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </>
   );
 };
-

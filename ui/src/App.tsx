@@ -7,7 +7,6 @@ import { TitleBar } from './components/TitleBar';
 import { ToolBar } from './components/ToolBar';
 import { SideBar } from './components/SideBar';
 import { DownloadTable } from './components/DownloadTable';
-import { DetailsPane } from './components/DetailsPane';
 import { StatusBar } from './components/StatusBar';
 import { AddDownloadModal } from './components/AddDownloadModal';
 import { ProgressModal } from './components/ProgressModal';
@@ -33,9 +32,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   lm: false,
   track: true,
   dns: 'System DNS',
+  proxy: 'none',
+  port: 7070,
+  key: 'tori_live_api_key_v2',
+  cap: true,
   theme: 'system',
   motion: false,
-  details: true,
+  details: false,
 };
 
 function loadStoredSettings(): AppSettings {
@@ -61,7 +64,13 @@ export function App() {
   // Modals & popups
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [progressJobId, setProgressJobId] = useState<string | null>(null);
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('modal') === 'settings';
+    } catch {
+      return false;
+    }
+  });
   const [deleteConfirmJob, setDeleteConfirmJob] = useState<DownloadJob | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -429,8 +438,6 @@ export function App() {
           }}
         />
       </div>
-
-      <DetailsPane selectedJob={selectedJob} visible={settings.details} />
 
       <StatusBar
         downloads={downloads}

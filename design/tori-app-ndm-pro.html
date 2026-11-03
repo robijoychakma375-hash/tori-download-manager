@@ -269,6 +269,17 @@ input.sw:checked::after{width:18px;height:18px;border:0;transform:translateX(16p
 #tool,.wbar,#stat{flex:none}
 #right{min-height:0}#rows{min-height:0;overflow:hidden}
 #stage{margin-top:0}
+
+/* ===== toggle switch (robust: real elements, no pseudo-elements) ===== */
+.swl{position:relative;display:block;width:40px;height:24px;flex:none}
+.swl .swi{position:absolute;left:0;top:0;width:100%;height:100%;margin:0;opacity:0;z-index:1;cursor:default;border:0;background:none!important}
+.sw-track{position:absolute;left:0;top:0;right:0;bottom:0;border-radius:12px;background:var(--fline);transition:background .18s}
+.sw-knob{position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .18s}
+.swl .swi:checked+.sw-track{background:linear-gradient(#7679ff,#4f46e5)}
+.swl .swi:checked+.sw-track .sw-knob{transform:translateX(16px)}
+.swl .swi:focus-visible+.sw-track{box-shadow:0 0 0 3px rgba(99,102,241,.35)}
+/* details / segments pane removed */
+#det{display:none!important}
 </style>
 </head>
 <body>
@@ -403,7 +414,7 @@ $$('.tb').forEach((b) => (b.innerHTML = svgi(b.dataset.a) + TB[b.dataset.a]));
 /* ---------------- settings model ---------------- */
 const S = { dir: 'C:\\Users\\You\\Downloads', sort: false, auto: true, tray: true, done: 'none', notify: true, scan: false, ask: true, pwin: true, autoclose: false,
   con: 16, maxa: 3, lim: 0, proxy: 'system', purl: '', cap: true, minmb: 2, exts: 'zip,rar,7z,iso,exe,msi,pdf,mp4,mkv,mp3', excl: '', vbtn: true,
-  vq: 'ask', vc: 'mp4', af: 'mp3', subs: '', thumb: false, plist: false, theme: 'light', motion: false, details: true };
+  vq: 'ask', vc: 'mp4', af: 'mp3', subs: '', thumb: false, plist: false, theme: 'light', motion: false, details: false };
 const rk = () => 'tori_' + Array.from({ length: 32 }, () => '0123456789abcdef'[Math.random() * 16 | 0]).join('');
 Object.assign(S, { sort: true, con: 32, limMode: 'off', limV: 256, limU: 'KiB/s', retries: 3, dyn: true, mps: 512, mpsU: 'KiB', ua: '', ssl: false, lm: false, track: false, dns: 'System DNS', port: 6800, key: rk() });
 let pairs = [{ id: 1, name: 'Chrome' }];
@@ -566,7 +577,7 @@ let ptabK = 'engine';
 const cb = (k, t, h) => `<div class="pr"><span class="k"></span><label class="cb"><input type="checkbox" data-k="${k}" ${S[k] ? 'checked' : ''}><span>${t}${h ? `<span class="hint">${h}</span>` : ''}</span></label></div>`;
 const row = (k, c) => `<div class="pr"><span class="k">${k}</span><div>${c}</div></div>`;
 const sel2 = (k, opts) => `<select class="sl" data-k="${k}">${opts.map(([v, l]) => `<option value="${v}" ${S[k] === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
-const tg = (k) => `<input type="checkbox" class="sw" data-k="${k}" ${S[k] ? 'checked' : ''}>`;
+const tg = (k) => `<label class="swl"><input type="checkbox" class="swi" data-k="${k}" ${S[k] ? 'checked' : ''}><span class="sw-track"><span class="sw-knob"></span></span></label>`;
 const sub = (k) => `<span class="sub" data-sub="${k}"></span>`;
 const sr = (t, sb, ctl, id) => `<div class="sr" ${id ? `id="${id}"` : ''}><div><b>${t}</b>${sb}</div><div class="sc">${ctl}</div></div>`;
 const num = (k, mn, mx, w) => `<input class="in" type="number" data-k="${k}" min="${mn}" ${mx ? `max="${mx}"` : ''} value="${S[k]}" style="width:${w || 84}px">`;
@@ -601,7 +612,7 @@ function biHtml() {
 }
 function appHtml() {
   return `<div class="scard">${sr('Theme', '<span class="sub">Light, dark, or follow the system</span>', `<select class="sl" data-k="theme" style="width:140px">${[['light', 'Light'], ['dark', 'Dark'], ['system', 'System (auto)']].map(([v, l]) => `<option value="${v}" ${S.theme === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
-  ${sr('Reduce Animations', '<span class="sub">Maximum smoothness on slower PCs</span>', tg('motion'))}${sr('Show Segments Pane', '<span class="sub">Shows the segments bar at the bottom of the window</span>', tg('details'))}</div>`;
+  ${sr('Reduce Animations', '<span class="sub">Maximum smoothness on slower PCs</span>', tg('motion'))}</div>`;
 }
 function prefs() {
   $('#ptabsrow').innerHTML = NAVS.map(([k, l]) => `<button class="pt ${k === ptabK ? 'on' : ''}" data-pk="${k}">${svgi(k)}${l}</button>`).join('');

@@ -312,43 +312,69 @@ label.cb {
   box-shadow: 0 2px 8px rgba(79, 70, 229, 0.4);
 }
 
-/* Switches */
-input.sw {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 40px;
-  height: 24px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--fline);
+/* ===== toggle switch (robust: real elements, no pseudo-elements) ===== */
+.swl {
   position: relative;
   display: block;
-  cursor: pointer;
-  transition: background 0.18s;
+  width: 40px;
+  height: 24px;
   flex: none;
+  cursor: pointer;
 }
 
-input.sw::after {
-  content: "";
+.swl .swi {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  z-index: 1;
+  cursor: pointer;
+  border: 0;
+  background: none !important;
+}
+
+.sw-track {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 12px;
+  background: var(--fline);
+  transition: background 0.18s;
+  cursor: pointer;
+}
+
+.sw-knob {
   position: absolute;
   left: 3px;
   top: 3px;
   width: 18px;
   height: 18px;
-  border: 0;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-  transform: none;
   transition: transform 0.18s;
 }
 
-input.sw:checked {
+.swl .swi:checked + .sw-track {
   background: linear-gradient(#7679ff, #4f46e5);
 }
 
-input.sw:checked::after {
+.swl .swi:checked + .sw-track .sw-knob {
   transform: translateX(16px);
+}
+
+.swl .swi:focus-visible + .sw-track {
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.35);
+}
+
+.swl.dis {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 /* ================= TOOLBAR ================= */
@@ -701,14 +727,9 @@ input.sw:checked::after {
   line-height: 22px;
 }
 
-/* Details Pane */
+/* Details Pane (Removed from main layout per updated design) */
 #det {
-  height: 82px;
-  border-top: 1px solid var(--pline);
-  background: var(--panel);
-  position: relative;
-  flex: none;
-  box-shadow: 0 -1px 0 var(--pline);
+  display: none !important;
 }
 
 .bar2 {
