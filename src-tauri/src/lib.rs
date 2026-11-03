@@ -63,17 +63,15 @@ pub fn run() {
         }
     }
 
-    // Launch the single-instance persistent Windows Named Pipe IPC Server
+    let is_minimized = std::env::args().any(|a| a == "--minimized");
+
     let ipc_manager = manager.clone();
     let ipc_db = db.clone();
+    let srv_manager = manager.clone();
+    let srv_db = db.clone();
     let shutdown_token = CancellationToken::new();
     let ipc_shutdown = shutdown_token.clone();
-
-    tauri::async_runtime::spawn(async move {
-        tdm_native_host::ipc::run_ipc_server(ipc_manager, ipc_db, ipc_shutdown).await;
-    });
-
-    let is_minimized = std::env::args().any(|a| a == "--minimized");
+    let srv_shutdown = shutdown_token.clone();
 
     tauri::Builder::default()
         .manage(AppState {
@@ -93,6 +91,20 @@ pub fn run() {
                         }
                     }
                     let _ = app_handle.emit("download-event", &event);
+                }
+            });
+
+            // Launch the single-instance persistent Windows Named Pipe IPC Server
+            tauri::async_runtime::spawn(async move {
+                tdm_native_host::ipc::run_ipc_server(ipc_manager, ipc_db, ipc_shutdown).await;
+            });
+
+            // Launch the local HTTP/SSE browser integration server on 127.0.0.1
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) =
+                    tdm_native_host::server::start_server(srv_manager, srv_db, srv_shutdown).await
+                {
+                    eprintln!("[TORI] Failed to start local integration server: {}", e);
                 }
             });
 
@@ -128,6 +140,8 @@ pub fn run() {
             window_close,
             update_engine_settings,
             get_engine_settings,
+            get_browser_integration_info,
+            regenerate_pairing_token,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running TORI Download Manager desktop application");

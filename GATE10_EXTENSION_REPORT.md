@@ -103,3 +103,4 @@ extension/
    - Registered Registry Keys:
      - `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.tori.download_manager`
      - `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.tori.download_manager`
+

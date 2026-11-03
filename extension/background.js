@@ -26,6 +26,9 @@ const tabMediaCache = new Map();
 
 // Extension configuration synchronized with storage
 let extSettings = {
+  port: 6800,
+  key: '',
+  auto: true,
   cap: true,
   min: 1,
   badge: true,
@@ -44,6 +47,47 @@ chrome.storage.onChanged.addListener((changes) => {
     extSettings = { ...extSettings, ...changes.tori_settings.newValue };
   }
 });
+
+/**
+ * Localhost HTTP API client with timeout and authentication
+ */
+async function callDesktopApi(endpoint, method = 'GET', body = null) {
+  const port = extSettings.port || 6800;
+  const token = extSettings.key || '';
+  const url = `http://127.0.0.1:${port}${endpoint}`;
+  const headers = {
+    'X-Tori-Token': token,
+  };
+  if (body && (method === 'POST' || method === 'PUT')) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const data = await res.json().catch(() => ({}));
+    return {
+      ok: res.ok,
+      status: res.status,
+      data,
+    };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    return {
+      ok: false,
+      status: 0,
+      error: err.name === 'AbortError' ? 'Connection timeout' : err.message,
+    };
+  }
+}
 
 /**
  * Native Messaging helper with timeout and graceful error reporting
@@ -392,43 +436,136 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'PING_DESKTOP') {
-    sendNativeMessage({ action: 'ping' }).then(sendResponse);
+    const start = Date.now();
+    callDesktopApi('/api/v1/status').then(async (httpRes) => {
+      const latency = Math.max(1, Date.now() - start);
+      if (httpRes.ok && httpRes.data && httpRes.data.status === 'ok') {
+        sendResponse({
+          status: httpRes.data.authenticated ? 'ok' : 'unpaired',
+          authenticated: !!httpRes.data.authenticated,
+          version: httpRes.data.version || '2.0.0',
+          port: httpRes.data.port || (extSettings.port || 6800),
+          latency,
+          mode: 'http',
+        });
+      } else if (httpRes.status === 401) {
+        sendResponse({
+          status: 'unpaired',
+          authenticated: false,
+          message: 'API Key mismatch / Pairing required',
+          port: extSettings.port || 6800,
+          latency,
+          mode: 'http',
+        });
+      } else {
+        // Desktop HTTP server unreachable. Optional Native Messaging bootstrap check:
+        const nmRes = await sendNativeMessage({ action: 'ping' });
+        if (nmRes && nmRes.status === 'ok') {
+          sendResponse({
+            status: 'ok',
+            authenticated: true,
+            version: nmRes.version || '2.0.0',
+            port: extSettings.port || 6800,
+            latency,
+            mode: 'native',
+          });
+        } else {
+          sendResponse({
+            status: 'error',
+            authenticated: false,
+            message: 'Could not connect to TORI Desktop. Is TORI running?',
+            error: httpRes.error,
+            port: extSettings.port || 6800,
+            mode: 'none',
+          });
+        }
+      }
+    });
     return true; // Keep channel open for async response
   }
 
   if (message.action === 'SHOW_DESKTOP') {
-    sendNativeMessage({ action: 'show_window' }).then(sendResponse);
+    callDesktopApi('/api/v1/window/show', 'POST').then(async (httpRes) => {
+      if (httpRes.ok) {
+        sendResponse(httpRes.data);
+      } else {
+        // Fallback to Native Messaging to spawn/bring desktop forward
+        sendResponse(await sendNativeMessage({ action: 'show_window' }));
+      }
+    });
     return true;
   }
 
   if (message.action === 'START_DOWNLOAD') {
-    sendNativeMessage({
-      action: 'start_download',
+    callDesktopApi('/api/v1/downloads', 'POST', {
       url: message.url,
       filename: message.filename,
       destination: message.destination,
       priority: message.priority || 'normal',
-    }).then(sendResponse);
+    }).then(async (httpRes) => {
+      if (httpRes.ok && httpRes.data) {
+        sendResponse(httpRes.data);
+      } else if (httpRes.status === 401) {
+        sendResponse({
+          status: 'error',
+          message: 'Pairing required. Check API Key in Extension Options.',
+        });
+      } else {
+        // Fallback to Native Messaging
+        const nmRes = await sendNativeMessage({
+          action: 'start_download',
+          url: message.url,
+          filename: message.filename,
+          destination: message.destination,
+          priority: message.priority || 'normal',
+        });
+        sendResponse(nmRes);
+      }
+    });
     return true;
   }
 
   if (message.action === 'GET_DOWNLOADS') {
-    sendNativeMessage({ action: 'get_downloads' }).then(sendResponse);
+    callDesktopApi('/api/v1/downloads').then(async (httpRes) => {
+      if (httpRes.ok && httpRes.data && Array.isArray(httpRes.data.jobs)) {
+        sendResponse({ status: 'ok', jobs: httpRes.data.jobs });
+      } else {
+        // Fallback to Native Messaging
+        const nmRes = await sendNativeMessage({ action: 'get_downloads' });
+        sendResponse(nmRes);
+      }
+    });
     return true;
   }
 
   if (message.action === 'PAUSE_DOWNLOAD') {
-    sendNativeMessage({ action: 'pause_download', job_id: message.job_id }).then(sendResponse);
+    callDesktopApi(`/api/v1/downloads/${message.job_id}/pause`, 'POST').then(async (httpRes) => {
+      if (httpRes.ok) sendResponse(httpRes.data);
+      else sendResponse(await sendNativeMessage({ action: 'pause_download', job_id: message.job_id }));
+    });
     return true;
   }
 
   if (message.action === 'RESUME_DOWNLOAD') {
-    sendNativeMessage({ action: 'resume_download', job_id: message.job_id }).then(sendResponse);
+    callDesktopApi(`/api/v1/downloads/${message.job_id}/resume`, 'POST').then(async (httpRes) => {
+      if (httpRes.ok) sendResponse(httpRes.data);
+      else sendResponse(await sendNativeMessage({ action: 'resume_download', job_id: message.job_id }));
+    });
     return true;
   }
 
   if (message.action === 'CANCEL_DOWNLOAD') {
-    sendNativeMessage({ action: 'cancel_download', job_id: message.job_id }).then(sendResponse);
+    callDesktopApi(`/api/v1/downloads/${message.job_id}/cancel`, 'POST').then(async (httpRes) => {
+      if (httpRes.ok) sendResponse(httpRes.data);
+      else sendResponse(await sendNativeMessage({ action: 'cancel_download', job_id: message.job_id }));
+    });
+    return true;
+  }
+
+  if (message.action === 'RETRY_DOWNLOAD') {
+    callDesktopApi(`/api/v1/downloads/${message.job_id}/retry`, 'POST').then((httpRes) => {
+      sendResponse(httpRes.ok ? httpRes.data : { status: 'error' });
+    });
     return true;
   }
 

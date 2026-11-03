@@ -93,12 +93,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 5. Check desktop connection status
   function updateConnectionStatus() {
     chrome.runtime.sendMessage({ action: 'PING_DESKTOP' }, (res) => {
-      if (chrome.runtime.lastError || !res || res.status !== 'ok') {
+      if (chrome.runtime.lastError || !res || res.status === 'error' || res.status === 'none') {
         statusPill.className = 'st bad';
         statusText.textContent = 'Desktop Offline';
+      } else if (res.status === 'unpaired') {
+        statusPill.className = 'st wait';
+        statusText.textContent = 'Pairing Required';
       } else {
         statusPill.className = 'st';
-        statusText.textContent = `Connected · TORI Engine v${res.version || '2.0'}`;
+        statusText.textContent = `Connected · 127.0.0.1:${res.port || 6800}`;
       }
     });
   }

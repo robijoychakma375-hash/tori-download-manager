@@ -49,6 +49,7 @@ let sec = 'conn';
 let testState = 'wait';
 let testLatency = 0;
 let testEngineVer = '2.0.0';
+let testPort = 6800;
 
 const $ = (s) => document.querySelector(s);
 const svg = (d) => `<svg viewBox="0 0 24 24"><path d="${d}"/></svg>`;
@@ -61,7 +62,7 @@ const V = {
     <h2>Connection</h2>
     <div class="sub0">Connect this extension to the Tori Download Manager app on your computer.</div>
     <div class="card">
-      <div class="stt ${testState === 'bad' ? 'bad' : testState === 'wait' ? 'wait' : ''}">
+      <div class="stt ${testState === 'bad' ? 'bad' : testState === 'wait' ? 'wait' : testState === 'unpaired' ? 'unpaired' : ''}">
         <span class="big"><i></i></span>
         <div style="flex:1">
           <b style="font-size:14px">${
@@ -69,14 +70,18 @@ const V = {
               ? 'Can’t reach Tori'
               : testState === 'wait'
               ? 'Connecting…'
+              : testState === 'unpaired'
+              ? 'Pairing Required'
               : 'Connected to Tori'
           }</b>
           <span class="sub" style="display:block;color:var(--mut);font-size:11.5px;margin-top:2px">${
             testState === 'bad'
-              ? 'Desktop Native Host offline. Is Tori Download Manager running?'
+              ? `Nothing is listening on 127.0.0.1:${S.port}. Is Tori Download Manager running?`
               : testState === 'wait'
-              ? 'Checking native messaging host…'
-              : `Tori v${testEngineVer} · Native Host Active · ${testLatency} ms`
+              ? `Checking 127.0.0.1:${S.port}…`
+              : testState === 'unpaired'
+              ? `Tori is listening on 127.0.0.1:${testPort}, but API key does not match. Copy API key from Tori Desktop → Settings.`
+              : `Tori v${testEngineVer} · 127.0.0.1:${testPort} · ${testLatency} ms · Paired`
           }</span>
         </div>
         <button class="btn def" data-a="test">Test connection</button>
@@ -248,11 +253,18 @@ function testNativeConnection() {
     const elapsed = Math.round(performance.now() - startTime);
     testLatency = Math.max(1, elapsed);
 
-    if (chrome.runtime.lastError || !res || res.status !== 'ok') {
+    if (chrome.runtime.lastError || !res) {
       testState = 'bad';
-    } else {
-      testState = 'ok';
+    } else if (res.status === 'unpaired') {
+      testState = 'unpaired';
+      testPort = res.port || S.port || 6800;
       testEngineVer = res.version || '2.0.0';
+    } else if (res.status === 'ok') {
+      testState = 'ok';
+      testPort = res.port || S.port || 6800;
+      testEngineVer = res.version || '2.0.0';
+    } else {
+      testState = 'bad';
     }
     render();
   });

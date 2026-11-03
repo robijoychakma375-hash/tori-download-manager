@@ -7,6 +7,7 @@ use tdm_core::{Database, DownloadManager, EventBus, Priority};
 pub mod ipc;
 pub mod protocol;
 pub mod registry;
+pub mod server;
 
 use protocol::{read_message, write_message, NativeMessage, NativeResponse};
 pub use registry::{register_host, unregister_host, DEFAULT_EXTENSION_ID, HOST_NAME};

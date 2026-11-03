@@ -332,6 +332,55 @@ pub async fn get_engine_settings(
     }
 }
 
+#[tauri::command]
+pub async fn get_browser_integration_info(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let db = state.manager.database();
+    let port = tdm_native_host::server::get_configured_port(db);
+    let active_port = db
+        .get_setting("active_server_port")
+        .ok()
+        .flatten()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(port);
+    let token = tdm_native_host::server::get_or_create_token(db);
+
+    Ok(serde_json::json!({
+        "port": port,
+        "active_port": active_port,
+        "token": token,
+        "status": "running"
+    }))
+}
+
+#[tauri::command]
+pub async fn regenerate_pairing_token(state: State<'_, AppState>) -> Result<String, String> {
+    let db = state.manager.database();
+    let u1 = uuid::Uuid::new_v4();
+    let u2 = uuid::Uuid::new_v4();
+    let token = format!(
+        "tori_{}{}",
+        hex::encode(&u1.as_bytes()[..8]),
+        hex::encode(&u2.as_bytes()[..8])
+    );
+    db.set_setting("browser_integration_token", &token)
+        .map_err(|e| e.to_string())?;
+
+    if let Ok(Some(saved)) = db.get_setting("app_settings") {
+        if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&saved) {
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("key".to_string(), serde_json::Value::String(token.clone()));
+                if let Ok(serialized) = serde_json::to_string(&val) {
+                    let _ = db.set_setting("app_settings", &serialized);
+                }
+            }
+        }
+    }
+
+    Ok(token)
+}
+
 fn get_default_download_path() -> PathBuf {
     if let Ok(profile) = std::env::var("USERPROFILE") {
         let downloads = PathBuf::from(profile).join("Downloads");

@@ -1,6 +1,6 @@
 # TORI Download Manager (TDM) — Implementation Status
 
-Last Updated: Gate 9 Complete Production UI Implementation Complete & Verified
+Last Updated: Gate 10.2 Localhost Port-Based Browser Integration Complete & Verified
 Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.0.26100.0)
 
 ---
@@ -29,7 +29,7 @@ Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.
 | **Gate 2** | Adaptive Concurrency & Resource Benchmark | **VERIFIED** | `cargo test -p tdm-core --test gate2_adaptive_tests test_gate2_adaptive_vs_fixed_concurrency_and_resources -- --nocapture` | Passed; Throughput 204.15 MB/s, peak working set memory strictly bounded at 45.05 MB. | Benchmarked against fixed single-stream baseline. |
 | **Gate 2** | Host Throttling & Backoff (HTTP 429) | **VERIFIED** | `cargo test -p tdm-core --test gate2_adaptive_tests test_gate2_host_throttling_429_retry_recovery` | Passed in 0.52s; 429 response handled with exponential backoff retry; file verified. | Auto-retries up to 3 times on 429, 502, 503, 504 and connection resets. |
 | **Gate 2** | Fsync Flush Benchmark & Optimization | **VERIFIED** | `cargo test -p tdm-core --test gate2_adaptive_tests test_gate2_fsync_throughput_benchmark -- --nocapture` | Passed; measured 512KB (267.8 MB/s), 1024KB (412.7 MB/s), 2048KB (448.2 MB/s). | Upgraded checkpoint threshold from 512 KB to 1 MB (+54% write throughput improvement). |
-| **Gate 3** | Windows Native Host (Rust) & Named Pipe IPC | **VERIFIED** | `cargo test -p tdm-native-host --test host_tests` | 6 tests passed in 0.40s; process e2e stdin/stdout verified, Named Pipe IPC server connection verified. | Decoupled native host forwards to persistent desktop engine via `\\.\pipe\tori-download-manager-ipc`. |
+| **Gate 3** | Windows Native Host (Rust) & Named Pipe IPC | **VERIFIED** | `cargo test -p tdm-native-host --test host_tests` | 7 tests passed in 1.44s; process e2e stdin/stdout verified, Named Pipe IPC server connection verified. | Decoupled native host forwards to persistent desktop engine via `\\.\pipe\tori-download-manager-ipc`. |
 | **Gate 3** | Chrome & Edge Native Host Registry | **VERIFIED** | `.\target\release\tdm-native-host.exe --register` | Passed; created `%APPDATA%\tori-download-manager\com.tori.download_manager.json` and registry keys in HKCU for Chrome and Edge. | Deterministic Extension ID `jfnfgmcbgapcpieaonbaolgebjaejcdm` via pinned 2048-bit RSA key. |
 | **Gate 3** | Media Interception (Manifest V3) | **VERIFIED** | Extension background service worker & webRequest hooks | Tested; detects MP4, WEBM, MKV, MOV, MP3, M4A, AAC, FLAC, OGG, OPUS, HLS M3U8, and MPEG-DASH MPD. | Deduplicated per tab (max 50 candidates); least-privilege permissions. |
 | **Gate 3** | Real HTML5 Video Overlay & Popup UI | **VERIFIED** | `extension/content.js`, `extension/popup/` | Verified; floating "Download with TORI" video overlay, 480px popup with dark/light themes, live status pill, queue controls. | Reconnects cleanly on app restart; zero fake progress. |
@@ -81,6 +81,10 @@ Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.
 | **Pre-Gate 10 Audit** | IPC Test Suite Isolation | **VERIFIED** | `cargo test -p tdm-native-host --test host_tests` with `TORI_IPC_PIPE` isolation | Passed all 6 tests in 0.40s; isolated test Named Pipe prevents forwarding requests into running production engine. | Zero collision with desktop app. |
 | **Pre-Gate 10 Audit** | Gate 4 HLS Full Coverage Restored | **VERIFIED** | `cargo test -p tdm-core --test gate4_hls_tests` | 8/8 tests passed in 1.79s including pause/resume continuity; 0 clippy warnings. | Fully intact test coverage. |
 | **Pre-Gate 10 Audit** | WebView2 Memory Audit & Optimization | **VERIFIED** | `scripts/audit_memory_profile.ps1` & `scripts/verify_dialog_stability.ps1` | Removed redundant backdrop-filter texture layers; eliminated React listener churn; memoized sidebar & row re-renders; measured 8.17 MB Rust Private Bytes, 210.59 MB Total Private Bytes, 0 orphaned processes. | Zero memory leak; complete process tree profiled across 30s/2m/minimized/restored. |
+| **Gate 10** | Custom Browser Extension UI (Popup, Overlay & Options) | **VERIFIED** | `extension/` manual loading and test suite | Design Source A (Media popup & Video overlay) and Design Source B (6-tab Options/Settings) matching HTML/CSS specs. | Full MV3 service worker with pinned ID `jfnfgmcbgapcpieaonbaolgebjaejcdm`. |
+| **Gate 10.2** | Localhost Port-Based Browser Integration Server | **VERIFIED** | `cargo test -p tdm-native-host --test server_tests` & `node scripts/verify_gate10_2.js` | 5/5 automated Rust tests + 16/16 Node e2e verification steps passed. Binds exclusively to `127.0.0.1:6800` (no 0.0.0.0). Defeats DNS rebinding (400), blocks web origins (403), allows extension CORS, requires cryptographic token auth (401), full CRUD + SSE events. | Dual integration: high-performance localhost HTTP API + optional Native Messaging bootstrap. |
+
+---
 
 ---
 
@@ -151,20 +155,22 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
 
 ## Workspace Automated Test Results
 
-- **Total Automated Tests**: **88 passing tests** (0 failed, 0 ignored) across 11 test suites:
-  - `tdm-core` unit tests: **18 passed** (3.02s)
-  - `gate2_adaptive_tests`: **8 passed** (4.83s)
-  - `gate4_hls_tests`: **8 passed** (6.08s)
-  - `gate5_dash_tests`: **9 passed** (7.51s)
-  - `gate6_torrent_tests`: **8 passed** (0.47s)
-  - `gate7_live_tests`: **8 passed** (22.34s)
-  - `gate8_protocol_matrix_tests`: **8 passed** (11.60s)
-  - `gate8_stress_tests`: **4 passed** (2.16s)
-  - `integration_tests`: **9 passed** (3.65s)
+- **Total Automated Tests**: **93 passing tests** (0 failed, 0 ignored) across 12 test suites:
+  - `tdm-core` unit tests: **18 passed** (1.90s)
+  - `gate2_adaptive_tests`: **8 passed** (4.33s)
+  - `gate4_hls_tests`: **8 passed** (6.61s)
+  - `gate5_dash_tests`: **9 passed** (7.54s)
+  - `gate6_torrent_tests`: **8 passed** (0.27s)
+  - `gate7_live_tests`: **8 passed** (23.11s)
+  - `gate8_protocol_matrix_tests`: **8 passed** (11.49s)
+  - `gate8_stress_tests`: **4 passed** (2.18s)
+  - `integration_tests`: **9 passed** (3.71s)
   - `tdm-native-host` unit tests: **1 passed** (0.00s)
-  - `host_tests` (including IPC, OS process stdin/stdout, and `show_window` tests): **7 passed** (0.26s)
+  - `host_tests` (including IPC, OS process stdin/stdout, and `show_window` tests): **7 passed** (1.44s)
+  - `server_tests` (Gate 10.2 local server, DNS rebind defense, CORS defense, pairing, CRUD): **5 passed** (0.15s)
 - **Clippy**: 0 warnings across all targets (`cargo clippy --workspace --all-targets -- -D warnings`).
 - **Formatting**: 100% compliant with rustfmt (`cargo fmt --all -- --check`).
-- **Frontend Build**: Built in 279ms with 0 errors (`npm --prefix ui run build`).
+- **Frontend Build**: Built in 330ms with 0 errors (`npm --prefix ui run build`).
 - **Release Build**: Built with 0 errors (`cargo tauri build --no-bundle`).
-- **NSIS Installer Package**: Built with 0 errors (`cargo tauri build`). Size: 15,680,993 bytes.
+- **NSIS Installer Package**: Built with 0 errors (`cargo tauri build`). Size: ~15.7 MB (`target\release\bundle\nsis\TORI Download Manager_0.1.0_x64-setup.exe`).
+- **Real-World Verification**: 16/16 end-to-end integration verification steps verified against release binary (`node scripts/verify_gate10_2.js`).

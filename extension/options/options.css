@@ -426,11 +426,13 @@ select.fi {
   box-shadow: 0 0 0 4px rgba(229, 72, 77, 0.25);
 }
 
-.stt.wait .big {
+.stt.wait .big,
+.stt.unpaired .big {
   background: rgba(245, 158, 11, 0.16);
 }
 
-.stt.wait .big i {
+.stt.wait .big i,
+.stt.unpaired .big i {
   background: #f59e0b;
   box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.25);
 }

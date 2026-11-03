@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { TitleBar } from './TitleBar';
 import { ToggleSwitch } from './ToggleSwitch';
@@ -145,19 +145,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     update('dns', next);
   };
 
+  useEffect(() => {
+    if (currentTab === 'integration') {
+      invoke<{ port: number; active_port: number; token: string }>('get_browser_integration_info')
+        .then((info) => {
+          if (info && info.token) {
+            update('key', info.token);
+          }
+          if (info && info.active_port) {
+            update('port', info.active_port);
+          }
+        })
+        .catch((err) => console.warn('Failed to load integration info:', err));
+    }
+  }, [currentTab]);
+
   const handleCopyKey = () => {
     try {
-      navigator.clipboard.writeText(settings.key || 'tori_live_api_key_v2');
+      navigator.clipboard.writeText(settings.key || '');
       flash('API key copied');
     } catch {
       flash('Could not copy key');
     }
   };
 
-  const handleRegenKey = () => {
-    const newKey = 'tori_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
-    update('key', newKey);
-    flash('New API key generated');
+  const handleRegenKey = async () => {
+    try {
+      const newKey = await invoke<string>('regenerate_pairing_token');
+      update('key', newKey);
+      flash('New API key generated');
+    } catch {
+      flash('Failed to regenerate key');
+    }
   };
 
   const proxyLabel = () => {
@@ -548,7 +567,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className={`sr ${settings.cap === false ? 'dis' : ''}`} id="r-port">
                   <div>
                     <b>Server Port</b>
-                    <span className="sub">Listening on 127.0.0.1:{settings.port || 7070}</span>
+                    <span className="sub">Listening on 127.0.0.1:{settings.port || 6800}</span>
                   </div>
                   <div className="sc">
                     <input
@@ -556,8 +575,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       type="number"
                       min={1024}
                       max={65535}
-                      value={settings.port || 7070}
-                      onChange={(e) => update('port', parseInt(e.target.value, 10) || 7070)}
+                      value={settings.port || 6800}
+                      onChange={(e) => update('port', parseInt(e.target.value, 10) || 6800)}
                       style={{ width: 90 }}
                       disabled={settings.cap === false}
                     />
@@ -575,7 +594,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       id="keyin"
                       type={showApiKey ? 'text' : 'password'}
                       readOnly
-                      value={settings.key || 'tori_live_api_key_v2'}
+                      value={settings.key || ''}
                       style={{ width: 210, fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 12 }}
                       disabled={settings.cap === false}
                     />
