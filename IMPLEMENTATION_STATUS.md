@@ -1,6 +1,6 @@
 # TORI Download Manager (TDM) — Implementation Status
 
-Last Updated: Gate 10.5.1 Complete Video Download & Verification Complete & Verified (105 Automated Tests Passing + Multi-Quality Video E2E)
+Last Updated: Gate 10.5.2 Real Extension Download & Release Readiness Verified (106 Automated Tests Passing + Microsoft Edge Browser E2E Verified)
 Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.0.26100.0)
 
 ---
@@ -86,6 +86,7 @@ Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.
 | **Gate 10.4** | Media Extraction & Webpage Download Rejection | **VERIFIED** | `cargo test --workspace` (96 tests) & `node scripts/verify_gate10_4.js` | Traced failed "watch" job to `window.location.href` fallback & mock formats; purged all fabricated sizes (420 MB, 210 MB, etc.); added MIME-type HTML detection & watch page URL rejection in Rust engine; verified controlled `flower.mp4` download completing 100% (1,120,000 bytes) on disk. | Zero fake downloads; displays honest "Source Unavailable" on protected/MSE blob streams. |
 | **Gate 10.5** | Universal Media Resolver & Format Engine | **VERIFIED** | `cargo test -p tdm-core --test gate10_5_resolver_tests` & `node scripts/verify_gate10_5.js` | 5/5 resolver unit tests + 8/8 end-to-end integration verification steps passed. Safely executes yt-dlp `--dump-single-json` with explicit arguments, 30s timeout, and 12MB buffer; anti-SSRF blocks loopback, private ranges, and cloud metadata (169.254.169.254); pairs video-only formats with top audio; excludes storyboards; calculates exact/estimated size; streams progress via SQLite & EventBus; zero orphan processes on cancel. | Full support for YouTube, Facebook, Instagram, Vimeo, and direct media sites. DRM protected streams honestly reported. |
 | **Gate 10.5.1** | Complete Video Download & FFprobe Verification | **VERIFIED** | `node scripts/verify_gate10_5_1.js` | 8/8 real-world verification steps passed (100%). Verified real downloads: 360p video with audio (640x360 H.264 + AAC), 720p video with audio (1280x720 VP9 + AAC), 1080p video with audio (1920x1080 H.264 + AAC), and Audio-only (AAC, 0 video streams). Verified FFmpeg automatic merging (`--merge-output-format mp4/mkv`), active UI merging state (`JobState::Verifying`), self-contained runtime directory (`%LOCALAPPDATA%\tori-download-manager\bin`), multi-site resolution (YouTube, Facebook, MDN Direct HTML5), and cancellation process reaping. | Zero audio-only false reports; 100% verified playable media on disk with ffprobe. |
+| **Gate 10.5.2** | Real Extension Download & Release Readiness | **VERIFIED** | `node scripts/verify_edge_integration.js` & `cargo test --workspace` | Replaced 3.5s timeout with endpoint-aware deadlines (35s resolve, 12s download, 4s ping); request deduplication in background SW; standards-compliant container pairing matrix (VP9+Opus->WebM, H264+AAC->MP4, VP9+AAC->MKV, H264+Opus->MKV); tested in real Microsoft Edge via CDP on port 9223 with isolated profile; verified Extension Options pairing, Extension Popup status, in-browser media resolution (24 genuine formats), 720p download (19.3 MB MKV) and 1080p download (40.1 MB MP4) with FFprobe video+audio streams, cancellation with zero orphan processes. 106 automated tests passing. | Production release binary compiled: `target/release/tori-download-manager.exe` (26.2 MB). |
 
 ---
 
@@ -163,23 +164,22 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
 
 ## Workspace Automated Test Results
 
-- **Total Automated Tests**: **105 passing tests** (0 failed, 0 ignored) across 13 test suites:
-  - `tdm-core` unit tests: **22 passed** (2.26s)
-  - `gate10_5_resolver_tests`: **5 passed** (8.33s)
-  - `gate2_adaptive_tests`: **8 passed** (5.08s)
-  - `gate4_hls_tests`: **8 passed** (5.70s)
-  - `gate5_dash_tests`: **9 passed** (7.54s)
-  - `gate6_torrent_tests`: **8 passed** (0.49s)
-  - `gate7_live_tests`: **8 passed** (22.08s)
-  - `gate8_protocol_matrix_tests`: **8 passed** (11.52s)
-  - `gate8_stress_tests`: **4 passed** (2.31s)
-  - `integration_tests`: **9 passed** (3.85s)
+- **Total Automated Tests**: **106 passing tests** (0 failed, 0 ignored) across 13 test suites:
+  - `tdm-core` unit tests: **22 passed** (2.95s)
+  - `gate10_5_resolver_tests`: **6 passed** (7.01s)
+  - `gate2_adaptive_tests`: **8 passed** (4.77s)
+  - `gate4_hls_tests`: **8 passed** (6.01s)
+  - `gate5_dash_tests`: **9 passed** (7.18s)
+  - `gate6_torrent_tests`: **8 passed** (0.45s)
+  - `gate7_live_tests`: **8 passed** (22.20s)
+  - `gate8_protocol_matrix_tests`: **8 passed** (10.12s)
+  - `gate8_stress_tests`: **4 passed** (2.19s)
+  - `integration_tests`: **9 passed** (3.65s)
   - `tdm-native-host` unit tests: **1 passed** (0.00s)
-  - `host_tests` (including IPC, OS process stdin/stdout, and `show_window` tests): **7 passed** (1.32s)
-  - `server_tests` (Gate 10.2 local server, DNS rebind defense, CORS defense, pairing, CRUD, Gate 10.5 media endpoints): **7 passed** (3.02s)
-- **Clippy**: 0 warnings across all targets (`cargo clippy --workspace --all-targets -- -D warnings`).
+  - `host_tests` (including IPC, OS process stdin/stdout, and `show_window` tests): **7 passed** (1.11s)
+  - `server_tests` (Gate 10.2 local server, DNS rebind defense, CORS defense, pairing, CRUD, Gate 10.5 media endpoints): **7 passed** (2.77s)
+- **Clippy**: 0 warnings across all targets (`cargo clippy --workspace --all-targets -j 2 -- -D warnings`).
 - **Formatting**: 100% compliant with rustfmt (`cargo fmt --all -- --check`).
-- **Frontend Build**: Built in 263ms with 0 errors (`npm --prefix ui run build`).
-- **Release Build**: Built with 0 errors (`cargo tauri build --no-bundle`).
-- **NSIS Installer Package**: Built with 0 errors (`cargo tauri bundle --bundles nsis`). Size: 16.09 MB (`target\release\bundle\nsis\TORI Download Manager_0.1.0_x64-setup.exe`).
-- **Real-World Video Downloads Verification**: 8/8 end-to-end integration verification steps verified with ffprobe against release binary (`node scripts/verify_gate10_5_1.js`). Tested 360p video+audio, 720p video+audio, 1080p video+audio, audio-only, SSRF rejection, runtime directory, cancellation process reaping.
+- **Frontend Build**: Built in 411ms with 0 errors (`npm --prefix ui run build`).
+- **Release Build**: Built in 53s with 0 errors (`cargo tauri build --no-bundle`). Executable: `target\release\tori-download-manager.exe` (26,210,816 bytes, SHA-256: `80EF92A3581FBC622E96232638E791EB80505F23BB7CA7C868CDE173198E4552`).
+- **Real Edge Extension Verification**: 8/8 automated browser integration steps verified with Microsoft Edge CDP, Options UI, Popup UI, media resolution without timeout (35s deadline), 720p/1080p downloads with FFprobe stream verification, and zero orphan processes (`node scripts/verify_edge_integration.js`).

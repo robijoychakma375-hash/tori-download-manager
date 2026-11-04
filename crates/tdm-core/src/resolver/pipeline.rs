@@ -439,22 +439,10 @@ impl MediaResolver {
             }
         }
 
-        // Find the best audio track (prefer m4a or opus with highest bitrate)
-        let best_audio = audio_tracks
-            .iter()
-            .max_by(|a, b| {
-                let a_score = (a.bitrate_kbps.unwrap_or(0.0) as i64)
-                    + if a.container == "m4a" { 50 } else { 0 };
-                let b_score = (b.bitrate_kbps.unwrap_or(0.0) as i64)
-                    + if b.container == "m4a" { 50 } else { 0 };
-                a_score.cmp(&b_score)
-            })
-            .cloned();
-
         let mut final_formats: Vec<ResolvedMediaFormat> = Vec::new();
 
-        // 2. Add video-only formats paired with best audio (or marked requires_merge)
-        // Group by resolution height to avoid duplicate formats with same resolution
+        // 2. Add video-only formats paired with compatible audio (or marked requires_merge)
+        // Group by resolution height and container to avoid duplicate formats with same resolution
         let mut seen_heights = std::collections::HashSet::new();
 
         // Sort video tracks descending by height and bitrate
@@ -484,8 +472,13 @@ impl MediaResolver {
                 v.resolution_label.clone()
             };
 
-            // Calculate combined filesize if paired with best audio
-            let (combo_size, combo_approx, size_type, merge_id) = if let Some(ref a) = best_audio {
+            // Select compatible audio and strictly standards-compliant container
+            let (chosen_audio, output_container) =
+                select_compatible_audio_and_container(&v, &audio_tracks);
+
+            // Calculate combined filesize if paired with chosen audio
+            let (combo_size, combo_approx, size_type, merge_id) = if let Some(ref a) = chosen_audio
+            {
                 let merge_id = Some(a.format_id.clone());
                 match (v.filesize, a.filesize) {
                     (Some(v_sz), Some(a_sz)) => {
@@ -506,7 +499,7 @@ impl MediaResolver {
                 (v.filesize, v.filesize_approx, v.filesize_type, None)
             };
 
-            let format_id_spec = if let Some(ref a) = best_audio {
+            let format_id_spec = if let Some(ref a) = chosen_audio {
                 format!("{}+{}", v.format_id, a.format_id)
             } else {
                 v.format_id.clone()
@@ -520,23 +513,19 @@ impl MediaResolver {
                 resolution_label: res_label,
                 fps: v.fps,
                 vcodec: v.vcodec.clone(),
-                acodec: best_audio.as_ref().and_then(|a| a.acodec.clone()),
-                container: if v.container == "webm" {
-                    "webm".to_string()
-                } else {
-                    "mp4".to_string()
-                },
+                acodec: chosen_audio.as_ref().and_then(|a| a.acodec.clone()),
+                container: output_container,
                 protocol: v.protocol.clone(),
                 bitrate_kbps: v.bitrate_kbps,
                 has_video: true,
-                has_audio: best_audio.is_some(),
+                has_audio: chosen_audio.is_some(),
                 filesize: combo_size,
                 filesize_approx: combo_approx,
                 filesize_type: size_type,
-                requires_merge: best_audio.is_some(),
+                requires_merge: chosen_audio.is_some(),
                 merge_audio_format_id: merge_id,
-                audio_channels: best_audio.as_ref().and_then(|a| a.audio_channels),
-                sample_rate: best_audio.as_ref().and_then(|a| a.sample_rate),
+                audio_channels: chosen_audio.as_ref().and_then(|a| a.audio_channels),
+                sample_rate: chosen_audio.as_ref().and_then(|a| a.sample_rate),
                 download_capability: DownloadCapability::ManagedExtractor,
                 unavailable_reason: None,
                 direct_stream_url: v.direct_url.clone(),
@@ -638,28 +627,134 @@ impl MediaResolver {
 }
 
 #[derive(Clone, Debug)]
-struct ParsedRawFormat {
-    format_id: String,
-    format_note: Option<String>,
-    width: Option<u32>,
-    height: Option<u32>,
-    resolution_label: String,
-    fps: Option<f64>,
-    vcodec: Option<String>,
-    acodec: Option<String>,
-    container: String,
-    protocol: String,
-    bitrate_kbps: Option<f64>,
-    has_video: bool,
-    has_audio: bool,
-    filesize: Option<u64>,
-    filesize_approx: Option<u64>,
-    filesize_type: FilesizeType,
-    is_storyboard: bool,
-    audio_channels: Option<u32>,
-    sample_rate: Option<u32>,
-    direct_url: Option<String>,
-    http_headers: Option<HashMap<String, String>>,
+pub struct ParsedRawFormat {
+    pub format_id: String,
+    pub format_note: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub resolution_label: String,
+    pub fps: Option<f64>,
+    pub vcodec: Option<String>,
+    pub acodec: Option<String>,
+    pub container: String,
+    pub protocol: String,
+    pub bitrate_kbps: Option<f64>,
+    pub has_video: bool,
+    pub has_audio: bool,
+    pub filesize: Option<u64>,
+    pub filesize_approx: Option<u64>,
+    pub filesize_type: FilesizeType,
+    pub is_storyboard: bool,
+    pub audio_channels: Option<u32>,
+    pub sample_rate: Option<u32>,
+    pub direct_url: Option<String>,
+    pub http_headers: Option<HashMap<String, String>>,
+}
+
+/// Determines the most compatible audio track and standard-compliant container format for a video stream.
+/// Ensures:
+/// - H.264 + AAC: MP4
+/// - VP9 + Opus: WebM
+/// - VP9 + AAC: Matroska/MKV (never mislabeled as WebM)
+/// - H.264 + Opus: Matroska/MKV
+pub fn select_compatible_audio_and_container(
+    v: &ParsedRawFormat,
+    audio_tracks: &[ParsedRawFormat],
+) -> (Option<ParsedRawFormat>, String) {
+    if audio_tracks.is_empty() {
+        return (None, v.container.clone());
+    }
+
+    let is_vp9_or_webm = v.container == "webm"
+        || v.vcodec.as_deref().unwrap_or("").contains("vp9")
+        || v.vcodec.as_deref().unwrap_or("").contains("vp09")
+        || v.vcodec.as_deref().unwrap_or("").contains("vp8");
+
+    let is_mp4_or_h264 = v.container == "mp4"
+        || v.vcodec.as_deref().unwrap_or("").contains("avc")
+        || v.vcodec.as_deref().unwrap_or("").contains("h264")
+        || v.vcodec.as_deref().unwrap_or("").contains("hevc")
+        || v.vcodec.as_deref().unwrap_or("").contains("h265");
+
+    if is_vp9_or_webm {
+        // Look for Opus or Vorbis audio for strictly compliant WebM
+        let opus_track = audio_tracks
+            .iter()
+            .filter(|a| {
+                a.container == "webm"
+                    || a.container == "opus"
+                    || a.acodec
+                        .as_deref()
+                        .map(|c| c.contains("opus") || c.contains("vorbis"))
+                        .unwrap_or(false)
+            })
+            .max_by_key(|a| a.bitrate_kbps.unwrap_or(0.0) as i64);
+
+        if let Some(opus) = opus_track {
+            (Some(opus.clone()), "webm".to_string())
+        } else {
+            // Only AAC / non-WebM audio available with VP9:
+            // Standard WebM container prohibits AAC. Must use Matroska (MKV).
+            let best_other = audio_tracks
+                .iter()
+                .max_by_key(|a| a.bitrate_kbps.unwrap_or(0.0) as i64);
+            (best_other.cloned(), "mkv".to_string())
+        }
+    } else if is_mp4_or_h264 {
+        // Look for AAC/M4A audio for strictly compliant MP4
+        let aac_track = audio_tracks
+            .iter()
+            .filter(|a| {
+                a.container == "m4a"
+                    || a.container == "mp4"
+                    || a.acodec
+                        .as_deref()
+                        .map(|c| c.contains("mp4a") || c.contains("aac"))
+                        .unwrap_or(false)
+            })
+            .max_by_key(|a| a.bitrate_kbps.unwrap_or(0.0) as i64);
+
+        if let Some(aac) = aac_track {
+            (Some(aac.clone()), "mp4".to_string())
+        } else {
+            // Non-AAC audio paired with H.264
+            let best_other = audio_tracks
+                .iter()
+                .max_by_key(|a| a.bitrate_kbps.unwrap_or(0.0) as i64);
+            (best_other.cloned(), "mkv".to_string())
+        }
+    } else {
+        // Other video codecs (e.g. AV1)
+        let best_audio = audio_tracks
+            .iter()
+            .max_by_key(|a| a.bitrate_kbps.unwrap_or(0.0) as i64);
+        let container = if v.container == "webm" {
+            let is_opus = best_audio
+                .as_ref()
+                .and_then(|a| a.acodec.as_deref())
+                .map(|c| c.contains("opus") || c.contains("vorbis"))
+                .unwrap_or(false);
+            if is_opus {
+                "webm".to_string()
+            } else {
+                "mkv".to_string()
+            }
+        } else if v.container == "mp4" {
+            let is_aac = best_audio
+                .as_ref()
+                .and_then(|a| a.acodec.as_deref())
+                .map(|c| c.contains("mp4a") || c.contains("aac"))
+                .unwrap_or(false);
+            if is_aac {
+                "mp4".to_string()
+            } else {
+                "mkv".to_string()
+            }
+        } else {
+            v.container.clone()
+        };
+        (best_audio.cloned(), container)
+    }
 }
 
 fn parse_single_format(f: &serde_json::Value) -> Option<ParsedRawFormat> {

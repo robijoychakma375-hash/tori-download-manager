@@ -24,6 +24,9 @@ const STREAMING_MIMES = [
 // In-memory cache for fast synchronous access
 const tabMediaCache = new Map();
 
+// Active in-flight media resolution promises to prevent duplicate fetches
+const activeResolutions = new Map();
+
 // Extension configuration synchronized with storage
 let extSettings = {
   port: 6800,
@@ -49,9 +52,32 @@ chrome.storage.onChanged.addListener((changes) => {
 });
 
 /**
- * Localhost HTTP API client with timeout and authentication
+ * Determine endpoint-specific timeout deadline
  */
-async function callDesktopApi(endpoint, method = 'GET', body = null) {
+function getEndpointTimeout(endpoint, customTimeout = null) {
+  if (typeof customTimeout === 'number' && customTimeout > 0) {
+    return customTimeout;
+  }
+  if (endpoint.startsWith('/api/v1/media/resolve')) {
+    // Media resolution: coordinated with backend 30s timeout, giving 35s total deadline
+    return 35000;
+  }
+  if (endpoint.startsWith('/api/v1/media/download') || endpoint.startsWith('/api/v1/downloads')) {
+    // Download enqueue operations or listings: bounded 12s timeout
+    return 12000;
+  }
+  if (endpoint.startsWith('/api/v1/ping') || endpoint.startsWith('/api/v1/status')) {
+    // Fast health checks: 4s timeout
+    return 4000;
+  }
+  // Default for other commands (pause, resume, cancel, show window, etc.): 10s
+  return 10000;
+}
+
+/**
+ * Localhost HTTP API client with endpoint-aware timeout and authentication
+ */
+async function callDesktopApi(endpoint, method = 'GET', body = null, customTimeout = null) {
   const port = extSettings.port || 6800;
   const token = extSettings.key || '';
   const url = `http://127.0.0.1:${port}${endpoint}`;
@@ -62,8 +88,9 @@ async function callDesktopApi(endpoint, method = 'GET', body = null) {
     headers['Content-Type'] = 'application/json';
   }
 
+  const timeoutDuration = getEndpointTimeout(endpoint, customTimeout);
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3500);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
 
   try {
     const res = await fetch(url, {
@@ -81,10 +108,25 @@ async function callDesktopApi(endpoint, method = 'GET', body = null) {
     };
   } catch (err) {
     clearTimeout(timeoutId);
+    let errorMsg = err.message;
+    let code = 'NETWORK_ERROR';
+    if (err.name === 'AbortError') {
+      code = 'TIMEOUT';
+      if (endpoint.startsWith('/api/v1/media/resolve')) {
+        errorMsg = 'Media resolution timed out. The server or platform took longer than 35s to respond.';
+      } else if (endpoint.startsWith('/api/v1/ping') || endpoint.startsWith('/api/v1/status')) {
+        errorMsg = 'Desktop health check timed out (4s). Is TORI running?';
+      } else {
+        errorMsg = `Request timed out after ${Math.round(timeoutDuration / 1000)}s`;
+      }
+    } else if (err.message && err.message.includes('Failed to fetch')) {
+      errorMsg = 'Could not connect to TORI Desktop at 127.0.0.1:' + port + '. Is TORI running?';
+    }
     return {
       ok: false,
       status: 0,
-      error: err.name === 'AbortError' ? 'Connection timeout' : err.message,
+      code,
+      error: errorMsg,
     };
   }
 }
@@ -607,20 +649,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'RESOLVE_MEDIA') {
     const rawUrl = (message.url || '').trim();
     if (!rawUrl) {
-      sendResponse({ status: 'error', message: 'Missing URL to resolve' });
+      sendResponse({ status: 'error', code: 'INVALID_URL', message: 'Missing URL to resolve' });
       return false;
     }
 
-    callDesktopApi('/api/v1/media/resolve', 'POST', { url: rawUrl }).then((httpRes) => {
+    // Deduplicate in-flight resolution requests for the same URL
+    if (activeResolutions.has(rawUrl)) {
+      activeResolutions
+        .get(rawUrl)
+        .then((res) => sendResponse(res))
+        .catch((err) =>
+          sendResponse({ status: 'error', code: 'ERROR', message: err.message || 'Resolution error' })
+        );
+      return true;
+    }
+
+    const resolutionPromise = (async () => {
+      const httpRes = await callDesktopApi('/api/v1/media/resolve', 'POST', { url: rawUrl });
       if (httpRes.ok && httpRes.data) {
-        sendResponse({ status: 'ok', metadata: httpRes.data });
-      } else {
-        sendResponse({
-          status: 'error',
-          message: httpRes.data?.message || httpRes.error || 'Media resolution failed',
-        });
+        return { status: 'ok', metadata: httpRes.data };
       }
+
+      let code = httpRes.code || 'RESOLVER_ERROR';
+      let message = httpRes.data?.message || httpRes.error || 'Media resolution failed';
+      if (httpRes.status === 401) {
+        code = 'UNAUTHORIZED';
+        message = 'Authentication required. Check API Key in Extension Settings.';
+      } else if (httpRes.status === 429) {
+        code = 'RATE_LIMITED';
+        message = 'Rate limited by streaming service (HTTP 429). Please wait before retrying.';
+      } else if (httpRes.status === 400) {
+        code = 'INVALID_REQUEST';
+      }
+      return { status: 'error', code, message };
+    })();
+
+    activeResolutions.set(rawUrl, resolutionPromise);
+    resolutionPromise.finally(() => {
+      activeResolutions.delete(rawUrl);
     });
+
+    resolutionPromise
+      .then((res) => sendResponse(res))
+      .catch((err) =>
+        sendResponse({ status: 'error', code: 'ERROR', message: err.message || 'Resolution failed' })
+      );
     return true;
   }
 
@@ -628,7 +701,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const rawUrl = (message.url || '').trim();
     const formatId = (message.format_id || '').trim();
     if (!rawUrl || !formatId) {
-      sendResponse({ status: 'error', message: 'Missing URL or format identifier' });
+      sendResponse({ status: 'error', code: 'INVALID_REQUEST', message: 'Missing URL or format identifier' });
       return false;
     }
 
@@ -642,11 +715,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (httpRes.ok && httpRes.data) {
         sendResponse(httpRes.data);
       } else {
+        let code = httpRes.code || 'DOWNLOAD_ERROR';
+        let message = httpRes.data?.message || httpRes.error || 'Download request failed';
+        if (httpRes.status === 401) {
+          code = 'UNAUTHORIZED';
+          message = 'Authentication required. Check API Key in Extension Settings.';
+        }
         sendResponse({
           status: 'error',
-          message: httpRes.data?.message || httpRes.error || 'Download request failed',
+          code,
+          message,
         });
       }
+    }).catch((err) => {
+      sendResponse({ status: 'error', code: 'ERROR', message: err.message || 'Download error' });
     });
     return true;
   }

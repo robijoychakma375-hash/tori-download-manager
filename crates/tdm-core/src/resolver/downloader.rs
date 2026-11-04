@@ -73,9 +73,9 @@ pub async fn download_managed_media(
         }
     }
 
-    // Prefer standard MP4 output container when stream codecs allow, fallback to MKV
+    // Prefer standard MP4 output container when stream codecs allow, fallback to MKV or WebM
     args.push("--merge-output-format".to_string());
-    args.push("mp4/mkv".to_string());
+    args.push("mp4/mkv/webm".to_string());
 
     // Output file path
     args.push("-o".to_string());

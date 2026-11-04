@@ -442,6 +442,97 @@
       }
     });
 
+    function getErrorNotice(err) {
+      const e = (err || '').trim();
+      const lower = e.toLowerCase();
+
+      if (lower.includes('timed out') || lower.includes('timeout')) {
+        return {
+          title: 'Resolution Timed Out',
+          desc: 'Media resolution timed out. The server or platform took longer than 35s to respond.',
+          hint: 'Please check your connection and retry.',
+          color: '#f59e0b',
+        };
+      }
+      if (
+        lower.includes('unauthorized') ||
+        lower.includes('authentication required') ||
+        lower.includes('api key') ||
+        lower.includes('pairing')
+      ) {
+        return {
+          title: 'Pairing Required',
+          desc: 'The browser extension is not authenticated with TORI Desktop.',
+          hint: 'Please check the pairing API key in Extension Settings.',
+          color: '#e5484d',
+        };
+      }
+      if (
+        lower.includes('429') ||
+        lower.includes('rate limit') ||
+        lower.includes('too many requests')
+      ) {
+        return {
+          title: 'Rate Limited (HTTP 429)',
+          desc: 'The streaming platform temporarily limited automated requests.',
+          hint: 'Please wait a moment before trying again.',
+          color: '#f59e0b',
+        };
+      }
+      if (
+        lower.includes('could not connect') ||
+        lower.includes('econnrefused') ||
+        lower.includes('is tori running')
+      ) {
+        return {
+          title: 'TORI Desktop Offline',
+          desc: 'Could not connect to the local TORI server at 127.0.0.1:6800.',
+          hint: 'Ensure TORI Download Manager is launched.',
+          color: '#e5484d',
+        };
+      }
+      if (
+        lower.includes('drm') ||
+        lower.includes('widevine') ||
+        lower.includes('playready') ||
+        lower.includes('encrypted')
+      ) {
+        return {
+          title: 'DRM Protected Media',
+          desc: 'This stream is encrypted by digital rights management (DRM).',
+          hint: 'TORI respects DRM boundaries and does not bypass cryptographic protection.',
+          color: '#8e8e93',
+        };
+      }
+      if (
+        lower.includes('logged-in') ||
+        lower.includes('cookies') ||
+        lower.includes('login') ||
+        lower.includes('sign in')
+      ) {
+        return {
+          title: 'Platform Login Required',
+          desc: e,
+          hint: 'This content requires account authentication on the host platform.',
+          color: '#f59e0b',
+        };
+      }
+      if (e) {
+        return {
+          title: 'No Downloadable Stream Detected',
+          desc: e,
+          hint: 'No direct media, HLS/DASH manifest, or extractor format was found.',
+          color: '#8e8e93',
+        };
+      }
+      return {
+        title: 'No Media Stream Detected',
+        desc: 'No direct media stream or manifest detected on this player.',
+        hint: 'Use the extension popup to resolve page media.',
+        color: '#8e8e93',
+      };
+    }
+
     function renderPanel() {
       const { title, subInfo, videoFormats, audioFormats, hasAnyCandidates } = getAvailableFormats();
       const currentList = activeTab === 'Video' ? videoFormats : audioFormats;
@@ -478,14 +569,15 @@
             </div>`;
         }
       } else {
+        const notice = getErrorNotice(resolveError);
         listHtml = `
           <div class="tori-empty-box">
-            <i class="tori-ft" style="--c:#f59e0b;margin-bottom:4px">
+            <i class="tori-ft" style="--c:${notice.color};margin-bottom:4px">
               <svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
             </i>
-            <b>${escapeHtml(resolveError || 'No Downloadable Stream Detected')}</b>
-            <p>This player uses protected MediaSource blob streaming without an accessible direct file or HLS/DASH manifest.</p>
-            <span style="font-size:10px;color:var(--tori-mut)">TORI respects DRM boundaries and does not inject scrapers.</span>
+            <b>${escapeHtml(notice.title)}</b>
+            <p>${escapeHtml(notice.desc)}</p>
+            <span style="font-size:10px;color:var(--tori-mut)">${escapeHtml(notice.hint)}</span>
           </div>`;
       }
 

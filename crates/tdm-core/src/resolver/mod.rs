@@ -12,5 +12,5 @@ pub use models::{
     DownloadCapability, FilesizeType, MediaMetadata, ResolveRequest, ResolvedMediaFormat,
     ResolverStatus,
 };
-pub use pipeline::MediaResolver;
+pub use pipeline::{select_compatible_audio_and_container, MediaResolver, ParsedRawFormat};
 pub use ssrf::validate_safe_media_url;

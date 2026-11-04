@@ -1,5 +1,6 @@
 use tdm_core::resolver::{
-    find_yt_dlp, get_resolver_status, validate_safe_media_url, FilesizeType, MediaResolver,
+    find_yt_dlp, get_resolver_status, select_compatible_audio_and_container,
+    validate_safe_media_url, FilesizeType, MediaResolver, ParsedRawFormat,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -253,6 +254,95 @@ async fn test_resolver_ytdlp_json_parsing_and_format_combination() {
     assert_eq!(faudio.container, "m4a");
     assert_eq!(faudio.filesize, Some(4000000));
     assert_eq!(faudio.filesize_type, FilesizeType::Exact);
+}
+
+#[test]
+fn test_container_compatibility_matrix() {
+    fn make_audio(id: &str, ext: &str, acodec: &str, br: f64) -> ParsedRawFormat {
+        ParsedRawFormat {
+            format_id: id.to_string(),
+            format_note: None,
+            width: None,
+            height: None,
+            resolution_label: "Audio".to_string(),
+            fps: None,
+            vcodec: None,
+            acodec: Some(acodec.to_string()),
+            container: ext.to_string(),
+            protocol: "https".to_string(),
+            bitrate_kbps: Some(br),
+            has_video: false,
+            has_audio: true,
+            filesize: Some(1000000),
+            filesize_approx: None,
+            filesize_type: FilesizeType::Exact,
+            is_storyboard: false,
+            audio_channels: Some(2),
+            sample_rate: Some(48000),
+            direct_url: None,
+            http_headers: None,
+        }
+    }
+
+    fn make_video(id: &str, ext: &str, vcodec: &str, h: u32) -> ParsedRawFormat {
+        ParsedRawFormat {
+            format_id: id.to_string(),
+            format_note: None,
+            width: Some(h * 16 / 9),
+            height: Some(h),
+            resolution_label: format!("{}p", h),
+            fps: Some(30.0),
+            vcodec: Some(vcodec.to_string()),
+            acodec: None,
+            container: ext.to_string(),
+            protocol: "https".to_string(),
+            bitrate_kbps: Some(2500.0),
+            has_video: true,
+            has_audio: false,
+            filesize: Some(15000000),
+            filesize_approx: None,
+            filesize_type: FilesizeType::Exact,
+            is_storyboard: false,
+            audio_channels: None,
+            sample_rate: None,
+            direct_url: None,
+            http_headers: None,
+        }
+    }
+
+    let aac_audio = make_audio("140", "m4a", "mp4a.40.2", 128.0);
+    let opus_audio = make_audio("251", "webm", "opus", 160.0);
+    let both_audios = vec![aac_audio.clone(), opus_audio.clone()];
+
+    // Case 1: H.264 video + both audios available -> Must choose AAC and produce MP4
+    let h264_vid = make_video("137", "mp4", "avc1.640028", 1080);
+    let (sel1, cont1) = select_compatible_audio_and_container(&h264_vid, &both_audios);
+    assert_eq!(sel1.unwrap().format_id, "140");
+    assert_eq!(cont1, "mp4", "H.264 + AAC must produce mp4 container");
+
+    // Case 2: VP9 video + both audios available -> Must choose Opus and produce WebM
+    let vp9_vid = make_video("248", "webm", "vp9", 1080);
+    let (sel2, cont2) = select_compatible_audio_and_container(&vp9_vid, &both_audios);
+    assert_eq!(sel2.unwrap().format_id, "251");
+    assert_eq!(cont2, "webm", "VP9 + Opus must produce webm container");
+
+    // Case 3: VP9 video + ONLY AAC audio -> Must use MKV (never mislabeled as WebM!)
+    let (sel3, cont3) =
+        select_compatible_audio_and_container(&vp9_vid, std::slice::from_ref(&aac_audio));
+    assert_eq!(sel3.unwrap().format_id, "140");
+    assert_eq!(
+        cont3, "mkv",
+        "VP9 + AAC must produce mkv (Matroska) container, never webm"
+    );
+
+    // Case 4: H.264 video + ONLY Opus audio -> Must use MKV (never mislabeled as standard MP4)
+    let (sel4, cont4) =
+        select_compatible_audio_and_container(&h264_vid, std::slice::from_ref(&opus_audio));
+    assert_eq!(sel4.unwrap().format_id, "251");
+    assert_eq!(
+        cont4, "mkv",
+        "H.264 + Opus must produce mkv (Matroska) container"
+    );
 }
 
 #[tokio::test]
