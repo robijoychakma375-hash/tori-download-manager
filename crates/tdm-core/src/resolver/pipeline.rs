@@ -506,8 +506,14 @@ impl MediaResolver {
                 (v.filesize, v.filesize_approx, v.filesize_type, None)
             };
 
+            let format_id_spec = if let Some(ref a) = best_audio {
+                format!("{}+{}", v.format_id, a.format_id)
+            } else {
+                v.format_id.clone()
+            };
+
             final_formats.push(ResolvedMediaFormat {
-                format_id: v.format_id.clone(),
+                format_id: format_id_spec,
                 format_note: v.format_note.clone(),
                 width: v.width,
                 height: v.height,
@@ -668,15 +674,36 @@ fn parse_single_format(f: &serde_json::Value) -> Option<ParsedRawFormat> {
         .unwrap_or("https")
         .to_string();
 
+    let container = f
+        .get("ext")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mp4")
+        .to_string();
+
     let vcodec = f.get("vcodec").and_then(|v| v.as_str()).map(String::from);
     let acodec = f.get("acodec").and_then(|v| v.as_str()).map(String::from);
 
-    let has_video = vcodec.as_deref().map(|c| c != "none").unwrap_or(false);
-    let has_audio = acodec.as_deref().map(|c| c != "none").unwrap_or(false);
-
     let is_storyboard = format_note.as_deref() == Some("storyboard")
         || protocol == "mhtml"
-        || (!has_video && !has_audio);
+        || container == "mhtml"
+        || container == "jpg"
+        || container == "jpeg"
+        || (vcodec.as_deref() == Some("none") && acodec.as_deref() == Some("none"));
+
+    let has_video = match vcodec.as_deref() {
+        Some("none") => false,
+        Some(_) => true,
+        None => !matches!(
+            container.as_str(),
+            "m4a" | "mp3" | "opus" | "aac" | "flac" | "wav" | "ogg"
+        ),
+    };
+
+    let has_audio = match acodec.as_deref() {
+        Some("none") => false,
+        Some(_) => true,
+        None => true,
+    };
 
     let width = f.get("width").and_then(|v| v.as_u64()).map(|w| w as u32);
     let height = f.get("height").and_then(|v| v.as_u64()).map(|h| h as u32);
@@ -685,6 +712,15 @@ fn parse_single_format(f: &serde_json::Value) -> Option<ParsedRawFormat> {
         format!("{}p", h)
     } else if has_audio && !has_video {
         "Audio Only".to_string()
+    } else if let Some(note) = format_note.as_deref() {
+        if !note.is_empty() {
+            note.to_uppercase()
+        } else {
+            f.get("resolution")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Media")
+                .to_string()
+        }
     } else {
         f.get("resolution")
             .and_then(|v| v.as_str())
@@ -693,11 +729,6 @@ fn parse_single_format(f: &serde_json::Value) -> Option<ParsedRawFormat> {
     };
 
     let fps = f.get("fps").and_then(|v| v.as_f64());
-    let container = f
-        .get("ext")
-        .and_then(|v| v.as_str())
-        .unwrap_or("mp4")
-        .to_string();
 
     let tbr = f.get("tbr").and_then(|v| v.as_f64());
     let vbr = f.get("vbr").and_then(|v| v.as_f64());

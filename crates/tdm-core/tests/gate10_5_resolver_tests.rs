@@ -216,7 +216,11 @@ async fn test_resolver_ytdlp_json_parsing_and_format_combination() {
     assert!(!meta.formats.iter().any(|f| f.format_id == "sb0"));
 
     // Check 1080p format (137): paired with best audio 140
-    let f1080 = meta.formats.iter().find(|f| f.format_id == "137").unwrap();
+    let f1080 = meta
+        .formats
+        .iter()
+        .find(|f| f.format_id == "137+140")
+        .unwrap();
     assert_eq!(f1080.resolution_label, "1080p");
     assert!(f1080.requires_merge);
     assert_eq!(f1080.merge_audio_format_id.as_deref(), Some("140"));
@@ -225,7 +229,11 @@ async fn test_resolver_ytdlp_json_parsing_and_format_combination() {
     assert_eq!(f1080.filesize_type, FilesizeType::Exact);
 
     // Check 720p format (136): approx size = 25,000,000 + 4,000,000 = 29,000,000
-    let f720 = meta.formats.iter().find(|f| f.format_id == "136").unwrap();
+    let f720 = meta
+        .formats
+        .iter()
+        .find(|f| f.format_id == "136+140")
+        .unwrap();
     assert_eq!(f720.resolution_label, "720p");
     assert_eq!(f720.filesize, None);
     assert_eq!(f720.filesize_approx, Some(29000000));

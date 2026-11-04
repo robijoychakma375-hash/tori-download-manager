@@ -151,8 +151,70 @@ pub fn get_yt_dlp_version(bin: &PathBuf) -> Option<String> {
     None
 }
 
+/// Ensures that `%LOCALAPPDATA%\tori-download-manager\bin` exists and contains copies or
+/// links to discovered system dependencies so TORI operates self-contained without developer PATH dependencies.
+pub fn ensure_local_runtime_directory() -> Option<PathBuf> {
+    let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
+    let bin_dir = PathBuf::from(local_app_data)
+        .join("tori-download-manager")
+        .join("bin");
+    let _ = fs::create_dir_all(&bin_dir);
+
+    // If yt-dlp is found but not yet in bin_dir, copy it
+    let target_ytdlp = bin_dir.join("yt-dlp.exe");
+    if !target_ytdlp.exists() {
+        if let Some(src) = find_yt_dlp() {
+            if src != target_ytdlp {
+                let _ = fs::copy(&src, &target_ytdlp);
+            }
+        }
+    }
+
+    // If ffmpeg is found but not yet in bin_dir, copy it
+    let target_ffmpeg = bin_dir.join("ffmpeg.exe");
+    if !target_ffmpeg.exists() {
+        if let Some(src) = find_ffmpeg() {
+            if src != target_ffmpeg {
+                let _ = fs::copy(&src, &target_ffmpeg);
+            }
+        }
+    }
+
+    // If ffprobe is found but not yet in bin_dir, copy it
+    let target_ffprobe = bin_dir.join("ffprobe.exe");
+    if !target_ffprobe.exists() {
+        if let Some(src) = find_ffprobe() {
+            if src != target_ffprobe {
+                let _ = fs::copy(&src, &target_ffprobe);
+            }
+        }
+    }
+
+    // If deno is found but not yet in bin_dir, copy it
+    let target_deno = bin_dir.join("deno.exe");
+    if !target_deno.exists() {
+        if let Some((_, src)) = find_js_runtime() {
+            if src
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("deno")
+                && src != target_deno
+            {
+                let _ = fs::copy(&src, &target_deno);
+            }
+        }
+    }
+
+    Some(bin_dir)
+}
+
 /// Returns a comprehensive snapshot of resolver dependencies.
 pub fn get_resolver_status() -> ResolverStatus {
+    let runtime_dir_path = ensure_local_runtime_directory();
+    let runtime_dir_str = runtime_dir_path.map(|p| p.to_string_lossy().to_string());
+
     let yt_dlp_path = find_yt_dlp();
     let yt_dlp_available = yt_dlp_path.is_some();
     let yt_dlp_version = yt_dlp_path.as_ref().and_then(get_yt_dlp_version);
@@ -171,6 +233,13 @@ pub fn get_resolver_status() -> ResolverStatus {
         None => (None, None),
     };
 
+    let all_available = yt_dlp_available && ffmpeg_available && ffprobe_available;
+    let setup_command = if all_available {
+        None
+    } else {
+        Some("winget install yt-dlp.yt-dlp yt-dlp.FFmpeg DenoLand.Deno".to_string())
+    };
+
     ResolverStatus {
         yt_dlp_available,
         yt_dlp_version,
@@ -182,5 +251,7 @@ pub fn get_resolver_status() -> ResolverStatus {
         js_runtime_available: js_name.is_some(),
         js_runtime_name: js_name,
         js_runtime_path: js_path,
+        runtime_dir: runtime_dir_str,
+        setup_command,
     }
 }

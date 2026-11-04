@@ -1,6 +1,6 @@
 # TORI Download Manager (TDM) — Implementation Status
 
-Last Updated: Gate 10.5 Universal Media Resolver & Real Format Detection Complete & Verified (105 Automated Tests Passing)
+Last Updated: Gate 10.5.1 Complete Video Download & Verification Complete & Verified (105 Automated Tests Passing + Multi-Quality Video E2E)
 Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.0.26100.0)
 
 ---
@@ -85,6 +85,7 @@ Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.
 | **Gate 10.2** | Localhost Port-Based Browser Integration Server | **VERIFIED** | `cargo test -p tdm-native-host --test server_tests` & `node scripts/verify_gate10_2.js` | 5/5 automated Rust tests + 16/16 Node e2e verification steps passed. Binds exclusively to `127.0.0.1:6800` (no 0.0.0.0). Defeats DNS rebinding (400), blocks web origins (403), allows extension CORS, requires cryptographic token auth (401), full CRUD + SSE events. | Dual integration: high-performance localhost HTTP API + optional Native Messaging bootstrap. |
 | **Gate 10.4** | Media Extraction & Webpage Download Rejection | **VERIFIED** | `cargo test --workspace` (96 tests) & `node scripts/verify_gate10_4.js` | Traced failed "watch" job to `window.location.href` fallback & mock formats; purged all fabricated sizes (420 MB, 210 MB, etc.); added MIME-type HTML detection & watch page URL rejection in Rust engine; verified controlled `flower.mp4` download completing 100% (1,120,000 bytes) on disk. | Zero fake downloads; displays honest "Source Unavailable" on protected/MSE blob streams. |
 | **Gate 10.5** | Universal Media Resolver & Format Engine | **VERIFIED** | `cargo test -p tdm-core --test gate10_5_resolver_tests` & `node scripts/verify_gate10_5.js` | 5/5 resolver unit tests + 8/8 end-to-end integration verification steps passed. Safely executes yt-dlp `--dump-single-json` with explicit arguments, 30s timeout, and 12MB buffer; anti-SSRF blocks loopback, private ranges, and cloud metadata (169.254.169.254); pairs video-only formats with top audio; excludes storyboards; calculates exact/estimated size; streams progress via SQLite & EventBus; zero orphan processes on cancel. | Full support for YouTube, Facebook, Instagram, Vimeo, and direct media sites. DRM protected streams honestly reported. |
+| **Gate 10.5.1** | Complete Video Download & FFprobe Verification | **VERIFIED** | `node scripts/verify_gate10_5_1.js` | 8/8 real-world verification steps passed (100%). Verified real downloads: 360p video with audio (640x360 H.264 + AAC), 720p video with audio (1280x720 VP9 + AAC), 1080p video with audio (1920x1080 H.264 + AAC), and Audio-only (AAC, 0 video streams). Verified FFmpeg automatic merging (`--merge-output-format mp4/mkv`), active UI merging state (`JobState::Verifying`), self-contained runtime directory (`%LOCALAPPDATA%\tori-download-manager\bin`), multi-site resolution (YouTube, Facebook, MDN Direct HTML5), and cancellation process reaping. | Zero audio-only false reports; 100% verified playable media on disk with ffprobe. |
 
 ---
 
@@ -111,18 +112,18 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
 
 1. **Production Windows NSIS Installer**:
    - Location: `target\release\bundle\nsis\TORI Download Manager_0.1.0_x64-setup.exe`
-   - Size: 16,091,112 bytes (~16.09 MB)
-   - SHA-256: `5930002E6E4A5DCAEDF77644D2DC133F0F9DC4EA7A973268573B6ABC4B2C6C81`
+   - Size: 16,089,211 bytes (~16.09 MB)
+   - SHA-256: `3F5B1B90521D000C3B01449DE2F4A52C0CFDB8B11F3E534E88942E6B557FB68C`
    - Architecture: x86_64-pc-windows-msvc
    - Bundled Binaries: `tori-download-manager.exe`, `tdm-native-host.exe`, `tdm-cli.exe`
    - Registry Hooks: Configured via `src-tauri/nsis/hooks.nsh` to automatically invoke `tdm-native-host.exe --register` and `--unregister`, managing `%APPDATA%\tori-download-manager\com.tori.download_manager.json` and registering `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.tori.download_manager` and `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.tori.download_manager`.
 
 2. **Desktop GUI Application**:
    - Location: `target\release\tori-download-manager.exe`
-   - Size: 26,188,800 bytes (~26.18 MB)
-   - SHA-256: `431C45D096FCD8032BB1BAB43133C3224F2CE8B1EE4CD82681226B870943A822`
+   - Size: 26,200,576 bytes (~26.20 MB)
+   - SHA-256: `845D8BD2FC450A53F4850FF2FC5FEC2A3A0CF5B3DD982C13E6B39D6B9207C213`
    - Architecture: x86_64-pc-windows-msvc
-   - Features: React 19 + TypeScript + Vite + Tauri 2 with dark mode, real-time metrics, dynamic priority controls, live streaming detection & recording controls, adaptive stream indicators, pause/resume/cancel/retry/open folder, Windows Named Pipe IPC server, single-instance detection, and localhost HTTP server (port 6800) with Universal Media Resolver integration.
+   - Features: React 19 + TypeScript + Vite + Tauri 2 with dark mode, real-time metrics, dynamic priority controls, live streaming detection & recording controls, adaptive stream indicators, pause/resume/cancel/retry/open folder, Windows Named Pipe IPC server, single-instance detection, and localhost HTTP server (port 6800) with Universal Media Resolver and automatic FFmpeg video/audio merging.
 
 3. **Windows Native Messaging Host**:
    - Location: `target\release\tdm-native-host.exe`
@@ -132,13 +133,13 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
    - CLI commands: `--register` (registers registry keys and host manifest), `--unregister`
    - IPC: Forwards messages directly to persistent engine via `\\.\pipe\tori-download-manager-ipc`; auto-spawns desktop application if not currently running.
 
-4. **Browser Extension (Manifest V3 — Gate 10.5 Verified)**:
+4. **Browser Extension (Manifest V3 — Gate 10.5.1 Verified)**:
    - Directory: `extension/`
    - Architecture:
      - **Universal Media Resolver Integration**:
        - Dynamic resolution on YouTube, Facebook, Instagram, Vimeo, and direct media sites.
        - Zero mock formats or fabricated sizes; spinner feedback while resolving.
-       - Dispatches managed download requests with specific `format_id` to localhost engine.
+       - Dispatches managed download requests with combined format IDs (e.g. `270+140`, `609+140`, `230+140`) ensuring video downloads always include audio.
      - **Design Source A (Media Popup & HTML5 Video Overlay)**:
        - Toolbar popup: `popup/popup.html`, `popup/popup.css`, `popup/popup.js` (includes "Resolve Media on Page" button)
        - Video overlay: `content.js`, `content.css` injecting `.tori-mp`, `.tori-pill`, and `.tori-pn` format selection panel with live resolution
@@ -163,22 +164,22 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
 ## Workspace Automated Test Results
 
 - **Total Automated Tests**: **105 passing tests** (0 failed, 0 ignored) across 13 test suites:
-  - `tdm-core` unit tests: **22 passed** (3.65s)
-  - `gate10_5_resolver_tests`: **5 passed** (7.78s)
-  - `gate2_adaptive_tests`: **8 passed** (5.53s)
-  - `gate4_hls_tests`: **8 passed** (6.82s)
+  - `tdm-core` unit tests: **22 passed** (2.26s)
+  - `gate10_5_resolver_tests`: **5 passed** (8.33s)
+  - `gate2_adaptive_tests`: **8 passed** (5.08s)
+  - `gate4_hls_tests`: **8 passed** (5.70s)
   - `gate5_dash_tests`: **9 passed** (7.54s)
-  - `gate6_torrent_tests`: **8 passed** (0.59s)
-  - `gate7_live_tests`: **8 passed** (23.64s)
-  - `gate8_protocol_matrix_tests`: **8 passed** (12.40s)
-  - `gate8_stress_tests`: **4 passed** (2.27s)
-  - `integration_tests`: **9 passed** (3.80s)
+  - `gate6_torrent_tests`: **8 passed** (0.49s)
+  - `gate7_live_tests`: **8 passed** (22.08s)
+  - `gate8_protocol_matrix_tests`: **8 passed** (11.52s)
+  - `gate8_stress_tests`: **4 passed** (2.31s)
+  - `integration_tests`: **9 passed** (3.85s)
   - `tdm-native-host` unit tests: **1 passed** (0.00s)
-  - `host_tests` (including IPC, OS process stdin/stdout, and `show_window` tests): **7 passed** (2.15s)
-  - `server_tests` (Gate 10.2 local server, DNS rebind defense, CORS defense, pairing, CRUD, Gate 10.5 media endpoints): **7 passed** (3.07s)
+  - `host_tests` (including IPC, OS process stdin/stdout, and `show_window` tests): **7 passed** (1.32s)
+  - `server_tests` (Gate 10.2 local server, DNS rebind defense, CORS defense, pairing, CRUD, Gate 10.5 media endpoints): **7 passed** (3.02s)
 - **Clippy**: 0 warnings across all targets (`cargo clippy --workspace --all-targets -- -D warnings`).
 - **Formatting**: 100% compliant with rustfmt (`cargo fmt --all -- --check`).
-- **Frontend Build**: Built in 398ms with 0 errors (`npm --prefix ui run build`).
+- **Frontend Build**: Built in 263ms with 0 errors (`npm --prefix ui run build`).
 - **Release Build**: Built with 0 errors (`cargo tauri build --no-bundle`).
 - **NSIS Installer Package**: Built with 0 errors (`cargo tauri bundle --bundles nsis`). Size: 16.09 MB (`target\release\bundle\nsis\TORI Download Manager_0.1.0_x64-setup.exe`).
-- **Real-World Verification**: 8/8 end-to-end integration verification steps verified against release binary (`node scripts/verify_gate10_5.js`).
+- **Real-World Video Downloads Verification**: 8/8 end-to-end integration verification steps verified with ffprobe against release binary (`node scripts/verify_gate10_5_1.js`). Tested 360p video+audio, 720p video+audio, 1080p video+audio, audio-only, SSRF rejection, runtime directory, cancellation process reaping.

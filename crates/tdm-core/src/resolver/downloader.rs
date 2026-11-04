@@ -38,7 +38,9 @@ pub async fn download_managed_media(
         "--no-color".to_string(),
         "--prefer-free-formats".to_string(),
         "--progress-template".to_string(),
-        "download:%(progress._percent_str)s;%(progress.downloaded_bytes)s;%(progress.total_bytes)s;%(progress.speed)s;%(progress.eta)s".to_string(),
+        "download:[TORI_PROG]|%(progress._percent_str)s;%(progress.downloaded_bytes)s;%(progress.total_bytes)s;%(progress.speed)s;%(progress.eta)s".to_string(),
+        "--progress-template".to_string(),
+        "postprocess:[TORI_MERGE]|%(progress.status)s".to_string(),
     ];
 
     // Format selection
@@ -51,7 +53,15 @@ pub async fn download_managed_media(
                 trimmed
             };
             args.push("-f".to_string());
-            args.push(format_arg.to_string());
+            let is_audio = format_arg.contains("audio")
+                || format_arg.contains("ba")
+                || is_common_audio_format(format_arg);
+            if format_arg.contains('+') || is_audio {
+                args.push(format_arg.to_string());
+            } else {
+                // If single video format is specified, ensure it pairs with best audio so it's not silent
+                args.push(format!("{format_arg}+bestaudio/best/{format_arg}"));
+            }
         }
     }
 
@@ -62,6 +72,10 @@ pub async fn download_managed_media(
             args.push(parent.to_string_lossy().to_string());
         }
     }
+
+    // Prefer standard MP4 output container when stream codecs allow, fallback to MKV
+    args.push("--merge-output-format".to_string());
+    args.push("mp4/mkv".to_string());
 
     // Output file path
     args.push("-o".to_string());
@@ -122,7 +136,10 @@ pub async fn download_managed_media(
 
     let mut reader = BufReader::new(stdout).lines();
     let mut last_progress_emit = Instant::now();
-    let mut total_expected_bytes: Option<u64> = None;
+    let mut total_expected_bytes: Option<u64> = job.total_bytes;
+    let mut accumulated_completed_bytes: u64 = 0;
+    let mut current_stream_last_bytes: u64 = 0;
+    let mut is_merging = false;
 
     loop {
         tokio::select! {
@@ -136,10 +153,19 @@ pub async fn download_managed_media(
                 match line_res {
                     Ok(Some(line)) => {
                         let trimmed = line.trim();
-                        if trimmed.starts_with("download:") {
+                        if trimmed.starts_with("[download] Destination:") {
+                            // A new stream target has begun. Accumulate previous stream's downloaded bytes.
+                            accumulated_completed_bytes += current_stream_last_bytes;
+                            current_stream_last_bytes = 0;
+                        } else if trimmed.starts_with("[TORI_PROG]|") {
                             if let Some(prog) = parse_progress_template(trimmed) {
-                                let current_downloaded = prog.downloaded_bytes;
-                                if prog.total_bytes.is_some() {
+                                if prog.downloaded_bytes < current_stream_last_bytes {
+                                    accumulated_completed_bytes += current_stream_last_bytes;
+                                }
+                                current_stream_last_bytes = prog.downloaded_bytes;
+                                let current_downloaded = accumulated_completed_bytes + current_stream_last_bytes;
+
+                                if total_expected_bytes.is_none() && prog.total_bytes.is_some() {
                                     total_expected_bytes = prog.total_bytes;
                                 }
 
@@ -147,17 +173,51 @@ pub async fn download_managed_media(
                                     last_progress_emit = Instant::now();
                                     let _ = db.update_downloaded_bytes(&job.id, current_downloaded);
 
+                                    let active_state = if is_merging {
+                                        JobState::Verifying
+                                    } else {
+                                        JobState::Downloading
+                                    };
+
                                     event_bus.emit(DownloadEvent::Progress(DownloadProgress {
                                         id: job.id.clone(),
                                         downloaded_bytes: current_downloaded,
-                                        total_bytes: total_expected_bytes,
+                                        total_bytes: total_expected_bytes.or(Some(current_downloaded)),
                                         speed_bps: prog.speed_bps,
                                         eta_seconds: prog.eta_seconds,
-                                        state: JobState::Downloading,
-                                        error_message: None,
+                                        state: active_state,
+                                        error_message: if is_merging {
+                                            Some("Merging video and audio streams...".to_string())
+                                        } else {
+                                            None
+                                        },
                                     }));
                                 }
                             }
+                        } else if trimmed.starts_with("[TORI_MERGE]|started")
+                            || trimmed.contains("[Merger]")
+                            || trimmed.contains("[Fixup")
+                        {
+                            is_merging = true;
+                            let total_downloaded =
+                                accumulated_completed_bytes + current_stream_last_bytes;
+                            let _ = db.update_job_state(&job.id, JobState::Verifying, None);
+                            event_bus.emit(DownloadEvent::Progress(DownloadProgress {
+                                id: job.id.clone(),
+                                downloaded_bytes: total_downloaded,
+                                total_bytes: total_expected_bytes.or(Some(total_downloaded)),
+                                speed_bps: 0,
+                                eta_seconds: Some(0),
+                                state: JobState::Verifying,
+                                error_message: Some(
+                                    "Merging video and audio streams via FFmpeg...".to_string(),
+                                ),
+                            }));
+                            event_bus.emit(DownloadEvent::StateChanged {
+                                id: job.id.clone(),
+                                state: JobState::Verifying,
+                                error: None,
+                            });
                         }
                     }
                     Ok(None) => {
@@ -234,9 +294,32 @@ struct ParsedProgress {
     eta_seconds: Option<u64>,
 }
 
+fn is_common_audio_format(fmt: &str) -> bool {
+    let lower = fmt.to_lowercase();
+    matches!(
+        lower.as_str(),
+        "139"
+            | "140"
+            | "249"
+            | "250"
+            | "251"
+            | "233"
+            | "234"
+            | "m4a"
+            | "opus"
+            | "mp3"
+            | "aac"
+            | "flac"
+            | "wav"
+            | "ogg"
+            | "bestaudio"
+            | "ba"
+    ) || lower.starts_with("audio")
+}
+
 fn parse_progress_template(line: &str) -> Option<ParsedProgress> {
-    // format: download:%(progress._percent_str)s;%(progress.downloaded_bytes)s;%(progress.total_bytes)s;%(progress.speed)s;%(progress.eta)s
-    let payload = line.strip_prefix("download:")?;
+    // format: [TORI_PROG]|%(progress._percent_str)s;%(progress.downloaded_bytes)s;%(progress.total_bytes)s;%(progress.speed)s;%(progress.eta)s
+    let payload = line.strip_prefix("[TORI_PROG]|")?;
     let parts: Vec<&str> = payload.split(';').collect();
     if parts.len() < 5 {
         return None;
@@ -265,19 +348,41 @@ fn locate_actual_output_file(target_str: &str) -> Option<PathBuf> {
         return Some(p.to_path_buf());
     }
 
-    // Check sibling files with matching stem
-    if let (Some(parent), Some(stem)) = (p.parent(), p.file_stem().and_then(|s| s.to_str())) {
-        if let Ok(entries) = fs::read_dir(parent) {
-            for entry in entries.flatten() {
-                let candidate = entry.path();
-                if let Some(cand_stem) = candidate.file_stem().and_then(|s| s.to_str()) {
-                    if cand_stem == stem && candidate.is_file() {
-                        let ext = candidate
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("")
-                            .to_lowercase();
-                        if ext != "part" && ext != "ytdl" {
+    let parent = p.parent()?;
+    let stem = p.file_stem().and_then(|s| s.to_str())?;
+
+    // Try common alternate extensions directly:
+    for ext in ["mp4", "mkv", "webm", "m4a", "opus", "mp3"] {
+        let alt = parent.join(format!("{}.{}", stem, ext));
+        if alt.exists() {
+            return Some(alt);
+        }
+        let alt_double = parent.join(format!("{}.mp4.{}", stem, ext));
+        if alt_double.exists() {
+            if fs::rename(&alt_double, &alt).is_ok() {
+                return Some(alt);
+            }
+            return Some(alt_double);
+        }
+    }
+
+    // Check sibling files whose name starts with stem and ends with playable extension
+    if let Ok(entries) = fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            let candidate = entry.path();
+            if candidate.is_file() {
+                if let Some(name) = candidate.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with(stem) {
+                        let lower = name.to_lowercase();
+                        if !lower.ends_with(".part")
+                            && !lower.ends_with(".ytdl")
+                            && !lower.contains(".temp.")
+                            && (lower.ends_with(".mp4")
+                                || lower.ends_with(".mkv")
+                                || lower.ends_with(".webm")
+                                || lower.ends_with(".m4a")
+                                || lower.ends_with(".opus"))
+                        {
                             return Some(candidate);
                         }
                     }
@@ -298,4 +403,27 @@ fn cleanup_partial_files(target_str: &str) {
 
     let part2 = format!("{}.ytdl", target_str);
     let _ = fs::remove_file(part2);
+
+    if let (Some(parent), Some(stem)) = (p.parent(), p.file_stem().and_then(|s| s.to_str())) {
+        if let Ok(entries) = fs::read_dir(parent) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if file_name.starts_with(stem) {
+                        let lower = file_name.to_lowercase();
+                        if lower.ends_with(".part")
+                            || lower.ends_with(".ytdl")
+                            || lower.contains(".temp.")
+                            || (lower.contains(".f")
+                                && !lower.ends_with(".mp4")
+                                && !lower.ends_with(".mkv")
+                                && !lower.ends_with(".webm"))
+                        {
+                            let _ = fs::remove_file(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

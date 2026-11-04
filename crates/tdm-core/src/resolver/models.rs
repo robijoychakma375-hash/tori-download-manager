@@ -73,6 +73,10 @@ pub struct ResolverStatus {
     pub js_runtime_available: bool,
     pub js_runtime_name: Option<String>,
     pub js_runtime_path: Option<String>,
+    #[serde(default)]
+    pub runtime_dir: Option<String>,
+    #[serde(default)]
+    pub setup_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
