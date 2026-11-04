@@ -136,6 +136,8 @@
 /* Media Format Selection Panel */
 .tori-pn {
   width: 320px;
+  max-width: calc(100vw - 32px);
+  max-height: min(480px, calc(100vh - 48px));
   border-radius: 14px;
   background: color-mix(in srgb, var(--tori-panel) 94%, transparent);
   backdrop-filter: blur(30px);
@@ -146,10 +148,11 @@
   animation: tori-pop 0.16s ease-out;
   color: var(--tori-txt);
   text-align: left;
+  flex-direction: column;
 }
 
 .tori-pn.on {
-  display: block;
+  display: flex;
 }
 
 @keyframes tori-pop {
@@ -170,6 +173,7 @@
   gap: 10px;
   align-items: center;
   padding: 12px 14px 10px;
+  flex: none;
 }
 
 .tori-ph b {
@@ -238,6 +242,7 @@
   background: var(--tori-pline);
   display: flex;
   gap: 2px;
+  flex: none;
 }
 
 .tori-seg button {
@@ -261,8 +266,9 @@
 /* Format List */
 .tori-fl {
   padding: 0 6px;
-  max-height: 196px;
+  max-height: 220px;
   overflow-y: auto;
+  flex: 1 1 auto;
 }
 
 .tori-fl::-webkit-scrollbar {
@@ -272,6 +278,27 @@
 .tori-fl::-webkit-scrollbar-thumb {
   background: var(--tori-fline);
   border-radius: 3px;
+}
+
+.tori-retry-btn {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--tori-pline);
+  border: 1px solid var(--tori-bline);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--tori-txt);
+  cursor: pointer;
+  transition: background 0.12s;
+  margin-top: 4px;
+}
+
+.tori-retry-btn:hover {
+  background: var(--tori-b1);
 }
 
 .tori-fr {
@@ -391,6 +418,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: none;
 }
 
 .tori-sv {
