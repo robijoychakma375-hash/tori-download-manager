@@ -210,7 +210,17 @@ pub async fn open_data_folder() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn check_extension_status() -> Result<bool, String> {
+pub async fn check_extension_status(state: State<'_, AppState>) -> Result<bool, String> {
+    let db = state.manager.database();
+    if let Ok(Some(ts_str)) = db.get_setting("last_extension_ping") {
+        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&ts_str) {
+            let now = chrono::Utc::now();
+            let diff = (now - ts.with_timezone(&chrono::Utc)).num_seconds();
+            if diff < 120 {
+                return Ok(true);
+            }
+        }
+    }
     let manifest_path = tdm_native_host::registry::get_manifest_path();
     Ok(manifest_path.exists())
 }
@@ -346,11 +356,24 @@ pub async fn get_browser_integration_info(
         .unwrap_or(port);
     let token = tdm_native_host::server::get_or_create_token(db);
 
+    let is_extension_active = if let Ok(Some(ts_str)) = db.get_setting("last_extension_ping") {
+        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&ts_str) {
+            let now = chrono::Utc::now();
+            let diff = (now - ts.with_timezone(&chrono::Utc)).num_seconds();
+            diff < 120
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     Ok(serde_json::json!({
         "port": port,
         "active_port": active_port,
         "token": token,
-        "status": "running"
+        "status": "running",
+        "extension_active": is_extension_active
     }))
 }
 

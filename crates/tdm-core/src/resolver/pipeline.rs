@@ -572,9 +572,20 @@ impl MediaResolver {
         // 4. Add audio-only formats
         for a in audio_tracks {
             let label = if let Some(br) = a.bitrate_kbps {
-                format!("Audio ({}) · {:.0} kbps", a.container.to_uppercase(), br)
+                if br > 0.0 {
+                    format!("{:.0}k", br)
+                } else {
+                    "Audio".to_string()
+                }
+            } else if let Some(ref note) = a.format_note {
+                let clean = note.trim();
+                if !clean.is_empty() && clean.len() <= 10 {
+                    clean.to_string()
+                } else {
+                    "Audio".to_string()
+                }
             } else {
-                format!("Audio ({})", a.container.to_uppercase())
+                "Audio".to_string()
             };
 
             final_formats.push(ResolvedMediaFormat {

@@ -18,7 +18,7 @@ pub struct NativeMessage {
     pub job_id: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct NativeResponse {
     pub status: String,
     pub action: String,
@@ -38,6 +38,10 @@ pub struct NativeResponse {
     pub supported: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unsupported: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
 }
 
 /// Reads a length-prefixed JSON message from the given reader (typically stdin)
@@ -196,13 +200,7 @@ mod tests {
             status: "ok".to_string(),
             action: "pong".to_string(),
             version: Some("2.0.0".to_string()),
-            job_id: None,
-            filename: None,
-            state: None,
-            message: None,
-            jobs: None,
-            supported: None,
-            unsupported: None,
+            ..Default::default()
         };
 
         let mut buf = Vec::new();

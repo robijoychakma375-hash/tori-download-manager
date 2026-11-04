@@ -323,3 +323,4 @@ cargo tauri build --no-bundle
 - [x] **Preserved Approved Designs**: Maintained `design/media-popup/` and `design/extension-options/` HTML/CSS tokens and structure.
 - [x] **Zero Orphaned Processes**: Subprocess audit confirmed 0 active `yt-dlp` and 0 active `ffmpeg` instances after job completion and cancellation.
 - [x] **Production Executable Delivered**: `target/release/tori-download-manager.exe` verified and runnable.
+

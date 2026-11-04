@@ -100,6 +100,16 @@ async function callDesktopApi(endpoint, method = 'GET', body = null, customTimeo
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
+
+    // If 401 Unauthorized and not already retrying, attempt auto-pairing and retry once
+    if (res.status === 401 && !customTimeout) {
+      console.log('[TORI] Received 401 Unauthorized, attempting auto-pairing...');
+      const pairRes = await autoPairWithDesktop();
+      if (pairRes.ok && pairRes.token) {
+        return callDesktopApi(endpoint, method, body, 15000);
+      }
+    }
+
     const data = await res.json().catch(() => ({}));
     return {
       ok: res.ok,
@@ -158,6 +168,38 @@ async function sendNativeMessage(payload) {
     }
   });
 }
+
+/**
+ * One-time secure auto-pairing via Native Messaging bound to this extension
+ */
+async function autoPairWithDesktop() {
+  try {
+    const res = await sendNativeMessage({ action: 'pair' });
+    if (res && res.status === 'ok' && res.token) {
+      extSettings.key = res.token;
+      if (res.port) extSettings.port = res.port;
+      await chrome.storage.local.set({ tori_settings: extSettings });
+      console.log('[TORI] Auto-paired successfully with desktop. Port:', extSettings.port);
+      return { ok: true, token: res.token, port: extSettings.port };
+    }
+    return { ok: false, error: res?.message || 'Native host did not return pairing token' };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+// Proactive pairing on startup if unconfigured
+chrome.runtime.onInstalled.addListener(() => {
+  if (!extSettings.key) {
+    autoPairWithDesktop();
+  }
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  if (!extSettings.key) {
+    autoPairWithDesktop();
+  }
+});
 
 /**
  * Parse filename from Content-Disposition header
@@ -488,11 +530,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.action === 'INITIATE_PAIRING') {
+    autoPairWithDesktop().then((res) => {
+      sendResponse(res);
+    });
+    return true;
+  }
+
+  if (message.action === 'GET_CONNECTION_STATUS') {
+    callDesktopApi('/api/v1/pair/status').then(async (httpRes) => {
+      if (httpRes.ok && httpRes.data && httpRes.data.paired) {
+        sendResponse({ status: 'ok', paired: true, port: httpRes.data.port, version: httpRes.data.version });
+      } else {
+        // Attempt auto-pairing via Native Messaging
+        const pairRes = await autoPairWithDesktop();
+        if (pairRes.ok) {
+          sendResponse({ status: 'ok', paired: true, port: pairRes.port, token: pairRes.token });
+        } else {
+          sendResponse({ status: 'unpaired', paired: false, error: pairRes.error });
+        }
+      }
+    });
+    return true;
+  }
+
   if (message.action === 'PING_DESKTOP') {
     const start = Date.now();
     callDesktopApi('/api/v1/status').then(async (httpRes) => {
       const latency = Math.max(1, Date.now() - start);
       if (httpRes.ok && httpRes.data && httpRes.data.status === 'ok') {
+        if (!httpRes.data.authenticated) {
+          // Attempt auto-pairing if unauthenticated
+          const pairRes = await autoPairWithDesktop();
+          if (pairRes.ok) {
+            sendResponse({
+              status: 'ok',
+              authenticated: true,
+              version: httpRes.data.version || '2.0.0',
+              port: pairRes.port || (extSettings.port || 6800),
+              token: pairRes.token,
+              latency,
+              mode: 'http',
+            });
+            return;
+          }
+        }
         sendResponse({
           status: httpRes.data.authenticated ? 'ok' : 'unpaired',
           authenticated: !!httpRes.data.authenticated,
@@ -502,23 +584,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           mode: 'http',
         });
       } else if (httpRes.status === 401) {
-        sendResponse({
-          status: 'unpaired',
-          authenticated: false,
-          message: 'API Key mismatch / Pairing required',
-          port: extSettings.port || 6800,
-          latency,
-          mode: 'http',
-        });
+        // 401 Unauthorized: attempt auto-pairing immediately
+        const pairRes = await autoPairWithDesktop();
+        if (pairRes.ok) {
+          sendResponse({
+            status: 'ok',
+            authenticated: true,
+            version: '2.0.0',
+            port: pairRes.port || (extSettings.port || 6800),
+            token: pairRes.token,
+            latency,
+            mode: 'http',
+          });
+        } else {
+          sendResponse({
+            status: 'unpaired',
+            authenticated: false,
+            message: 'API Key mismatch / Pairing required',
+            port: extSettings.port || 6800,
+            latency,
+            mode: 'http',
+          });
+        }
       } else {
         // Desktop HTTP server unreachable. Optional Native Messaging bootstrap check:
         const nmRes = await sendNativeMessage({ action: 'ping' });
         if (nmRes && nmRes.status === 'ok') {
+          const pairRes = await autoPairWithDesktop();
           sendResponse({
             status: 'ok',
             authenticated: true,
             version: nmRes.version || '2.0.0',
-            port: extSettings.port || 6800,
+            port: pairRes.port || (extSettings.port || 6800),
+            token: pairRes.token,
             latency,
             mode: 'native',
           });

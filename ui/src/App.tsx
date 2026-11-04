@@ -166,9 +166,13 @@ export function App() {
       })
       .catch((err) => console.error('Failed to get default dir:', err));
 
-    invoke<boolean>('check_extension_status')
-      .then((status) => setIsExtensionConnected(!!status))
-      .catch(() => setIsExtensionConnected(false));
+    const checkExt = () => {
+      invoke<boolean>('check_extension_status')
+        .then((status) => setIsExtensionConnected(!!status))
+        .catch(() => setIsExtensionConnected(false));
+    };
+    checkExt();
+    const extInterval = setInterval(checkExt, 8000);
 
     // Listen to real-time events from Rust engine EventBus
     const unlistenPromise = listen<DownloadEvent>('download-event', (event) => {
@@ -176,8 +180,13 @@ export function App() {
 
       if (payload.type === 'Progress') {
         const p = payload.payload;
-        setDownloads((prev) =>
-          prev.map((job) => {
+        setDownloads((prev) => {
+          const exists = prev.some((j) => j.id === p.id);
+          if (!exists) {
+            loadDownloads();
+            return prev;
+          }
+          return prev.map((job) => {
             if (job.id === p.id) {
               return {
                 ...job,
@@ -190,12 +199,17 @@ export function App() {
               };
             }
             return job;
-          })
-        );
+          });
+        });
       } else if (payload.type === 'StateChanged') {
         const sc = payload.payload;
-        setDownloads((prev) =>
-          prev.map((job) => {
+        setDownloads((prev) => {
+          const exists = prev.some((j) => j.id === sc.id);
+          if (!exists) {
+            loadDownloads();
+            return prev;
+          }
+          return prev.map((job) => {
             if (job.id === sc.id) {
               return {
                 ...job,
@@ -208,16 +222,17 @@ export function App() {
               };
             }
             return job;
-          })
-        );
+          });
+        });
 
-        if (sc.state === 'completed' || sc.state === 'failed') {
+        if (sc.state === 'completed' || sc.state === 'failed' || sc.state === 'downloading') {
           loadDownloads();
         }
       }
     });
 
     return () => {
+      clearInterval(extInterval);
       unlistenPromise.then((unlisten) => unlisten());
     };
   }, [loadDownloads]);

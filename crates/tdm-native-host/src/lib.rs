@@ -110,11 +110,7 @@ pub async fn handle_message(
             status: "ok".to_string(),
             action: "pong".to_string(),
             version: Some("2.0.0".to_string()),
-            job_id: None,
-            filename: None,
-            state: None,
             message: Some("TORI Download Manager native host is active and responsive".to_string()),
-            jobs: None,
             supported: Some(vec![
                 "http".to_string(),
                 "https".to_string(),
@@ -132,7 +128,28 @@ pub async fn handle_message(
                 "mms".to_string(),
                 "live".to_string(),
             ]),
-            unsupported: None,
+            ..Default::default()
+        },
+
+        "pair" | "get_pairing_token" => {
+            let token = server::get_or_create_token(db);
+            let port = server::get_configured_port(db);
+            let active_port = db
+                .get_setting("active_server_port")
+                .ok()
+                .flatten()
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(port);
+
+            NativeResponse {
+                status: "ok".to_string(),
+                action: "pair".to_string(),
+                version: Some("2.0.0".to_string()),
+                message: Some("Paired securely via Native Messaging".to_string()),
+                token: Some(token),
+                port: Some(active_port),
+                ..Default::default()
+            }
         },
 
         "show_window" => {
@@ -141,13 +158,8 @@ pub async fn handle_message(
                 status: "ok".to_string(),
                 action: "show_window".to_string(),
                 version: Some("2.0.0".to_string()),
-                job_id: None,
-                filename: None,
-                state: None,
                 message: Some("Window focus request emitted to persistent desktop engine".to_string()),
-                jobs: None,
-                supported: None,
-                unsupported: None,
+                ..Default::default()
             }
         },
 
@@ -155,14 +167,10 @@ pub async fn handle_message(
             status: "ok".to_string(),
             action: "capability".to_string(),
             version: Some("2.0.0".to_string()),
-            job_id: None,
-            filename: None,
-            state: None,
             message: Some(
                 "Direct HTTP/HTTPS, RFC 8216 HLS VOD, ISO/IEC 23009-1 MPEG-DASH VOD, BitTorrent/Magnet, and Live Streams (RTSP, RTMP, SRT, RIST, RTP, UDP, MMS) supported."
                     .to_string(),
             ),
-            jobs: None,
             supported: Some(vec![
                 "http".to_string(),
                 "https".to_string(),
@@ -180,7 +188,7 @@ pub async fn handle_message(
                 "mms".to_string(),
                 "live".to_string(),
             ]),
-            unsupported: None,
+            ..Default::default()
         },
 
         "start_download" => {
@@ -188,14 +196,8 @@ pub async fn handle_message(
                 return NativeResponse {
                     status: "error".to_string(),
                     action: "start_download".to_string(),
-                    version: None,
-                    job_id: None,
-                    filename: None,
-                    state: None,
                     message: Some("Missing 'url' parameter".to_string()),
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 };
             };
 
@@ -218,14 +220,8 @@ pub async fn handle_message(
                 return NativeResponse {
                     status: "error".to_string(),
                     action: "start_download".to_string(),
-                    version: None,
-                    job_id: None,
-                    filename: None,
-                    state: None,
                     message: Some("Only http:// and https:// (or magnet:/live streams) URLs can be downloaded directly. Blob, data, and file URLs are rejected.".to_string()),
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 };
             }
 
@@ -238,7 +234,6 @@ pub async fn handle_message(
                     return NativeResponse {
                         status: "already_exists".to_string(),
                         action: "start_download".to_string(),
-                        version: None,
                         job_id: Some(existing.id.clone()),
                         filename: Some(existing.filename.clone()),
                         state: Some(existing.state.as_str().to_string()),
@@ -246,9 +241,7 @@ pub async fn handle_message(
                             "Job for this URL already exists (state: {})",
                             existing.state.as_str()
                         )),
-                        jobs: None,
-                        supported: None,
-                        unsupported: None,
+                        ..Default::default()
                     };
                 }
             }
@@ -276,27 +269,18 @@ pub async fn handle_message(
                     NativeResponse {
                         status: "ok".to_string(),
                         action: "start_download".to_string(),
-                        version: None,
                         job_id: Some(job.id),
                         filename: Some(job.filename),
                         state: Some("downloading".to_string()),
                         message: Some("Download created and started successfully".to_string()),
-                        jobs: None,
-                        supported: None,
-                        unsupported: None,
+                        ..Default::default()
                     }
                 }
                 Err(e) => NativeResponse {
                     status: "error".to_string(),
                     action: "start_download".to_string(),
-                    version: None,
-                    job_id: None,
-                    filename: None,
-                    state: None,
                     message: Some(format!("Failed to probe and start download: {}", e)),
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 },
             }
         }
@@ -322,27 +306,15 @@ pub async fn handle_message(
                 NativeResponse {
                     status: "ok".to_string(),
                     action: "get_downloads".to_string(),
-                    version: None,
-                    job_id: None,
-                    filename: None,
-                    state: None,
-                    message: None,
                     jobs: Some(json_jobs),
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 }
             }
             Err(e) => NativeResponse {
                 status: "error".to_string(),
                 action: "get_downloads".to_string(),
-                version: None,
-                job_id: None,
-                filename: None,
-                state: None,
                 message: Some(e.to_string()),
-                jobs: None,
-                supported: None,
-                unsupported: None,
+                ..Default::default()
             },
         },
 
@@ -352,27 +324,16 @@ pub async fn handle_message(
                 NativeResponse {
                     status: "ok".to_string(),
                     action: "stop_recording".to_string(),
-                    version: None,
                     job_id: Some(id),
-                    filename: None,
                     state: Some("completed".to_string()),
-                    message: None,
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 }
             } else {
                 NativeResponse {
                     status: "error".to_string(),
                     action: "stop_recording".to_string(),
-                    version: None,
-                    job_id: None,
-                    filename: None,
-                    state: None,
                     message: Some("Missing 'job_id'".to_string()),
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 }
             }
         }
@@ -383,27 +344,16 @@ pub async fn handle_message(
                 NativeResponse {
                     status: "ok".to_string(),
                     action: "pause_download".to_string(),
-                    version: None,
                     job_id: Some(id),
-                    filename: None,
                     state: Some("paused".to_string()),
-                    message: None,
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 }
             } else {
                 NativeResponse {
                     status: "error".to_string(),
                     action: "pause_download".to_string(),
-                    version: None,
-                    job_id: None,
-                    filename: None,
-                    state: None,
                     message: Some("Missing 'job_id'".to_string()),
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 }
             }
         }
@@ -414,27 +364,16 @@ pub async fn handle_message(
                 NativeResponse {
                     status: "ok".to_string(),
                     action: "resume_download".to_string(),
-                    version: None,
                     job_id: Some(id),
-                    filename: None,
                     state: Some("downloading".to_string()),
-                    message: None,
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 }
             } else {
                 NativeResponse {
                     status: "error".to_string(),
                     action: "resume_download".to_string(),
-                    version: None,
-                    job_id: None,
-                    filename: None,
-                    state: None,
                     message: Some("Missing 'job_id'".to_string()),
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 }
             }
         }
@@ -445,27 +384,16 @@ pub async fn handle_message(
                 NativeResponse {
                     status: "ok".to_string(),
                     action: "cancel_download".to_string(),
-                    version: None,
                     job_id: Some(id),
-                    filename: None,
                     state: Some("cancelled".to_string()),
-                    message: None,
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 }
             } else {
                 NativeResponse {
                     status: "error".to_string(),
                     action: "cancel_download".to_string(),
-                    version: None,
-                    job_id: None,
-                    filename: None,
-                    state: None,
                     message: Some("Missing 'job_id'".to_string()),
-                    jobs: None,
-                    supported: None,
-                    unsupported: None,
+                    ..Default::default()
                 }
             }
         }
@@ -473,14 +401,8 @@ pub async fn handle_message(
         unknown => NativeResponse {
             status: "error".to_string(),
             action: unknown.to_string(),
-            version: None,
-            job_id: None,
-            filename: None,
-            state: None,
             message: Some(format!("Unknown action '{}'", unknown)),
-            jobs: None,
-            supported: None,
-            unsupported: None,
+            ..Default::default()
         },
     }
 }

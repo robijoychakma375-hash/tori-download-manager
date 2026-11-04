@@ -278,12 +278,15 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 36px;
-  padding: 0 8px;
+  min-height: 36px;
+  height: auto;
+  padding: 4px 8px;
   border-radius: 8px;
   font-size: 12px;
   cursor: pointer;
   transition: background 0.1s;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .tori-fr:hover {
@@ -301,9 +304,10 @@
   height: 14px;
   border-radius: 50%;
   border: 1.5px solid var(--tori-fline);
-  flex: none;
+  flex: 0 0 14px;
   display: grid;
   place-items: center;
+  box-sizing: border-box;
 }
 
 .tori-fr.on .tori-rd {
@@ -320,8 +324,12 @@
 
 .tori-q {
   font-weight: 600;
-  width: 52px;
-  flex: none;
+  min-width: 44px;
+  max-width: 58px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tori-tg {
@@ -332,7 +340,8 @@
   background: var(--tori-pline);
   color: var(--tori-mut);
   letter-spacing: 0.02em;
-  flex: none;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .tori-fr.on .tori-tg {
@@ -351,7 +360,8 @@
 }
 
 .tori-cd {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   color: var(--tori-mut);
   font-size: 11px;
   white-space: nowrap;
@@ -366,7 +376,11 @@
 .tori-sz {
   font-variant-numeric: tabular-nums;
   font-weight: 500;
-  flex: none;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  text-align: right;
+  margin-left: auto;
+  padding-left: 6px;
 }
 
 /* Panel Footer */

@@ -291,6 +291,11 @@ async fn handle_status(
 ) -> Json<StatusResponse> {
     let config = state.config.read().await;
     let auth = check_auth(&headers, None, &config.token);
+    if auth {
+        let _ = state
+            .db
+            .set_setting("last_extension_ping", &chrono::Utc::now().to_rfc3339());
+    }
 
     Json(StatusResponse {
         status: "ok".to_string(),
@@ -300,6 +305,27 @@ async fn handle_status(
         port: config.port,
         engine_active: true,
     })
+}
+
+async fn handle_pair_status(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
+    let config = state.config.read().await;
+    let auth = check_auth(&headers, None, &config.token);
+    if auth {
+        let _ = state
+            .db
+            .set_setting("last_extension_ping", &chrono::Utc::now().to_rfc3339());
+    }
+
+    Json(serde_json::json!({
+        "status": "ok",
+        "desktop_running": true,
+        "paired": auth,
+        "port": config.port,
+        "version": API_VERSION
+    }))
 }
 
 async fn handle_pair(
@@ -316,6 +342,10 @@ async fn handle_pair(
             })),
         ));
     }
+
+    let _ = state
+        .db
+        .set_setting("last_extension_ping", &chrono::Utc::now().to_rfc3339());
 
     Ok(Json(PairResponse {
         status: "ok".to_string(),
@@ -941,6 +971,7 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
         .route("/api/v1/ping", get(handle_status))
         .route("/api/v1/status", get(handle_status))
         .route("/api/v1/pair", post(handle_pair))
+        .route("/api/v1/pair/status", get(handle_pair_status))
         .route(
             "/api/v1/downloads",
             post(handle_create_download).get(handle_list_downloads),

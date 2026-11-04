@@ -19,6 +19,7 @@ uuid = { workspace = true }
 hex = { workspace = true }
 async-stream = "0.3"
 futures-util = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

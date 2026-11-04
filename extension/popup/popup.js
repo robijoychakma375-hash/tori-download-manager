@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         statusText.textContent = 'Desktop Offline';
       } else if (res.status === 'unpaired') {
         statusPill.className = 'st wait';
-        statusText.textContent = 'Pairing Required';
+        statusText.textContent = 'Pairing Required (Click to Pair)';
       } else {
         statusPill.className = 'st';
         statusText.textContent = `Connected · 127.0.0.1:${res.port || 6800}`;
@@ -106,6 +106,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
   updateConnectionStatus();
+
+  statusPill.addEventListener('click', () => {
+    if (statusPill.classList.contains('wait') || statusPill.classList.contains('bad')) {
+      showToast('Connecting / Pairing with Tori…');
+      chrome.runtime.sendMessage({ action: 'INITIATE_PAIRING' }, (res) => {
+        if (res && res.ok) {
+          showToast('Paired with Tori!');
+          updateConnectionStatus();
+        } else {
+          showToast(res?.error || 'Could not pair. Make sure Tori is running.', true);
+          updateConnectionStatus();
+        }
+      });
+    }
+  });
 
   // 6. Query media on current tab
   try {
@@ -169,6 +184,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                       if (!selected) return;
 
                       b.textContent = 'Sending…';
+                      b.disabled = true;
+                      const correlationId = 'tori_pop_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+
                       chrome.runtime.sendMessage(
                         {
                           action: 'START_MEDIA_DOWNLOAD',
@@ -176,12 +194,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                           format_id: selected.format_id,
                           filename: `${meta.title.replace(/[\\/:*?"<>|]/g, '') || 'media'}.${selected.container || 'mp4'}`,
                           priority: 'high',
+                          correlation_id: correlationId,
                         },
                         (dlRes) => {
-                          if (dlRes && dlRes.status === 'ok') {
-                            b.textContent = 'Sent';
+                          b.disabled = false;
+                          if (dlRes && dlRes.status === 'ok' && dlRes.job_id) {
+                            b.textContent = 'Queued';
                             b.classList.add('ok');
-                            showToast('Sent to Tori');
+                            showToast(`Queued in Tori (${dlRes.filename || 'media'})`);
                             loadRecentDownloads();
                           } else {
                             b.textContent = 'Retry';

@@ -25,7 +25,7 @@ const N = [
 
 const DEFAULT_SETTINGS = {
   port: 6800,
-  key: 'tori_9f3a1c7e52b84d06a9e1f27c58d3b410',
+  key: '',
   auto: true,
   cap: true,
   min: 1,
@@ -80,10 +80,15 @@ const V = {
               : testState === 'wait'
               ? `Checking 127.0.0.1:${S.port}…`
               : testState === 'unpaired'
-              ? `Tori is listening on 127.0.0.1:${testPort}, but API key does not match. Copy API key from Tori Desktop → Settings.`
+              ? `Tori is listening on 127.0.0.1:${testPort}. Click 'Pair with Tori' to pair automatically.`
               : `Tori v${testEngineVer} · 127.0.0.1:${testPort} · ${testLatency} ms · Paired`
           }</span>
         </div>
+        ${
+          testState === 'unpaired'
+            ? '<button class="btn pri" data-a="pair" style="margin-right:8px">Pair with Tori</button>'
+            : ''
+        }
         <button class="btn def" data-a="test">Test connection</button>
       </div>
     </div>
@@ -92,8 +97,8 @@ const V = {
       ${sr('Server Port', 'Same as Browser Integration → Server Port in Tori', `<input class="fi" type="number" data-k="port" value="${S.port}" style="width:90px">`)}
       ${sr(
         'API Key',
-        'Copy it from Tori → Browser Integration',
-        `<input class="fi" id="key" type="password" data-k="key" value="${escapeHtml(S.key)}" style="width:200px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"><button class="btn" data-a="show">Show</button><button class="btn" data-a="paste">Paste</button>`
+        'Auto-paired with Tori Desktop',
+        `<input class="fi" id="key" type="password" data-k="key" value="${escapeHtml(S.key)}" style="width:200px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"><button class="btn" data-a="show">Show</button><button class="btn" data-a="pair" title="Pair automatically with desktop">Auto-pair</button><button class="btn" data-a="paste">Paste</button>`
       )}
       ${sr('Connect automatically', 'Connect when the browser starts', tg('auto'))}
     </div>`,
@@ -263,6 +268,14 @@ function testNativeConnection() {
       testState = 'ok';
       testPort = res.port || S.port || 6800;
       testEngineVer = res.version || '2.0.0';
+      if (res.token && res.token !== S.key) {
+        S.key = res.token;
+        persistSettings();
+      }
+      if (res.port && res.port !== S.port) {
+        S.port = res.port;
+        persistSettings();
+      }
     } else {
       testState = 'bad';
     }
@@ -314,6 +327,21 @@ document.addEventListener('click', async (e) => {
 
   if (k === 'test') {
     testNativeConnection();
+  }
+
+  if (k === 'pair') {
+    saved('Pairing with Tori…');
+    chrome.runtime.sendMessage({ action: 'INITIATE_PAIRING' }, (res) => {
+      if (res && res.ok && res.token) {
+        S.key = res.token;
+        if (res.port) S.port = res.port;
+        persistSettings();
+        testNativeConnection();
+        saved('Paired successfully');
+      } else {
+        saved(res?.error || 'Pairing failed. Make sure Tori Desktop is running.');
+      }
+    });
   }
 
   if (k === 'show') {

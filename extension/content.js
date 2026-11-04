@@ -222,17 +222,33 @@
             sizeStr = 'Size unknown';
           }
 
+          let qLabel = f.resolution_label || (isAudio ? 'Audio' : 'Media');
+          if (isAudio && (qLabel.startsWith('Audio (') || qLabel.length > 8)) {
+            if (f.bitrate_kbps && f.bitrate_kbps > 0) {
+              qLabel = `${Math.round(f.bitrate_kbps)}k`;
+            } else {
+              qLabel = 'Audio';
+            }
+          }
+
+          let desc = f.format_note || f.vcodec || f.acodec || f.protocol || '';
+          if (isAudio) {
+            const codec = f.acodec ? f.acodec.split('.')[0] : '';
+            const note = f.format_note && f.format_note !== f.acodec ? f.format_note : '';
+            desc = codec && note ? `${codec} · ${note}` : codec || note || 'Audio stream';
+          }
+
           const item = {
-            q: f.resolution_label,
-            tg: (f.container || 'mp4').toUpperCase(),
+            q: qLabel,
+            tg: (f.container || (isAudio ? 'mp3' : 'mp4')).toUpperCase(),
             hd: isHd ? 'HD' : null,
-            cd: f.format_note || f.vcodec || f.acodec || f.protocol,
+            cd: desc,
             sz: sizeStr,
             url: f.direct_stream_url || resolvedMeta.source_url,
             format_id: f.format_id,
-            filename: sanitizeFilename(title, (f.container || 'mp4').toLowerCase()),
+            filename: sanitizeFilename(title, (f.container || (isAudio ? 'mp3' : 'mp4')).toLowerCase()),
             isAudio,
-            isManaged: f.download_capability === 'managed_extractor',
+            isManaged: f.download_capability === 'managed_extractor' || !!f.format_id,
           };
 
           if (isAudio) {
@@ -552,12 +568,12 @@
           listHtml = currentList
             .map(
               (f, i) => `
-            <div class="tori-fr ${i === selectedIdx ? 'on' : ''}" data-idx="${i}">
+            <div class="tori-fr ${i === selectedIdx ? 'on' : ''} ${f.isAudio ? 'audio' : ''}" data-idx="${i}">
               <span class="tori-rd"></span>
-              <span class="tori-q">${escapeHtml(f.q)}</span>
+              <span class="tori-q" title="${escapeHtml(f.q)}">${escapeHtml(f.q)}</span>
               <span class="tori-tg">${escapeHtml(f.tg)}</span>
               ${f.hd ? `<span class="tori-tg hd">${escapeHtml(f.hd)}</span>` : ''}
-              <span class="tori-cd">${escapeHtml(f.cd)}</span>
+              <span class="tori-cd" title="${escapeHtml(f.cd)}">${escapeHtml(f.cd)}</span>
               <span class="tori-sz">${escapeHtml(f.sz)}</span>
             </div>`
             )
@@ -678,6 +694,9 @@
       if (dlBtn) {
         dlBtn.addEventListener('click', (e) => {
           e.stopPropagation();
+          if (dlBtn.disabled || dlBtn.classList.contains('pending')) {
+            return;
+          }
           if (!canDownload) {
             showToast('No downloadable media stream available on this page', true);
             return;
@@ -688,34 +707,60 @@
             return;
           }
 
-          const reqPayload = target.isManaged && resolvedMeta
+          dlBtn.disabled = true;
+          dlBtn.classList.add('pending');
+          const btnSpan = dlBtn.querySelector('span');
+          const originalText = btnSpan ? btnSpan.textContent : 'Download';
+          if (btnSpan) btnSpan.textContent = 'Sending to Tori…';
+
+          const correlationId = 'tori_req_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+          console.log('[TORI] Manual download click', {
+            correlationId,
+            format_id: target.format_id,
+            isManaged: !!target.format_id || target.isManaged,
+            filename: target.filename,
+          });
+
+          const reqPayload = (target.format_id || target.isManaged)
             ? {
                 action: 'START_MEDIA_DOWNLOAD',
-                url: resolvedMeta.source_url,
+                url: (resolvedMeta && resolvedMeta.source_url) ? resolvedMeta.source_url : window.location.href,
                 format_id: target.format_id,
                 filename: target.filename,
                 priority: 'high',
+                correlation_id: correlationId,
               }
             : {
                 action: 'START_DOWNLOAD',
                 url: target.url,
                 filename: target.filename,
                 priority: 'high',
+                correlation_id: correlationId,
               };
 
           chrome.runtime.sendMessage(reqPayload, (res) => {
-            if (res && res.status === 'ok') {
+            dlBtn.classList.remove('pending');
+            if (res && res.status === 'ok' && res.job_id) {
+              console.log('[TORI] Download queued successfully', { correlationId, job_id: res.job_id });
               isDownloaded = true;
-              renderPanel();
-              showToast('Sent to Tori');
+              dlBtn.classList.add('ok');
+              if (btnSpan) btnSpan.textContent = 'Queued in Tori';
+              showToast(`Download queued in Tori (${res.filename || target.filename})`);
               setTimeout(() => {
                 isDownloaded = false;
                 pn.classList.remove('on');
-              }, 1600);
+                renderPanel();
+              }, 1800);
             } else if (res && res.status === 'already_exists') {
-              showToast('Already downloading in Tori');
+              dlBtn.disabled = false;
+              if (btnSpan) btnSpan.textContent = originalText;
+              showToast('Already in download queue');
             } else {
-              showToast(res?.message || 'Download failed', true);
+              dlBtn.disabled = false;
+              if (btnSpan) btnSpan.textContent = originalText;
+              const errMsg = res?.message || 'Download failed. Check connection to TORI Desktop.';
+              console.warn('[TORI] Download failed', { correlationId, error: errMsg, code: res?.code });
+              showToast(errMsg, true);
             }
           });
         });
@@ -735,24 +780,27 @@
         return;
       }
 
-      const reqPayload = target.isManaged && resolvedMeta
+      const correlationId = 'tori_dir_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+      const reqPayload = (target.format_id || target.isManaged)
         ? {
             action: 'START_MEDIA_DOWNLOAD',
-            url: resolvedMeta.source_url,
+            url: (resolvedMeta && resolvedMeta.source_url) ? resolvedMeta.source_url : window.location.href,
             format_id: target.format_id,
             filename: target.filename,
             priority: 'high',
+            correlation_id: correlationId,
           }
         : {
             action: 'START_DOWNLOAD',
             url: target.url,
             filename: target.filename,
             priority: 'high',
+            correlation_id: correlationId,
           };
 
       chrome.runtime.sendMessage(reqPayload, (res) => {
-        if (res && res.status === 'ok') {
-          showToast('Sent to Tori');
+        if (res && res.status === 'ok' && res.job_id) {
+          showToast(`Download queued in Tori (${res.filename || target.filename})`);
         } else if (res && res.status === 'already_exists') {
           showToast('Already downloading in Tori');
         } else {

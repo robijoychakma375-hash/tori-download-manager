@@ -22,11 +22,8 @@ pub fn register_host(custom_extension_id: Option<&str>) -> std::io::Result<()> {
     let ext_id = custom_extension_id.unwrap_or(DEFAULT_EXTENSION_ID);
     let allowed_origins = serde_json::json!([
         format!("chrome-extension://{}/", ext_id),
-        format!("edge-extension://{}/", ext_id),
         "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm/",
-        "edge-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm/",
-        "chrome-extension://bflchfddfgkfglmjapohkjmldepflkbe/",
-        "edge-extension://bflchfddfgkfglmjapohkjmldepflkbe/"
+        "chrome-extension://bflchfddfgkfglmjapohkjmldepflkbe/"
     ]);
 
     let manifest_json = serde_json::json!({
