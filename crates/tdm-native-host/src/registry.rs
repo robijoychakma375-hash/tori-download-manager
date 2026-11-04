@@ -2,6 +2,16 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+fn silent_reg_command() -> Command {
+    let mut cmd = Command::new("reg");
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    cmd
+}
+
 pub const HOST_NAME: &str = "com.tori.download_manager";
 pub const DEFAULT_EXTENSION_ID: &str = "jfnfgmcbgapcpieaonbaolgebjaejcdm";
 
@@ -44,7 +54,7 @@ pub fn register_host(custom_extension_id: Option<&str>) -> std::io::Result<()> {
         let manifest_str = manifest_path.to_string_lossy();
 
         // Register for Chrome
-        let _ = Command::new("reg")
+        let _ = silent_reg_command()
             .args([
                 "add",
                 &format!(
@@ -61,7 +71,7 @@ pub fn register_host(custom_extension_id: Option<&str>) -> std::io::Result<()> {
             .output();
 
         // Register for Edge
-        let _ = Command::new("reg")
+        let _ = silent_reg_command()
             .args([
                 "add",
                 &format!(
@@ -95,7 +105,7 @@ pub fn unregister_host() -> std::io::Result<()> {
 
     #[cfg(windows)]
     {
-        let _ = Command::new("reg")
+        let _ = silent_reg_command()
             .args([
                 "delete",
                 &format!(
@@ -106,7 +116,7 @@ pub fn unregister_host() -> std::io::Result<()> {
             ])
             .output();
 
-        let _ = Command::new("reg")
+        let _ = silent_reg_command()
             .args([
                 "delete",
                 &format!(

@@ -11,6 +11,9 @@ pub enum DownloadEvent {
         error: Option<String>,
     },
     ShowWindow,
+    OpenProgressWindow {
+        id: String,
+    },
 }
 
 #[derive(Clone)]

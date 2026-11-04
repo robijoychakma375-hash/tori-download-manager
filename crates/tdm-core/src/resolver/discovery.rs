@@ -1,14 +1,13 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
-pub use crate::hls::muxer::{find_ffmpeg, find_ffprobe};
+pub use crate::hls::muxer::{find_ffmpeg, find_ffprobe, silent_command};
 use crate::resolver::models::ResolverStatus;
 
 /// Locates the `yt-dlp` executable on the system.
 pub fn find_yt_dlp() -> Option<PathBuf> {
     // 1. Check PATH via where.exe
-    if let Ok(output) = Command::new("where.exe").arg("yt-dlp").output() {
+    if let Ok(output) = silent_command("where.exe").arg("yt-dlp").output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = stdout.lines().next() {
@@ -87,7 +86,7 @@ pub fn find_yt_dlp() -> Option<PathBuf> {
 /// Deno is prioritized because it is a single standalone secure executable.
 pub fn find_js_runtime() -> Option<(String, PathBuf)> {
     // Check Deno
-    if let Ok(output) = Command::new("where.exe").arg("deno").output() {
+    if let Ok(output) = silent_command("where.exe").arg("deno").output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = stdout.lines().next() {
@@ -100,7 +99,7 @@ pub fn find_js_runtime() -> Option<(String, PathBuf)> {
     }
 
     // Check Node.js
-    if let Ok(output) = Command::new("where.exe").arg("node").output() {
+    if let Ok(output) = silent_command("where.exe").arg("node").output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = stdout.lines().next() {
@@ -141,7 +140,7 @@ pub fn find_js_runtime() -> Option<(String, PathBuf)> {
 
 /// Probes yt-dlp version with a bounded timeout.
 pub fn get_yt_dlp_version(bin: &PathBuf) -> Option<String> {
-    let output = Command::new(bin).arg("--version").output().ok()?;
+    let output = silent_command(bin).arg("--version").output().ok()?;
     if output.status.success() {
         let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !ver.is_empty() {

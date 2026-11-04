@@ -473,6 +473,10 @@ async fn handle_create_download(
             let job_id = job.id.clone();
             let fname = job.filename.clone();
             let _ = state.manager.start_download(&job_id);
+            state
+                .manager
+                .event_bus()
+                .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: job_id.clone() });
 
             Ok(Json(CreateDownloadResp {
                 status: "ok".to_string(),
@@ -627,6 +631,10 @@ async fn handle_create_media_download(
             let job_id = job.id.clone();
             let fname = job.filename.clone();
             let _ = state.manager.start_download(&job_id);
+            state
+                .manager
+                .event_bus()
+                .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: job_id.clone() });
 
             Ok(Json(CreateDownloadResp {
                 status: "ok".to_string(),
@@ -908,6 +916,10 @@ async fn handle_events(
                 }
                 tdm_core::DownloadEvent::ShowWindow => {
                     yield Ok(Event::default().event("show_window").data("{}"));
+                }
+                tdm_core::DownloadEvent::OpenProgressWindow { id } => {
+                    let payload = serde_json::json!({ "id": id });
+                    yield Ok(Event::default().event("open_progress").data(payload.to_string()));
                 }
             }
         }

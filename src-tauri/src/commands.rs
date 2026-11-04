@@ -1,7 +1,17 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tauri::State;
+use tauri::{Manager, State};
 use tdm_core::{ChunkRecord, DownloadJob};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+fn silent_explorer_command() -> Command {
+    let mut cmd = Command::new("explorer");
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    cmd
+}
 
 use crate::state::AppState;
 
@@ -111,7 +121,7 @@ pub async fn open_folder(path: String) -> Result<(), String> {
     if p.exists() {
         #[cfg(target_os = "windows")]
         {
-            Command::new("explorer")
+            silent_explorer_command()
                 .args(["/select,", &path])
                 .spawn()
                 .map_err(|e| e.to_string())?;
@@ -128,7 +138,7 @@ pub async fn open_folder(path: String) -> Result<(), String> {
         if parent.exists() {
             #[cfg(target_os = "windows")]
             {
-                Command::new("explorer")
+                silent_explorer_command()
                     .arg(parent)
                     .spawn()
                     .map_err(|e| e.to_string())?;
@@ -157,7 +167,7 @@ pub async fn open_file(path: String) -> Result<(), String> {
     if p.exists() {
         #[cfg(target_os = "windows")]
         {
-            Command::new("explorer")
+            silent_explorer_command()
                 .arg(&path)
                 .spawn()
                 .map_err(|e| e.to_string())?;
@@ -201,7 +211,7 @@ pub async fn open_data_folder() -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer")
+        silent_explorer_command()
             .arg(&data_dir)
             .spawn()
             .map_err(|e| e.to_string())?;
@@ -402,6 +412,56 @@ pub async fn regenerate_pairing_token(state: State<'_, AppState>) -> Result<Stri
     }
 
     Ok(token)
+}
+
+#[tauri::command]
+pub async fn get_download(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<DownloadJob>, String> {
+    state.manager.get_download(&id).map_err(|e| e.to_string())
+}
+
+pub async fn open_progress_window_internal(
+    app: &tauri::AppHandle,
+    manager: &tdm_core::DownloadManager,
+    id: &str,
+) -> Result<(), String> {
+    let job = manager
+        .get_download(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Job {} not found", id))?;
+
+    let label = format!("progress_{}", id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+
+    let url = format!("index.html?window=progress&id={}", id);
+    let title = format!("TORI Download - {}", job.filename);
+
+    let _win = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(url.into()))
+        .title(title)
+        .inner_size(800.0, 500.0)
+        .min_inner_size(600.0, 420.0)
+        .always_on_top(true)
+        .resizable(true)
+        .build()
+        .map_err(|e| format!("Failed to create progress window: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_progress_window(
+    id: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    open_progress_window_internal(&app, &state.manager, &id).await
 }
 
 fn get_default_download_path() -> PathBuf {

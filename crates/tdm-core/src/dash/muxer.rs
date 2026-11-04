@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::error::{EngineError, Result};
-pub use crate::hls::muxer::{find_ffmpeg, find_ffprobe, probe_duration, probe_media_streams};
+pub use crate::hls::muxer::{
+    find_ffmpeg, find_ffprobe, probe_duration, probe_media_streams, silent_command,
+};
 
 /// Remuxes downloaded DASH streams (fMP4 or WebM) into a single valid,
 /// playable, standards-compliant container using stream-copy.
@@ -30,7 +31,7 @@ pub fn remux_dash_to_playable(
     })?;
 
     let mut temp_files: Vec<PathBuf> = Vec::new();
-    let mut cmd = Command::new(&ffmpeg_bin);
+    let mut cmd = silent_command(&ffmpeg_bin);
     cmd.arg("-y"); // Overwrite output
 
     let ext = if is_webm { "webm" } else { "mp4" };

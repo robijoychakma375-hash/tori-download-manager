@@ -32,6 +32,7 @@ pub async fn download_managed_media(
 
     let mut args: Vec<String> = vec![
         "--no-playlist".to_string(),
+        "--continue".to_string(),
         "--newline".to_string(),
         "--no-warnings".to_string(),
         "--no-call-home".to_string(),
@@ -144,9 +145,10 @@ pub async fn download_managed_media(
     loop {
         tokio::select! {
             _ = cancel_token.cancelled() => {
-                tracing::info!("[Managed Resolver] Cancellation requested for job '{}'", job.id);
+                tracing::info!("[Managed Resolver] Cancellation or pause requested for job '{}'", job.id);
                 let _ = child.kill().await;
-                cleanup_partial_files(&job.target_path);
+                // Preserve .part and .ytdl partial files on disk to allow true pause and resume!
+                // Partial files are only removed on explicit job deletion or restart.
                 return Err(EngineError::Cancelled);
             }
             line_res = reader.next_line() => {
@@ -394,7 +396,7 @@ fn locate_actual_output_file(target_str: &str) -> Option<PathBuf> {
     None
 }
 
-fn cleanup_partial_files(target_str: &str) {
+pub(crate) fn cleanup_partial_files(target_str: &str) {
     let p = Path::new(target_str);
     let _ = fs::remove_file(p);
 

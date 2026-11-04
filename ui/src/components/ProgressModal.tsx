@@ -10,6 +10,7 @@ interface ProgressModalProps {
   onTogglePause: (job: DownloadJob) => void;
   onCancel: (job: DownloadJob) => void;
   onOpenFile: (path: string) => void;
+  standalone?: boolean;
 }
 
 export const ProgressModal: React.FC<ProgressModalProps> = ({
@@ -18,6 +19,7 @@ export const ProgressModal: React.FC<ProgressModalProps> = ({
   onTogglePause,
   onCancel,
   onOpenFile,
+  standalone = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'pp1' | 'pp2' | 'pp3'>('pp1');
   const [chunks, setChunks] = useState<ChunkRecord[]>([]);
@@ -64,12 +66,12 @@ export const ProgressModal: React.FC<ProgressModalProps> = ({
 
   return (
     <>
-      <div id="dim" onClick={onClose} />
-      <div className="win pop" id="prog">
+      {!standalone && <div id="dim" onClick={onClose} />}
+      <div className={`win pop ${standalone ? 'standalone' : ''}`} id="prog">
         <TitleBar
           title={`${Math.floor(percent)}%  ${job.filename}`}
           onClose={onClose}
-          isModal
+          isModal={!standalone}
         />
 
         <div className="a segtabs" id="ptabs">

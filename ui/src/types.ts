@@ -59,7 +59,8 @@ export interface DownloadProgress {
 export type DownloadEvent =
   | { type: 'Progress'; payload: DownloadProgress }
   | { type: 'StateChanged'; payload: { id: string; state: JobState; error: string | null } }
-  | { type: 'ShowWindow' };
+  | { type: 'ShowWindow' }
+  | { type: 'OpenProgressWindow'; payload: { id: string } };
 
 export type CategoryKey =
   | 'all'

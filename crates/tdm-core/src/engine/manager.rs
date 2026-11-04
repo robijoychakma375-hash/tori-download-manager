@@ -597,8 +597,10 @@ impl DownloadManager {
             None => return Err(EngineError::JobNotFound(id.to_string())),
         };
 
-        // Reset chunks and temp file
+        // Reset chunks, temp file and partial downloads
         let _ = fs::remove_file(&job.temp_path);
+        let _ = fs::remove_file(&job.target_path);
+        crate::resolver::downloader::cleanup_partial_files(&job.target_path);
         self.db.reset_job_for_restart(id)?;
 
         let con = self.max_connections_per_download();
@@ -632,6 +634,7 @@ impl DownloadManager {
             if delete_files {
                 let _ = fs::remove_file(&job.temp_path);
                 let _ = fs::remove_file(&job.target_path);
+                crate::resolver::downloader::cleanup_partial_files(&job.target_path);
             }
         }
 

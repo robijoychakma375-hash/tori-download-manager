@@ -10,6 +10,7 @@ import { DownloadTable } from './components/DownloadTable';
 import { StatusBar } from './components/StatusBar';
 import { AddDownloadModal } from './components/AddDownloadModal';
 import { ProgressModal } from './components/ProgressModal';
+import { ProgressWindow } from './components/ProgressWindow';
 import { SettingsModal } from './components/SettingsModal';
 import { ContextMenu } from './components/ContextMenu';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
@@ -54,6 +55,14 @@ function loadStoredSettings(): AppSettings {
 }
 
 export function App() {
+  const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const windowMode = urlParams.get('window');
+  const windowJobId = urlParams.get('id');
+
+  if (windowMode === 'progress' && windowJobId) {
+    return <ProgressWindow id={windowJobId} />;
+  }
+
   const [downloads, setDownloads] = useState<DownloadJob[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [currentCategory, setCurrentCategory] = useState<CategoryKey>('all');
@@ -311,6 +320,23 @@ export function App() {
     }
   };
 
+  const handleCancel = async (job: DownloadJob) => {
+    try {
+      await invoke('cancel_download', { id: job.id });
+      showToast(`Cancelled ${job.filename}`);
+    } catch (err) {
+      showToast(`Cancel failed: ${String(err)}`);
+    }
+  };
+
+  const handleOpenProgress = async (job: DownloadJob) => {
+    try {
+      await invoke('open_progress_window', { id: job.id });
+    } catch {
+      setProgressJobId(job.id);
+    }
+  };
+
   const handleStopAll = async () => {
     const active = downloads.filter(
       (d) => d.state === 'downloading' || d.state === 'probing'
@@ -471,7 +497,7 @@ export function App() {
           downloads={filteredDownloads}
           selectedId={selectedId}
           onSelect={setSelectedId}
-          onOpenProgress={(job) => setProgressJobId(job.id)}
+          onOpenProgress={handleOpenProgress}
           onContextMenu={(e, job) => {
             e.preventDefault();
             setSelectedId(job.id);
@@ -501,7 +527,7 @@ export function App() {
           job={progressJob}
           onClose={() => setProgressJobId(null)}
           onTogglePause={handleTogglePause}
-          onCancel={(job) => handleTogglePause(job)}
+          onCancel={handleCancel}
           onOpenFile={handleOpenFile}
         />
       )}
@@ -528,7 +554,7 @@ export function App() {
           y={contextMenu.y}
           job={contextMenu.job}
           onClose={() => setContextMenu(null)}
-          onOpenProgress={(job) => setProgressJobId(job.id)}
+          onOpenProgress={handleOpenProgress}
           onTogglePause={handleTogglePause}
           onOpenFolder={handleOpenFolder}
           onOpenFile={handleOpenFile}

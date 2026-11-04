@@ -1,6 +1,9 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::windows::named_pipe::{
@@ -159,6 +162,10 @@ pub async fn ensure_engine_running() -> bool {
         );
         let mut cmd = Command::new(&exe_path);
         cmd.arg("--minimized");
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
         if let Ok(dir) = std::env::var("TORI_DATA_DIR") {
             cmd.env("TORI_DATA_DIR", dir);
         }

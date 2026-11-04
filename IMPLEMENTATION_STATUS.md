@@ -1,6 +1,6 @@
 # TORI Download Manager (TDM) — Implementation Status
 
-Last Updated: Gate 10.5.3.2 Fix Missing Media Selection Popup & Overlay Visibility Verified (105 Automated Tests Passing + Microsoft Edge Real Browser CDP Verified)
+Last Updated: Gate 10.6 Silent Background Processes & Independent Always-On-Top Download Progress Window Verified (105 Automated Tests Passing + Microsoft Edge Real Browser CDP Verified)
 Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.0.26100.0)
 
 ---
@@ -9,6 +9,10 @@ Target Platform: Windows 10/11 x64 (MSVC toolchain 14.44.35207 + Windows SDK 10.
 
 | Gate | Feature | Status | Verification Command | Observed Result | Known Limitations / Notes |
 |---|---|---|---|---|---|
+| **Gate 10.6** | Silent Process Execution (`CREATE_NO_WINDOW`) | **VERIFIED** | `node scripts/verify_gate10_6.js` (Step 3) | Zero visible console/cmd windows flashed or spawned across all subprocess paths (`where.exe`, `yt-dlp`, `ffmpeg`, `ffprobe`, `deno`, `node`, `reg.exe`, `explorer.exe`). | `CREATE_NO_WINDOW` (`0x08000000`) applied across all `std::process::Command` and `tokio::process::Command` calls. Subsystems on CLI and Native Host left as console for standard stdio stream compatibility. |
+| **Gate 10.6** | True Pause & Resume (Data Preservation) | **VERIFIED** | `node scripts/verify_gate10_6.js` (Steps 4 & 5) | Pausing download preserved `.part` / `.ytdl` files on disk; resumed from 261,120 bytes to 612,024 bytes without restarting from 0. Direct HTTP chunks also verified. | Removed destructive `cleanup_partial_files` on `cancel_token.cancelled()`; added explicit `--continue` flag to yt-dlp arguments. Partial cleanup strictly reserved for explicit delete. |
+| **Gate 10.6** | Independent Always-On-Top Progress Window | **VERIFIED** | `node scripts/verify_gate10_6.js` (Step 6) | Dedicated Tauri 2 `WebviewWindow` (`progress_${id}`) created with `always_on_top(true)`. Stays visible when main app minimized; closes without cancelling download; focuses existing window on duplicate request. | URL route `index.html?window=progress&id=${id}` renders standalone `ProgressWindow` with complete approved TORI tabs, segment visualizer, speed, ETA, and controls. |
+| **Gate 10.6** | State Synchronization & Cancelation Fix | **VERIFIED** | `node scripts/verify_gate10_6.js` (Step 7) | Fixed critical regression in `App.tsx` where `onCancel` invoked `handleTogglePause`. Clicking Cancel now triggers genuine `cancel_download` across all UI and API interfaces. | State enum maps `Downloading` -> `Paused` -> `Downloading` -> `Cancelled` synchronously across engine, REST API, SSE, and frontend. |
 | **Gate 0** | Toolchain & Workspace Integrity | **VERIFIED** | `cargo check --workspace` & `cargo fmt --all -- --check` & `cargo clippy --workspace --all-targets -- -D warnings` | Exit code 0, clean check, 0 warnings. | Strict workspace resolver "2", Rust edition 2021. |
 | **Gate 0** | Frontend Build Pipeline | **VERIFIED** | `npm --prefix ui run build` | Built in 955ms, dist assets verified (0 errors). | React 19 + TypeScript + Vite 8. |
 | **Gate 1** | HTTP Range Download (206) | **VERIFIED** | `cargo test -p tdm-core --test integration_tests -- test_multipart_range_download_success` | Passed in 0.18s; 4MB payload SHA-256 exact match. | Up to 8 concurrent non-overlapping range workers based on file size. |
@@ -183,6 +187,13 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
   - `server_tests` (Gate 10.2 local server, DNS rebind defense, CORS defense, pairing, CRUD, Gate 10.5 media endpoints): **7 passed** (2.77s)
 - **Clippy**: 0 warnings across all targets (`cargo clippy --workspace --all-targets -j 2 -- -D warnings`).
 - **Formatting**: 100% compliant with rustfmt (`cargo fmt --all -- --check`).
-- **Frontend Build**: Built in 411ms with 0 errors (`npm --prefix ui run build`).
-- **Release Build**: Built in 53s with 0 errors (`cargo tauri build --no-bundle`). Executable: `target\release\tori-download-manager.exe` (26,210,816 bytes, SHA-256: `80EF92A3581FBC622E96232638E791EB80505F23BB7CA7C868CDE173198E4552`).
-- **Real Edge Extension Verification**: 8/8 automated browser integration steps verified with Microsoft Edge CDP, Options UI, Popup UI, media resolution without timeout (35s deadline), 720p/1080p downloads with FFprobe stream verification, and zero orphan processes (`node scripts/verify_edge_integration.js`).
+- **Frontend Build**: Built in 341ms with 0 errors (`npm --prefix ui run build`).
+- **Release Build**: Built in 1m 40s with 0 errors (`cargo build --release --workspace -j 2`). Executables: `target\release\tori-download-manager.exe` and `target\release\tdm-native-host.exe`.
+- **Gate 10.6 Verification**: 6/6 tests passed (`node scripts/verify_gate10_6.js`):
+  1. Silent Process Execution (`CREATE_NO_WINDOW` 0x08000000; 0 visible windows).
+  2. Managed Media True Pause & Resume (261,120 bytes -> 612,024 bytes, partial files preserved on disk).
+  3. Direct HTTP Multi-Chunk Pause & Resume (tested with 206 local test server).
+  4. Independent Always-On-Top Progress Window (`open_progress_window`, Tauri 2 WebviewWindow, `always_on_top(true)`).
+  5. State Synchronization across Windows.
+  6. Cancelation Correctness (`cancel_download` wired to UI).
+- **Real Edge Extension Verification**: 14/14 automated browser integration steps verified with Microsoft Edge CDP, Options UI, Popup UI, media resolution, 720p/1080p downloads with FFprobe stream verification, and zero duplicate overlays (`node scripts/verify_gate10_5_3_2.js`).

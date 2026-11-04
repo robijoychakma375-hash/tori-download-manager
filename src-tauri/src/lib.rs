@@ -69,6 +69,7 @@ pub fn run() {
     let ipc_db = db.clone();
     let srv_manager = manager.clone();
     let srv_db = db.clone();
+    let event_manager = manager.clone();
     let shutdown_token = CancellationToken::new();
     let ipc_shutdown = shutdown_token.clone();
     let srv_shutdown = shutdown_token.clone();
@@ -80,15 +81,28 @@ pub fn run() {
         .setup(move |app| {
             let app_handle = app.handle().clone();
             let mut rx = event_bus.subscribe();
+            let mgr = event_manager.clone();
 
             tauri::async_runtime::spawn(async move {
                 while let Ok(event) = rx.recv().await {
-                    if matches!(event, tdm_core::DownloadEvent::ShowWindow) {
-                        if let Some(window) = app_handle.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                    match &event {
+                        tdm_core::DownloadEvent::ShowWindow => {
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                let _ = window.unminimize();
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
                         }
+                        tdm_core::DownloadEvent::OpenProgressWindow { id } => {
+                            let app = app_handle.clone();
+                            let m = mgr.clone();
+                            let id_c = id.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let _ =
+                                    commands::open_progress_window_internal(&app, &m, &id_c).await;
+                            });
+                        }
+                        _ => {}
                     }
                     let _ = app_handle.emit("download-event", &event);
                 }
@@ -142,6 +156,8 @@ pub fn run() {
             get_engine_settings,
             get_browser_integration_info,
             regenerate_pairing_token,
+            get_download,
+            open_progress_window,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running TORI Download Manager desktop application");

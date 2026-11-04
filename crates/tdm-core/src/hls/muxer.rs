@@ -2,11 +2,25 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use crate::error::{EngineError, Result};
+
+/// Creates a `std::process::Command` configured with `CREATE_NO_WINDOW` on Windows
+/// to prevent flashing console windows.
+pub fn silent_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
 
 /// Locates the `ffmpeg` executable on the system.
 pub fn find_ffmpeg() -> Option<PathBuf> {
-    if let Ok(output) = Command::new("where.exe").arg("ffmpeg").output() {
+    if let Ok(output) = silent_command("where.exe").arg("ffmpeg").output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = stdout.lines().next() {
@@ -85,7 +99,7 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
 
 /// Locates the `ffprobe` executable on the system.
 pub fn find_ffprobe() -> Option<PathBuf> {
-    if let Ok(output) = Command::new("where.exe").arg("ffprobe").output() {
+    if let Ok(output) = silent_command("where.exe").arg("ffprobe").output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = stdout.lines().next() {
@@ -199,7 +213,7 @@ pub fn remux_hls_to_mp4(
     });
 
     let mut temp_cleanup_files: Vec<PathBuf> = Vec::new();
-    let mut cmd = Command::new(&ffmpeg_bin);
+    let mut cmd = silent_command(&ffmpeg_bin);
     cmd.arg("-y"); // Overwrite output
 
     if is_fmp4 {
@@ -306,7 +320,7 @@ pub fn probe_duration(file_path: &Path) -> Result<f64> {
         EngineError::Other("FFprobe executable not found on system PATH".to_string())
     })?;
 
-    let output = Command::new(&ffprobe_bin)
+    let output = silent_command(&ffprobe_bin)
         .arg("-v")
         .arg("error")
         .arg("-show_entries")
@@ -340,7 +354,7 @@ pub fn probe_media_streams(file_path: &Path) -> Result<(bool, bool, f64)> {
         EngineError::Other("FFprobe executable not found on system PATH".to_string())
     })?;
 
-    let stream_output = Command::new(&ffprobe_bin)
+    let stream_output = silent_command(&ffprobe_bin)
         .arg("-v")
         .arg("error")
         .arg("-show_entries")
