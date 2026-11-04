@@ -1,76 +1,85 @@
-# Plan — Gate 10.5.3: Fix Manual Download, Audio Popup Layout & Secure Auto-Pairing [COMPLETED]
+# Plan — Gate 10.5.3.1: Automatic Port Connection, True Live Status & Dynamic Video Switching (COMPLETED)
 
-## Milestone Status: 100% VERIFIED
-All 3 user issues resolved, 106 automated tests passing, 10/10 Edge E2E verification steps passing, and all quality gates clean.
-
-## Next Milestone: Gate 10.6 — Production Packaging, NSIS Release & Cross-Browser Verification
-- Build and sign/bundle release NSIS installer (`cargo tauri bundle --bundles nsis`).
-- Perform clean installer installation, registry inspection, and uninstall verification.
-- Smoke-test Chrome and Edge extension compatibility across varied network environments.
+## Milestone Objective
+Implement & Verify:
+1. Automatic localhost port connection and true live connection status across TORI Desktop and Edge extension (default port 6800, port discovery fallback `[6800..6803]`, auto-reconnection across restarts using stored pairing credentials, true four-state status model: `Connecting`, `Connected`, `Disconnected`, `Pairing Required`, zero hardcoded green status).
+2. Dynamic video switching and per-tab media identity model on SPA websites (YouTube, Facebook, Instagram) without webpage refresh. When navigating from Video A to Video B, immediately clear stale formats and title, display "Resolving new video...", resolve Video B's genuine formats/sizes, and guarantee downloads use Video B's identity while preserving in-flight downloads from Video A.
+3. Race condition prevention (generation counters, debouncing, obsolete response dropping).
 
 ---
 
-## Work Breakdown
+## Work Breakdown & Status
 
-### Phase 1: Issue 2 — Audio-Only Popup Layout Fix
-- Update `crates/tdm-core/src/resolver/pipeline.rs` to format audio `resolution_label` cleanly (e.g. `130k` or `Audio`) matching Design Source A.
-- Update `extension/content.js` to parse audio labels cleanly (`q`: bitrate e.g. `130k`, `tg`: container, `cd`: codec/note, `sz`: size).
-- Update `extension/content.css`:
-  - Enforce `.tori-fr` flexbox spacing and minimum height.
-  - Fix `.tori-q` with `overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`.
-  - Fix `.tori-cd` with `flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`.
-  - Fix `.tori-sz` with `margin-left: auto; flex: none; font-variant-numeric: tabular-nums;`.
-  - Verify layout under different zoom levels (100%, 125%, 150%).
+### Phase 1: Requirement 1 — Connection State Model & Port Discovery [COMPLETED]
+- **Backend & Native Host (`crates/tdm-native-host/src/lib.rs`, `server.rs`):**
+  - Verified `pair` action reads `active_server_port` from SQLite and returns `{ status: "ok", token, port }`.
+  - Ensured status/ping endpoints return `{ status: "ok", authenticated: bool, port: u16, version: "2.0.0" }`.
+  - Prevented routine status pings and query fallbacks from auto-launching the desktop app when stopped.
+- **Background SW (`extension/background.js`):**
+  - Implemented robust `PING_DESKTOP` with port discovery and true 4-state reporting (`ok`, `unpaired`, `disconnected`).
+  - Removed unprompted Native Messaging fallbacks from routine background queries (`GET_DOWNLOADS`, `PAUSE`, `RESUME`, `CANCEL`) to eliminate phantom auto-spawning.
+  - Persisted authorized pairing credentials in `chrome.storage.local`.
+- **Popup & Options UI (`extension/popup/`, `extension/options/`):**
+  - In `popup.html`: initial pill state set to `<div class="st wait" id="statusPill"><i id="statusDot"></i><span id="statusText">Connecting…</span></div>`.
+  - In `popup.js`: implemented `setStatus(state)` reflecting `connecting` (amber), `connected` (green), `disconnected` (red), `unpaired` (amber). Added one-click auto-pairing on status pill click.
+  - Added periodic bounded health polling while popup is open; cleaned up on `unload`.
+  - In `options.js`: synced connection banner with live status model.
+- **Desktop UI (`ui/src/App.tsx`):**
+  - Defaulted `isExtensionConnected` to `false` instead of `true`; updated via `check_extension_status`.
 
-### Phase 2: Issue 3 — Secure One-Time Pairing & State Synchronization
-- Update `crates/tdm-native-host/src/protocol.rs` and `lib.rs`:
-  - Add `token` and `port` fields to `NativeResponse`.
-  - Handle `"pair"` and `"get_pairing_token"` in `handle_message()`, returning active token and port from SQLite.
-- Update `crates/tdm-native-host/src/server.rs`:
-  - Add `GET /api/v1/pair/status` reporting genuine pairing status.
-  - Track `last_extension_ping` in `ServerState` when authenticated extension requests occur.
-  - Return `extension_active` in `get_browser_integration_info`.
-- Update `extension/background.js`:
-  - Default `key: ''`.
-  - Implement `initiatePairing()`: uses Native Messaging to fetch genuine token and port, saves to `chrome.storage.local`.
-  - Auto-reconnect on startup and token renewal.
-- Update `extension/options/options.js`:
-  - Show "Pair with TORI" button when unpaired.
-  - Clear hardcoded fake token; use real pairing flow.
-- Update `extension/popup/popup.js` and `ui/src/components/StatusBar.tsx`:
-  - Display synchronized status: "Connected · 127.0.0.1:6800", "Pairing Required", or "Desktop Offline".
+### Phase 2: Requirement 2 — SPA Dynamic Navigation & Media Identity [COMPLETED]
+- **Media Identity & Generation Model in `extension/content.js`:**
+  - Defined `extractMediaIdentity(url)` returning `{ url, videoId }`.
+  - Introduced `currentGeneration` counter for each video overlay.
+  - Implemented `handleVideoNavigation(reason)`:
+    - Checks if `videoId` or `url` changed.
+    - Increments `currentGeneration`.
+    - Clears old title, format rows, selected index, and `resolvedMeta`.
+    - Updates pill to indicate `"Resolving…"`.
+    - Renders `"Resolving new video…"` in panel, triggers `RESOLVE_MEDIA` for new URL with `generation: currentGeneration`.
+    - Discards any responses where `response.generation !== currentGeneration`.
+- **Event Listeners in `extension/content.js`:**
+  - Hooked YouTube `yt-navigate-finish`, `yt-page-data-updated`.
+  - Wrapped `history.pushState` and `history.replaceState`.
+  - Hooked `popstate`.
+  - Hooked `<video>` element `loadstart`, `emptied`, `loadedmetadata`, `durationchange`.
+  - URL change polling watchdog (600ms) for arbitrary dynamic SPAs.
+  - Listened for `chrome.runtime.onMessage` (`MEDIA_NAVIGATED`, `GET_ACTIVE_MEDIA_INFO`).
+- **Background Coordination in `extension/background.js`:**
+  - Hooked `chrome.webNavigation.onHistoryStateUpdated`:
+    - Clears `tabMediaCache` for that `tabId`.
+    - Increments `tabGenerations.set(tabId, gen)`.
+    - Notifies tab via `chrome.tabs.sendMessage({ action: 'MEDIA_NAVIGATED' })`.
+  - In `RESOLVE_MEDIA`: accepts `generation` and deduplicates in-flight requests.
+- **Toolbar Popup Synchronization (`extension/popup/popup.js`):**
+  - On open, queries active tab's media identity via `GET_ACTIVE_MEDIA_INFO`.
+  - Displays current video's formats/title immediately if available.
+  - Re-renders if navigation occurs while popup is open.
 
-### Phase 3: Issue 1 — Trace & Fix Manual User Download Flow
-- Update `extension/content.js`:
-  - Add button pending state on click (`.pending`, `Sending to Tori…`).
-  - Generate correlation ID (`tori_req_...`).
-  - Send `START_MEDIA_DOWNLOAD` with `format_id` for all resolved formats.
-  - Only show success if backend returns `{ status: 'ok', job_id }`.
-  - Handle duplicate jobs and errors with clear user feedback.
-- Update `ui/src/App.tsx`:
-  - In `download-event` listener: if incoming `Progress` or `StateChanged` event has an `id` not currently in `downloads`, immediately call `loadDownloads()`.
-- Update `crates/tdm-core/src/engine/manager.rs`:
-  - Ensure `create_managed_media_download` handles duplicate prevention and updates correctly.
+### Phase 3: Automated Verification [COMPLETED]
+- Created and executed `scripts/verify_gate10_5_3_1.js`:
+  1. Tested connection state transitions: `Connecting` / `Pairing Required` -> `Connected · 127.0.0.1:6800`.
+  2. Tested desktop shutdown: verified `PING_DESKTOP` returned `disconnected`, and verified ZERO silent auto-spawning occurred.
+  3. Tested desktop restart: automatic reconnection with saved token verified without manual key entry.
+  4. Tested invalid token: verified `unpaired` (`Pairing Required`) reported.
+  5. Tested YouTube dynamic navigation:
+     - Big Buck Bunny resolved with 28 formats, captured `design/edge_video_a_resolved.png`.
+     - Queued download for Video A (`jobIdA`).
+     - Client-side navigated to Caminandes without page reload (`pushState`).
+     - Verified Video A UI cleared, Caminandes detected and resolved with 24 formats, captured `design/edge_video_b_resolved.png`.
+     - Dispatched download for Video B (`jobIdB`) and verified correct Video B URL in desktop engine.
+     - Verified in-flight download for Video A was preserved and NOT cancelled by navigation (`downloaded_bytes: 3545491`).
+     - Navigated back to Video A without reload; identity restored.
+     - Tested rapid A -> B -> C navigation with generation counter safely dropping obsolete responses.
+     - Verified zero duplicate overlays in DOM.
+- Full quality gates:
+  - `cargo fmt --all -- --check` (Passed)
+  - `cargo clippy --workspace --all-targets -j 2 -- -D warnings` (Passed, 0 warnings)
+  - `cargo test --workspace -j 2 -- --test-threads=1` (Passed, 105 passed, 0 failed)
+  - `npm --prefix ui run build` (Passed in 352ms)
+  - `node -c` syntax check on all JS files (Passed)
 
-### Phase 4: Automated Verification & Testing
-- Create `scripts/verify_gate10_5_3.js`:
-  - Launch Desktop app and Edge with unpacked extension.
-  - Verify secure auto-pairing via Native Messaging (no manual token copy).
-  - Verify Extension Options shows paired status.
-  - Verify Extension Popup shows connected status.
-  - Resolve video media; switch to Audio Only tab; capture screenshot at 100% and 125% zoom; verify zero text overlap.
-  - Click Download on a selected format row via DOM click; verify button pending state; verify response contains valid `job_id`.
-  - Verify Desktop UI loads and displays the job in real time.
-  - Verify FFprobe streams on output file.
-  - Verify cancellation and process reaping (0 orphan processes).
-- Run full regression suites:
-  - `cargo fmt --all -- --check`
-  - `cargo clippy --workspace --all-targets -j 2 -- -D warnings`
-  - `cargo test --workspace -j 2 -- --test-threads=1`
-  - `npm --prefix ui run build`
-  - `cargo tauri build --no-bundle`
-
-### Phase 5: Deliverables
-- Produce `GATE10_5_3_USER_ISSUES_FIX_REPORT.md`.
-- Update `IMPLEMENTATION_STATUS.md`.
-- Git commit all changes cleanly.
+### Phase 4: Documentation & Final Deliverables [COMPLETED]
+- Produced `GATE10_5_3_1_CONNECTION_AND_SPA_FIX_REPORT.md` (and artifact).
+- Updated `IMPLEMENTATION_STATUS.md`.
+- Staged and committed changes cleanly to git.

@@ -24,6 +24,9 @@ const STREAMING_MIMES = [
 // In-memory cache for fast synchronous access
 const tabMediaCache = new Map();
 
+// Navigation generations per tab to invalidate obsolete media states on SPA navigation
+const tabGenerations = new Map();
+
 // Active in-flight media resolution promises to prevent duplicate fetches
 const activeResolutions = new Map();
 
@@ -48,6 +51,36 @@ chrome.storage.local.get(['tori_settings'], (res) => {
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.tori_settings?.newValue) {
     extSettings = { ...extSettings, ...changes.tori_settings.newValue };
+  }
+});
+
+// Listen for client-side / SPA history updates (YouTube, Facebook, Instagram, etc.)
+if (chrome.webNavigation && chrome.webNavigation.onHistoryStateUpdated) {
+  chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
+    if (details.frameId === 0) {
+      tabMediaCache.delete(details.tabId);
+      const nextGen = (tabGenerations.get(details.tabId) || 0) + 1;
+      tabGenerations.set(details.tabId, nextGen);
+      chrome.tabs.sendMessage(details.tabId, {
+        action: 'MEDIA_NAVIGATED',
+        url: details.url,
+        generation: nextGen,
+      }).catch(() => {});
+    }
+  });
+}
+
+// Clean up tab state when tab is closed or navigated
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tabMediaCache.delete(tabId);
+  tabGenerations.delete(tabId);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url) {
+    tabMediaCache.delete(tabId);
+    const nextGen = (tabGenerations.get(tabId) || 0) + 1;
+    tabGenerations.set(tabId, nextGen);
   }
 });
 
@@ -77,9 +110,16 @@ function getEndpointTimeout(endpoint, customTimeout = null) {
 /**
  * Localhost HTTP API client with endpoint-aware timeout and authentication
  */
-async function callDesktopApi(endpoint, method = 'GET', body = null, customTimeout = null) {
-  const port = extSettings.port || 6800;
-  const token = extSettings.key || '';
+async function callDesktopApi(
+  endpoint,
+  method = 'GET',
+  body = null,
+  customTimeout = null,
+  customPort = null,
+  customToken = null
+) {
+  const port = customPort || extSettings.port || 6800;
+  const token = customToken !== null && customToken !== undefined ? customToken : (extSettings.key || '');
   const url = `http://127.0.0.1:${port}${endpoint}`;
   const headers = {
     'X-Tori-Token': token,
@@ -100,15 +140,6 @@ async function callDesktopApi(endpoint, method = 'GET', body = null, customTimeo
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
-
-    // If 401 Unauthorized and not already retrying, attempt auto-pairing and retry once
-    if (res.status === 401 && !customTimeout) {
-      console.log('[TORI] Received 401 Unauthorized, attempting auto-pairing...');
-      const pairRes = await autoPairWithDesktop();
-      if (pairRes.ok && pairRes.token) {
-        return callDesktopApi(endpoint, method, body, 15000);
-      }
-    }
 
     const data = await res.json().catch(() => ({}));
     return {
@@ -538,17 +569,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'GET_CONNECTION_STATUS') {
-    callDesktopApi('/api/v1/pair/status').then(async (httpRes) => {
+    const port = message.port || extSettings.port || 6800;
+    const token = message.key !== undefined ? message.key : (extSettings.key || '');
+    callDesktopApi('/api/v1/pair/status', 'GET', null, 2500, port, token).then((httpRes) => {
       if (httpRes.ok && httpRes.data && httpRes.data.paired) {
         sendResponse({ status: 'ok', paired: true, port: httpRes.data.port, version: httpRes.data.version });
+      } else if (httpRes.ok && httpRes.data && httpRes.data.desktop_running) {
+        sendResponse({ status: 'unpaired', paired: false, port: httpRes.data.port, message: 'Pairing Required' });
       } else {
-        // Attempt auto-pairing via Native Messaging
-        const pairRes = await autoPairWithDesktop();
-        if (pairRes.ok) {
-          sendResponse({ status: 'ok', paired: true, port: pairRes.port, token: pairRes.token });
-        } else {
-          sendResponse({ status: 'unpaired', paired: false, error: pairRes.error });
-        }
+        sendResponse({ status: 'disconnected', paired: false, port, message: 'Desktop Offline' });
       }
     });
     return true;
@@ -556,43 +585,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'PING_DESKTOP') {
     const start = Date.now();
-    callDesktopApi('/api/v1/status').then(async (httpRes) => {
-      const latency = Math.max(1, Date.now() - start);
-      if (httpRes.ok && httpRes.data && httpRes.data.status === 'ok') {
-        if (!httpRes.data.authenticated) {
-          // Attempt auto-pairing if unauthenticated
-          const pairRes = await autoPairWithDesktop();
-          if (pairRes.ok) {
-            sendResponse({
-              status: 'ok',
-              authenticated: true,
-              version: httpRes.data.version || '2.0.0',
-              port: pairRes.port || (extSettings.port || 6800),
-              token: pairRes.token,
-              latency,
-              mode: 'http',
-            });
-            return;
-          }
+    let targetPort = message.port || extSettings.port || 6800;
+    const targetKey = message.key !== undefined ? message.key : (extSettings.key || '');
+
+    (async () => {
+      let httpRes = await callDesktopApi('/api/v1/status', 'GET', null, 2000, targetPort, targetKey);
+
+      // If connection to targetPort failed, probe candidate ports to discover active desktop port
+      if (!httpRes.ok && httpRes.status === 0) {
+        const candidates = [6800, 6801, 6802, 6803].filter((p) => p !== targetPort);
+        for (const candPort of candidates) {
+          try {
+            const probeRes = await callDesktopApi('/api/v1/ping', 'GET', null, 500, candPort);
+            if (probeRes.ok && probeRes.data && probeRes.data.name === 'TORI Download Manager') {
+              console.log(`[TORI] Discovered active desktop server on port ${candPort}`);
+              targetPort = candPort;
+              extSettings.port = candPort;
+              chrome.storage.local.set({ tori_settings: extSettings });
+              httpRes = await callDesktopApi('/api/v1/status', 'GET', null, 2000, candPort, targetKey);
+              break;
+            }
+          } catch (_) {}
         }
-        sendResponse({
-          status: httpRes.data.authenticated ? 'ok' : 'unpaired',
-          authenticated: !!httpRes.data.authenticated,
-          version: httpRes.data.version || '2.0.0',
-          port: httpRes.data.port || (extSettings.port || 6800),
-          latency,
-          mode: 'http',
-        });
-      } else if (httpRes.status === 401) {
-        // 401 Unauthorized: attempt auto-pairing immediately
-        const pairRes = await autoPairWithDesktop();
-        if (pairRes.ok) {
+      }
+
+      const latency = Math.max(1, Date.now() - start);
+
+      if (httpRes.ok && httpRes.data && httpRes.data.status === 'ok') {
+        if (httpRes.data.authenticated) {
           sendResponse({
             status: 'ok',
             authenticated: true,
-            version: '2.0.0',
-            port: pairRes.port || (extSettings.port || 6800),
-            token: pairRes.token,
+            version: httpRes.data.version || '2.0.0',
+            port: httpRes.data.port || targetPort,
             latency,
             mode: 'http',
           });
@@ -600,38 +625,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({
             status: 'unpaired',
             authenticated: false,
-            message: 'API Key mismatch / Pairing required',
-            port: extSettings.port || 6800,
+            version: httpRes.data.version || '2.0.0',
+            port: httpRes.data.port || targetPort,
             latency,
             mode: 'http',
+            message: 'Pairing Required (API Key mismatch)',
           });
         }
+      } else if (httpRes.status === 401) {
+        sendResponse({
+          status: 'unpaired',
+          authenticated: false,
+          version: '2.0.0',
+          port: targetPort,
+          latency,
+          mode: 'http',
+          message: 'Pairing Required (API Key mismatch)',
+        });
       } else {
-        // Desktop HTTP server unreachable. Optional Native Messaging bootstrap check:
-        const nmRes = await sendNativeMessage({ action: 'ping' });
-        if (nmRes && nmRes.status === 'ok') {
-          const pairRes = await autoPairWithDesktop();
-          sendResponse({
-            status: 'ok',
-            authenticated: true,
-            version: nmRes.version || '2.0.0',
-            port: pairRes.port || (extSettings.port || 6800),
-            token: pairRes.token,
-            latency,
-            mode: 'native',
-          });
-        } else {
-          sendResponse({
-            status: 'error',
-            authenticated: false,
-            message: 'Could not connect to TORI Desktop. Is TORI running?',
-            error: httpRes.error,
-            port: extSettings.port || 6800,
-            mode: 'none',
-          });
-        }
+        // Desktop is stopped / unreachable
+        sendResponse({
+          status: 'disconnected',
+          authenticated: false,
+          port: targetPort,
+          latency,
+          mode: 'none',
+          message: 'Desktop Offline',
+        });
       }
-    });
+    })();
     return true; // Keep channel open for async response
   }
 
@@ -701,38 +723,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'GET_DOWNLOADS') {
-    callDesktopApi('/api/v1/downloads').then(async (httpRes) => {
+    callDesktopApi('/api/v1/downloads').then((httpRes) => {
       if (httpRes.ok && httpRes.data && Array.isArray(httpRes.data.jobs)) {
         sendResponse({ status: 'ok', jobs: httpRes.data.jobs });
       } else {
-        // Fallback to Native Messaging
-        const nmRes = await sendNativeMessage({ action: 'get_downloads' });
-        sendResponse(nmRes);
+        sendResponse({ status: 'ok', jobs: [] });
       }
     });
     return true;
   }
 
   if (message.action === 'PAUSE_DOWNLOAD') {
-    callDesktopApi(`/api/v1/downloads/${message.job_id}/pause`, 'POST').then(async (httpRes) => {
-      if (httpRes.ok) sendResponse(httpRes.data);
-      else sendResponse(await sendNativeMessage({ action: 'pause_download', job_id: message.job_id }));
+    callDesktopApi(`/api/v1/downloads/${message.job_id}/pause`, 'POST').then((httpRes) => {
+      sendResponse(httpRes.ok ? httpRes.data : { status: 'error', message: 'Desktop disconnected' });
     });
     return true;
   }
 
   if (message.action === 'RESUME_DOWNLOAD') {
-    callDesktopApi(`/api/v1/downloads/${message.job_id}/resume`, 'POST').then(async (httpRes) => {
-      if (httpRes.ok) sendResponse(httpRes.data);
-      else sendResponse(await sendNativeMessage({ action: 'resume_download', job_id: message.job_id }));
+    callDesktopApi(`/api/v1/downloads/${message.job_id}/resume`, 'POST').then((httpRes) => {
+      sendResponse(httpRes.ok ? httpRes.data : { status: 'error', message: 'Desktop disconnected' });
     });
     return true;
   }
 
   if (message.action === 'CANCEL_DOWNLOAD') {
-    callDesktopApi(`/api/v1/downloads/${message.job_id}/cancel`, 'POST').then(async (httpRes) => {
-      if (httpRes.ok) sendResponse(httpRes.data);
-      else sendResponse(await sendNativeMessage({ action: 'cancel_download', job_id: message.job_id }));
+    callDesktopApi(`/api/v1/downloads/${message.job_id}/cancel`, 'POST').then((httpRes) => {
+      sendResponse(httpRes.ok ? httpRes.data : { status: 'error', message: 'Desktop disconnected' });
     });
     return true;
   }
@@ -746,8 +763,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'RESOLVE_MEDIA') {
     const rawUrl = (message.url || '').trim();
+    const generation = message.generation;
     if (!rawUrl) {
-      sendResponse({ status: 'error', code: 'INVALID_URL', message: 'Missing URL to resolve' });
+      sendResponse({ status: 'error', code: 'INVALID_URL', message: 'Missing URL to resolve', generation });
       return false;
     }
 
@@ -755,9 +773,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (activeResolutions.has(rawUrl)) {
       activeResolutions
         .get(rawUrl)
-        .then((res) => sendResponse(res))
+        .then((res) => sendResponse({ ...res, generation }))
         .catch((err) =>
-          sendResponse({ status: 'error', code: 'ERROR', message: err.message || 'Resolution error' })
+          sendResponse({ status: 'error', code: 'ERROR', message: err.message || 'Resolution error', generation })
         );
       return true;
     }
@@ -788,9 +806,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
 
     resolutionPromise
-      .then((res) => sendResponse(res))
+      .then((res) => sendResponse({ ...res, generation }))
       .catch((err) =>
-        sendResponse({ status: 'error', code: 'ERROR', message: err.message || 'Resolution failed' })
+        sendResponse({ status: 'error', code: 'ERROR', message: err.message || 'Resolution failed', generation })
       );
     return true;
   }

@@ -108,6 +108,28 @@
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   }
 
+  // Extract platform media identity to detect client-side SPA navigation
+  function extractMediaIdentity(url) {
+    const currentUrl = url || window.location.href;
+    let videoId = '';
+    try {
+      const u = new URL(currentUrl);
+      if (u.hostname.includes('youtube.com')) {
+        videoId = u.searchParams.get('v') || '';
+      } else if (u.hostname.includes('youtu.be')) {
+        videoId = u.pathname.replace(/^\//, '');
+      } else if (u.hostname.includes('facebook.com') || u.hostname.includes('instagram.com')) {
+        const match = u.pathname.match(/\/(?:reel|videos|watch|p)\/([^/?#]+)/i);
+        videoId = match ? match[1] : u.pathname;
+      }
+    } catch (_) {}
+
+    return {
+      url: currentUrl,
+      videoId: videoId || currentUrl,
+    };
+  }
+
   // Transient in-page toast feedback
   function showToast(text, isError = false) {
     let toast = document.getElementById('tori-page-toast');
@@ -199,6 +221,84 @@
     let resolvedMeta = null;
     let isResolving = false;
     let resolveError = null;
+    let currentMediaIdentity = extractMediaIdentity();
+    let currentGeneration = 0;
+
+    function handleVideoNavigation(reason) {
+      const newIdentity = extractMediaIdentity();
+      if (
+        currentMediaIdentity &&
+        currentMediaIdentity.videoId === newIdentity.videoId &&
+        currentMediaIdentity.url === newIdentity.url
+      ) {
+        return;
+      }
+
+      console.log(`[TORI Content] Video navigation detected (${reason}):`, currentMediaIdentity?.url, '->', newIdentity.url);
+      currentMediaIdentity = newIdentity;
+      currentGeneration++;
+      const thisGen = currentGeneration;
+
+      // Immediately invalidate old media state
+      resolvedMeta = null;
+      selectedIdx = 0;
+      tabMediaCandidates = [];
+      resolveError = null;
+      isResolving = false;
+
+      // Reset pill tag
+      const tagEl = pill.querySelector('.tori-pill-tag');
+      if (tagEl) {
+        tagEl.textContent = 'Resolving…';
+        tagEl.style.color = '';
+        tagEl.style.background = '';
+      }
+
+      // If panel is currently open, show "Resolving new video..." and resolve Video B
+      if (pn.classList.contains('on')) {
+        isResolving = true;
+        renderPanel();
+
+        chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA' }, (mRes) => {
+          if (thisGen !== currentGeneration) {
+            console.log(`[TORI] Dropping stale GET_TAB_MEDIA response for gen ${thisGen}`);
+            return;
+          }
+          tabMediaCandidates = mRes?.media || [];
+          updatePillTag();
+
+          chrome.runtime.sendMessage(
+            { action: 'RESOLVE_MEDIA', url: newIdentity.url, generation: thisGen },
+            (rRes) => {
+              if (thisGen !== currentGeneration) {
+                console.log(`[TORI] Dropping stale resolution response for gen ${thisGen}, current is ${currentGeneration}`);
+                return;
+              }
+              isResolving = false;
+              if (rRes && rRes.status === 'ok' && rRes.metadata) {
+                resolvedMeta = rRes.metadata;
+                updatePillTag();
+              } else {
+                resolveError = rRes?.message || 'Protected or unsupported stream';
+              }
+              renderPanel();
+            }
+          );
+        });
+      }
+    }
+
+    mp.__toriHandleNav = handleVideoNavigation;
+    mp.__toriGetMediaInfo = () => ({
+      url: window.location.href,
+      identity: currentMediaIdentity,
+      title: (resolvedMeta && resolvedMeta.title) ? resolvedMeta.title : getMediaTitle(videoEl),
+      isResolving,
+      resolvedMeta,
+      hasAnyCandidates: getAvailableFormats().hasAnyCandidates,
+      videoFormats: getAvailableFormats().videoFormats,
+      audioFormats: getAvailableFormats().audioFormats,
+    });
 
     // Collect genuine detected media candidates (never hardcoded, never webpage URL)
     function getAvailableFormats() {
@@ -431,9 +531,14 @@
             resolveError = null;
             renderPanel();
 
+            const thisGen = currentGeneration;
             chrome.runtime.sendMessage(
-              { action: 'RESOLVE_MEDIA', url: window.location.href },
+              { action: 'RESOLVE_MEDIA', url: window.location.href, generation: thisGen },
               (rRes) => {
+                if (thisGen !== currentGeneration) {
+                  console.log(`[TORI] Ignoring stale resolution response for gen ${thisGen}`);
+                  return;
+                }
                 isResolving = false;
                 if (rRes && rRes.status === 'ok' && rRes.metadata) {
                   resolvedMeta = rRes.metadata;
@@ -560,7 +665,7 @@
         listHtml = `
           <div class="tori-empty-box" style="padding:28px 16px">
             <div class="tori-spin"></div>
-            <b>Resolving media formats…</b>
+            <b>Resolving new video…</b>
             <p>Querying TORI Universal Media Resolver for genuine resolutions and streams</p>
           </div>`;
       } else if (hasAnyCandidates) {
@@ -810,7 +915,10 @@
     }
 
     // Dynamic state updates when media metadata loads or changes
-    videoEl.addEventListener('loadedmetadata', updatePillTag);
+    videoEl.addEventListener('emptied', () => handleVideoNavigation('video-emptied'));
+    videoEl.addEventListener('loadstart', () => handleVideoNavigation('video-loadstart'));
+    videoEl.addEventListener('loadedmetadata', () => handleVideoNavigation('video-loadedmetadata'));
+    videoEl.addEventListener('durationchange', () => handleVideoNavigation('video-durationchange'));
     videoEl.addEventListener('canplay', updatePillTag);
     videoEl.addEventListener('play', () => {
       chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA' }, (res) => {
@@ -835,6 +943,70 @@
 
     updatePillTag();
   }
+
+  // Intercept history.pushState and history.replaceState for SPA frameworks
+  const _origPushState = history.pushState;
+  history.pushState = function () {
+    const ret = _origPushState.apply(this, arguments);
+    notifyAllOverlays('spa-pushstate');
+    return ret;
+  };
+
+  const _origReplaceState = history.replaceState;
+  history.replaceState = function () {
+    const ret = _origReplaceState.apply(this, arguments);
+    notifyAllOverlays('spa-replacestate');
+    return ret;
+  };
+
+  function notifyAllOverlays(reason) {
+    document.querySelectorAll('.tori-mp').forEach((mp) => {
+      if (typeof mp.__toriHandleNav === 'function') {
+        mp.__toriHandleNav(reason);
+      }
+    });
+  }
+
+  window.addEventListener('popstate', () => notifyAllOverlays('popstate'));
+  document.addEventListener('yt-navigate-finish', () => notifyAllOverlays('yt-navigate-finish'));
+  document.addEventListener('yt-page-data-updated', () => notifyAllOverlays('yt-page-data-updated'));
+
+  // Watchdog URL polling every 600ms for client-side routing on arbitrary SPAs
+  let lastCheckedUrl = window.location.href;
+  setInterval(() => {
+    if (window.location.href !== lastCheckedUrl) {
+      lastCheckedUrl = window.location.href;
+      notifyAllOverlays('url-watchdog');
+    }
+  }, 600);
+
+  // Runtime message listener for background notifications and active media queries from extension popup
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg.action === 'MEDIA_NAVIGATED') {
+      notifyAllOverlays('background-navigated');
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    if (msg.action === 'GET_ACTIVE_MEDIA_INFO') {
+      const activeMp = document.querySelector('.tori-mp');
+      if (activeMp && typeof activeMp.__toriGetMediaInfo === 'function') {
+        sendResponse({ ok: true, ...activeMp.__toriGetMediaInfo() });
+      } else {
+        const vid = document.querySelector('video');
+        sendResponse({
+          ok: true,
+          url: window.location.href,
+          identity: extractMediaIdentity(),
+          title: vid ? getMediaTitle(vid) : document.title,
+          isResolving: false,
+          resolvedMeta: null,
+          hasAnyCandidates: false,
+        });
+      }
+      return true;
+    }
+  });
 
   // Scan document for media elements
   function scanForMedia() {

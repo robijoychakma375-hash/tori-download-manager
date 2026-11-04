@@ -59,7 +59,7 @@ export function App() {
   const [currentCategory, setCurrentCategory] = useState<CategoryKey>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [settings, setSettings] = useState<AppSettings>(loadStoredSettings);
-  const [isExtensionConnected, setIsExtensionConnected] = useState(true);
+  const [isExtensionConnected, setIsExtensionConnected] = useState(false);
 
   // Modals & popups
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);

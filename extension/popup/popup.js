@@ -91,24 +91,53 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // 5. Check desktop connection status
+  function setStatus(state, port, latency) {
+    if (state === 'connected') {
+      statusPill.className = 'st';
+      statusText.textContent = `Connected · 127.0.0.1:${port || 6800}`;
+    } else if (state === 'unpaired') {
+      statusPill.className = 'st wait';
+      statusText.textContent = 'Pairing Required (Click to Pair)';
+    } else if (state === 'connecting') {
+      statusPill.className = 'st conn';
+      statusText.textContent = 'Connecting…';
+    } else {
+      statusPill.className = 'st bad';
+      statusText.textContent = 'Disconnected';
+    }
+  }
+
   function updateConnectionStatus() {
     chrome.runtime.sendMessage({ action: 'PING_DESKTOP' }, (res) => {
-      if (chrome.runtime.lastError || !res || res.status === 'error' || res.status === 'none') {
-        statusPill.className = 'st bad';
-        statusText.textContent = 'Desktop Offline';
+      if (
+        chrome.runtime.lastError ||
+        !res ||
+        res.status === 'disconnected' ||
+        res.status === 'error' ||
+        res.status === 'none'
+      ) {
+        setStatus('disconnected', res?.port);
       } else if (res.status === 'unpaired') {
-        statusPill.className = 'st wait';
-        statusText.textContent = 'Pairing Required (Click to Pair)';
+        setStatus('unpaired', res.port);
+      } else if (res.status === 'ok' && res.authenticated) {
+        setStatus('connected', res.port, res.latency);
       } else {
-        statusPill.className = 'st';
-        statusText.textContent = `Connected · 127.0.0.1:${res.port || 6800}`;
+        setStatus('disconnected', res?.port);
       }
     });
   }
+
+  // Set initial Connecting status immediately upon popup open
+  setStatus('connecting');
   updateConnectionStatus();
+
+  // Bounded status polling while popup is open
+  const statusPollTimer = setInterval(updateConnectionStatus, 3000);
+  window.addEventListener('unload', () => clearInterval(statusPollTimer));
 
   statusPill.addEventListener('click', () => {
     if (statusPill.classList.contains('wait') || statusPill.classList.contains('bad')) {
+      setStatus('connecting');
       showToast('Connecting / Pairing with Tori…');
       chrome.runtime.sendMessage({ action: 'INITIATE_PAIRING' }, (res) => {
         if (res && res.ok) {
@@ -122,164 +151,202 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 6. Query media on current tab
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.id) {
-      chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
-        const items = res?.media || [];
-        mediaCountHeader.textContent = `Media on this page · ${items.length}`;
+  // 6. Query media on current tab with dynamic per-tab identity support
+  async function loadActiveTabMedia() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.id) return;
 
-        if (items.length === 0) {
-          mediaList.innerHTML = `
-            <div class="empty-state" style="padding:16px 12px;text-align:center">
-              <div style="font-weight:600;margin-bottom:4px">No direct media stream detected</div>
-              <div style="font-size:11px;color:var(--mut);line-height:1.4">Streaming platforms (YouTube, Vimeo, Facebook, etc.) require media resolution.</div>
-              <button class="btn mb def" id="btnResolveTabMedia" style="margin-top:12px;padding:6px 16px">
-                <svg viewBox="0 0 24 24" style="width:14px;height:14px;margin-right:6px"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg>
-                Resolve Media on Page
-              </button>
-            </div>`;
-
-          const btnResolve = document.getElementById('btnResolveTabMedia');
-          if (btnResolve) {
-            btnResolve.addEventListener('click', () => {
-              btnResolve.textContent = 'Resolving media…';
-              btnResolve.disabled = true;
-
-              chrome.runtime.sendMessage({ action: 'RESOLVE_MEDIA', url: tab.url }, (res) => {
-                if (res && res.status === 'ok' && res.metadata && res.metadata.formats) {
-                  const meta = res.metadata;
-                  mediaCountHeader.textContent = `Resolved Formats · ${meta.formats.length}`;
-                  showToast(`Found ${meta.formats.length} formats`);
-
-                  mediaList.innerHTML = meta.formats
-                    .map((fmt, idx) => {
-                      const isAudio = !fmt.has_video && fmt.has_audio;
-                      const cat = isAudio ? 'Music' : 'Video';
-                      let sizeStr = '';
-                      if (fmt.filesize_type === 'exact' && fmt.filesize) {
-                        sizeStr = ` · ${formatBytes(fmt.filesize)}`;
-                      } else if (fmt.filesize_type === 'estimated' && fmt.filesize_approx) {
-                        sizeStr = ` · ~${formatBytes(fmt.filesize_approx)}`;
-                      }
-                      const sub = `${(fmt.container || 'mp4').toUpperCase()}${sizeStr}`;
-
-                      return `
-                      <div class="row">
-                        ${chip(cat)}
-                        <div class="t">
-                          <b>${escapeHtml(fmt.resolution_label || 'Media')}</b>
-                          <span class="s">${escapeHtml(meta.title.substring(0, 36))} · ${escapeHtml(sub)}</span>
-                        </div>
-                        <button class="btn mb def" data-fidx="${idx}">Download</button>
-                      </div>`;
-                    })
-                    .join('');
-
-                  mediaList.querySelectorAll('button[data-fidx]').forEach((b) => {
-                    b.addEventListener('click', () => {
-                      const fidx = parseInt(b.dataset.fidx, 10);
-                      const selected = meta.formats[fidx];
-                      if (!selected) return;
-
-                      b.textContent = 'Sending…';
-                      b.disabled = true;
-                      const correlationId = 'tori_pop_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
-
-                      chrome.runtime.sendMessage(
-                        {
-                          action: 'START_MEDIA_DOWNLOAD',
-                          url: meta.source_url,
-                          format_id: selected.format_id,
-                          filename: `${meta.title.replace(/[\\/:*?"<>|]/g, '') || 'media'}.${selected.container || 'mp4'}`,
-                          priority: 'high',
-                          correlation_id: correlationId,
-                        },
-                        (dlRes) => {
-                          b.disabled = false;
-                          if (dlRes && dlRes.status === 'ok' && dlRes.job_id) {
-                            b.textContent = 'Queued';
-                            b.classList.add('ok');
-                            showToast(`Queued in Tori (${dlRes.filename || 'media'})`);
-                            loadRecentDownloads();
-                          } else {
-                            b.textContent = 'Retry';
-                            showToast(dlRes?.message || 'Download failed', true);
-                          }
-                        }
-                      );
-                    });
-                  });
-                } else {
-                  btnResolve.textContent = 'Resolve Media on Page';
-                  btnResolve.disabled = false;
-                  showToast(res?.message || 'Media resolution failed', true);
-                }
-              });
-            });
-          }
-        } else {
-          mediaList.innerHTML = items
-            .map((item, idx) => {
-              const isAudio =
-                item.type === 'audio' ||
-                (item.content_type && item.content_type.startsWith('audio/'));
-              const cat = isAudio ? 'Music' : 'Video';
-              const sizeStr = item.size_bytes ? ` · ${formatBytes(item.size_bytes)}` : '';
-              const formatStr = item.format || 'MP4';
-              const sub = `${formatStr}${sizeStr}`;
-
-              return `
-              <div class="row">
-                ${chip(cat)}
-                <div class="t">
-                  <b>${escapeHtml(item.filename || 'media_video')}</b>
-                  <span class="s">${escapeHtml(sub)}</span>
-                </div>
-                <button class="btn mb def" data-idx="${idx}">Download</button>
+      // 1. Try querying active media info from content script
+      chrome.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_MEDIA_INFO' }, (info) => {
+        if (!chrome.runtime.lastError && info && info.ok) {
+          if (info.isResolving) {
+            mediaCountHeader.textContent = 'Resolving media on page…';
+            mediaList.innerHTML = `
+              <div class="empty-state" style="padding:20px 12px;text-align:center">
+                <div style="font-weight:600;margin-bottom:4px">Resolving media on page…</div>
+                <div style="font-size:11px;color:var(--mut);line-height:1.4">Extracting genuine quality streams and formats</div>
               </div>`;
-            })
-            .join('');
+            return;
+          }
 
-          // Bind download buttons
-          mediaList.querySelectorAll('button[data-idx]').forEach((btn) => {
-            btn.addEventListener('click', () => {
-              const idx = parseInt(btn.dataset.idx, 10);
-              const target = items[idx];
-              if (!target) return;
-
-              btn.textContent = 'Sending…';
-              chrome.runtime.sendMessage(
-                {
-                  action: 'START_DOWNLOAD',
-                  url: target.url,
-                  filename: target.filename,
-                  priority: 'high',
-                },
-                (dlRes) => {
-                  if (dlRes && dlRes.status === 'ok') {
-                    btn.textContent = 'Sent';
-                    btn.classList.add('ok');
-                    showToast('Sent to Tori');
-                    loadRecentDownloads();
-                  } else if (dlRes && dlRes.status === 'already_exists') {
-                    btn.textContent = 'Active';
-                    showToast('Already in download queue');
-                  } else {
-                    btn.textContent = 'Retry';
-                    showToast(dlRes?.message || 'Download failed', true);
-                  }
-                }
-              );
-            });
-          });
+          if (info.resolvedMeta && Array.isArray(info.resolvedMeta.formats) && info.resolvedMeta.formats.length > 0) {
+            renderResolvedFormats(info.resolvedMeta, tab);
+            return;
+          }
         }
+
+        // 2. Fallback: check tab media cache from background
+        chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
+          const items = res?.media || [];
+          mediaCountHeader.textContent = `Media on this page · ${items.length}`;
+
+          if (items.length === 0) {
+            mediaList.innerHTML = `
+              <div class="empty-state" style="padding:16px 12px;text-align:center">
+                <div style="font-weight:600;margin-bottom:4px">No direct media stream detected</div>
+                <div style="font-size:11px;color:var(--mut);line-height:1.4">Streaming platforms (YouTube, Vimeo, Facebook, etc.) require media resolution.</div>
+                <button class="btn mb def" id="btnResolveTabMedia" style="margin-top:12px;padding:6px 16px">
+                  <svg viewBox="0 0 24 24" style="width:14px;height:14px;margin-right:6px"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg>
+                  Resolve Media on Page
+                </button>
+              </div>`;
+
+            const btnResolve = document.getElementById('btnResolveTabMedia');
+            if (btnResolve) {
+              btnResolve.addEventListener('click', () => {
+                btnResolve.textContent = 'Resolving media…';
+                btnResolve.disabled = true;
+
+                chrome.runtime.sendMessage({ action: 'RESOLVE_MEDIA', url: tab.url }, (rRes) => {
+                  if (rRes && rRes.status === 'ok' && rRes.metadata && rRes.metadata.formats) {
+                    renderResolvedFormats(rRes.metadata, tab);
+                  } else {
+                    btnResolve.textContent = 'Resolve Media on Page';
+                    btnResolve.disabled = false;
+                    showToast(rRes?.message || 'Media resolution failed', true);
+                  }
+                });
+              });
+            }
+          } else {
+            renderDirectItems(items);
+          }
+        });
       });
+    } catch (err) {
+      console.warn('Failed to query current tab media:', err);
     }
-  } catch (err) {
-    console.warn('Failed to query current tab media:', err);
   }
+
+  function renderResolvedFormats(meta, tab) {
+    mediaCountHeader.textContent = `Resolved Formats · ${meta.formats.length}`;
+    showToast(`Found ${meta.formats.length} formats`);
+
+    mediaList.innerHTML = meta.formats
+      .map((fmt, idx) => {
+        const isAudio = !fmt.has_video && fmt.has_audio;
+        const cat = isAudio ? 'Music' : 'Video';
+        let sizeStr = '';
+        if (fmt.filesize_type === 'exact' && fmt.filesize) {
+          sizeStr = ` · ${formatBytes(fmt.filesize)}`;
+        } else if (fmt.filesize_type === 'estimated' && fmt.filesize_approx) {
+          sizeStr = ` · ~${formatBytes(fmt.filesize_approx)}`;
+        }
+        const sub = `${(fmt.container || 'mp4').toUpperCase()}${sizeStr}`;
+
+        return `
+        <div class="row">
+          ${chip(cat)}
+          <div class="t">
+            <b>${escapeHtml(fmt.resolution_label || 'Media')}</b>
+            <span class="s">${escapeHtml(meta.title.substring(0, 36))} · ${escapeHtml(sub)}</span>
+          </div>
+          <button class="btn mb def" data-fidx="${idx}">Download</button>
+        </div>`;
+      })
+      .join('');
+
+    mediaList.querySelectorAll('button[data-fidx]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const fidx = parseInt(b.dataset.fidx, 10);
+        const selected = meta.formats[fidx];
+        if (!selected) return;
+
+        b.textContent = 'Sending…';
+        b.disabled = true;
+        const correlationId = 'tori_pop_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+
+        chrome.runtime.sendMessage(
+          {
+            action: 'START_MEDIA_DOWNLOAD',
+            url: meta.source_url || tab.url,
+            format_id: selected.format_id,
+            filename: `${meta.title.replace(/[\\/:*?"<>|]/g, '') || 'media'}.${selected.container || 'mp4'}`,
+            priority: 'high',
+            correlation_id: correlationId,
+          },
+          (dlRes) => {
+            b.disabled = false;
+            if (dlRes && dlRes.status === 'ok' && dlRes.job_id) {
+              b.textContent = 'Queued';
+              b.classList.add('ok');
+              showToast(`Queued in Tori (${dlRes.filename || 'media'})`);
+              loadRecentDownloads();
+            } else {
+              b.textContent = 'Retry';
+              showToast(dlRes?.message || 'Download failed', true);
+            }
+          }
+        );
+      });
+    });
+  }
+
+  function renderDirectItems(items) {
+    mediaList.innerHTML = items
+      .map((item, idx) => {
+        const isAudio =
+          item.type === 'audio' ||
+          (item.content_type && item.content_type.startsWith('audio/'));
+        const cat = isAudio ? 'Music' : 'Video';
+        const sizeStr = item.size_bytes ? ` · ${formatBytes(item.size_bytes)}` : '';
+        const formatStr = item.format || 'MP4';
+        const sub = `${formatStr}${sizeStr}`;
+
+        return `
+        <div class="row">
+          ${chip(cat)}
+          <div class="t">
+            <b>${escapeHtml(item.filename || 'media_video')}</b>
+            <span class="s">${escapeHtml(sub)}</span>
+          </div>
+          <button class="btn mb def" data-idx="${idx}">Download</button>
+        </div>`;
+      })
+      .join('');
+
+    mediaList.querySelectorAll('button[data-idx]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.idx, 10);
+        const target = items[idx];
+        if (!target) return;
+
+        btn.textContent = 'Sending…';
+        chrome.runtime.sendMessage(
+          {
+            action: 'START_DOWNLOAD',
+            url: target.url,
+            filename: target.filename,
+            priority: 'high',
+          },
+          (dlRes) => {
+            if (dlRes && dlRes.status === 'ok') {
+              btn.textContent = 'Sent';
+              btn.classList.add('ok');
+              showToast('Sent to Tori');
+              loadRecentDownloads();
+            } else if (dlRes && dlRes.status === 'already_exists') {
+              btn.textContent = 'Active';
+              showToast('Already in download queue');
+            } else {
+              btn.textContent = 'Retry';
+              showToast(dlRes?.message || 'Download failed', true);
+            }
+          }
+        );
+      });
+    });
+  }
+
+  loadActiveTabMedia();
+
+  // Listen for navigation or media updates on active tab while popup remains open
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'MEDIA_NAVIGATED' || msg.action === 'TAB_MEDIA_UPDATED') {
+      loadActiveTabMedia();
+    }
+  });
 
   // 7. Load recent downloads from persistent engine
   function loadRecentDownloads() {

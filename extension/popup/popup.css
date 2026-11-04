@@ -129,12 +129,7 @@ svg {
   box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.25);
 }
 
-.st.wait i {
-  background: #f59e0b;
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
-}
-
-.st.wait i {
+.st.conn i, .st.wait i {
   background: #f59e0b;
   box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
 }

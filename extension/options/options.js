@@ -254,17 +254,17 @@ function testNativeConnection() {
   render();
   const startTime = performance.now();
 
-  chrome.runtime.sendMessage({ action: 'PING_DESKTOP' }, (res) => {
+  chrome.runtime.sendMessage({ action: 'PING_DESKTOP', port: S.port, key: S.key }, (res) => {
     const elapsed = Math.round(performance.now() - startTime);
     testLatency = Math.max(1, elapsed);
 
-    if (chrome.runtime.lastError || !res) {
+    if (chrome.runtime.lastError || !res || res.status === 'disconnected') {
       testState = 'bad';
     } else if (res.status === 'unpaired') {
       testState = 'unpaired';
       testPort = res.port || S.port || 6800;
       testEngineVer = res.version || '2.0.0';
-    } else if (res.status === 'ok') {
+    } else if (res.status === 'ok' && res.authenticated) {
       testState = 'ok';
       testPort = res.port || S.port || 6800;
       testEngineVer = res.version || '2.0.0';
