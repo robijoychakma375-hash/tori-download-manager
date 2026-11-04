@@ -604,6 +604,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === 'RESOLVE_MEDIA') {
+    const rawUrl = (message.url || '').trim();
+    if (!rawUrl) {
+      sendResponse({ status: 'error', message: 'Missing URL to resolve' });
+      return false;
+    }
+
+    callDesktopApi('/api/v1/media/resolve', 'POST', { url: rawUrl }).then((httpRes) => {
+      if (httpRes.ok && httpRes.data) {
+        sendResponse({ status: 'ok', metadata: httpRes.data });
+      } else {
+        sendResponse({
+          status: 'error',
+          message: httpRes.data?.message || httpRes.error || 'Media resolution failed',
+        });
+      }
+    });
+    return true;
+  }
+
+  if (message.action === 'START_MEDIA_DOWNLOAD') {
+    const rawUrl = (message.url || '').trim();
+    const formatId = (message.format_id || '').trim();
+    if (!rawUrl || !formatId) {
+      sendResponse({ status: 'error', message: 'Missing URL or format identifier' });
+      return false;
+    }
+
+    callDesktopApi('/api/v1/media/download', 'POST', {
+      url: rawUrl,
+      format_id: formatId,
+      filename: message.filename,
+      destination: message.destination,
+      priority: message.priority || 'normal',
+    }).then((httpRes) => {
+      if (httpRes.ok && httpRes.data) {
+        sendResponse(httpRes.data);
+      } else {
+        sendResponse({
+          status: 'error',
+          message: httpRes.data?.message || httpRes.error || 'Download request failed',
+        });
+      }
+    });
+    return true;
+  }
+
   return false;
 });
 

@@ -293,6 +293,84 @@ impl DownloadManager {
         Ok(job)
     }
 
+    pub async fn create_managed_media_download<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        format_id: &str,
+        filename: &str,
+        destination_dir: P,
+        priority: Priority,
+    ) -> Result<DownloadJob> {
+        let dir = destination_dir.as_ref();
+        if !dir.exists() {
+            fs::create_dir_all(dir)?;
+        }
+
+        let base_filename = sanitize_filename(filename);
+        let mut target_path = dir.join(&base_filename);
+        let mut counter = 1;
+
+        while target_path.exists() {
+            let stem = Path::new(&base_filename)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("media");
+            let ext = Path::new(&base_filename)
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|e| format!(".{}", e))
+                .unwrap_or_default();
+            target_path = dir.join(format!("{} ({}){}", stem, counter, ext));
+            counter += 1;
+        }
+
+        let temp_filename = format!(
+            "{}.tdm-part",
+            target_path.file_name().unwrap().to_str().unwrap()
+        );
+        let temp_path = dir.join(temp_filename);
+
+        let id = Uuid::new_v4().to_string();
+
+        let job = DownloadJob {
+            id: id.clone(),
+            url: url.to_string(),
+            resolved_url: Some(format_id.to_string()),
+            filename: target_path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string(),
+            target_path: target_path.to_str().unwrap().to_string(),
+            temp_path: temp_path.to_str().unwrap().to_string(),
+            total_bytes: None,
+            downloaded_bytes: 0,
+            state: JobState::Queued,
+            job_type: JobType::ManagedMedia,
+            priority,
+            etag: None,
+            last_modified: None,
+            is_resumable: true,
+            chunk_count: 1,
+            error_message: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        self.db.insert_job(&job)?;
+
+        self.event_bus.emit(DownloadEvent::StateChanged {
+            id: id.clone(),
+            state: JobState::Queued,
+            error: None,
+        });
+
+        let _ = self.process_queue();
+
+        Ok(job)
+    }
+
     pub fn set_priority(&self, id: &str, priority: Priority) -> Result<()> {
         self.db.update_priority(id, priority)?;
         let _ = self.process_queue();
@@ -642,6 +720,11 @@ impl DownloadManager {
                 &cancel_token,
             )
             .await;
+        }
+
+        if job.job_type == JobType::ManagedMedia {
+            return crate::resolver::download_managed_media(&job, &db, &event_bus, &cancel_token)
+                .await;
         }
 
         let temp_path = PathBuf::from(&job.temp_path);

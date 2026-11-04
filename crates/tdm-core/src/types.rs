@@ -79,6 +79,7 @@ pub enum JobType {
     DashVod,
     Torrent,
     LiveStream,
+    ManagedMedia,
 }
 
 impl JobType {
@@ -89,6 +90,7 @@ impl JobType {
             JobType::DashVod => "dash_vod",
             JobType::Torrent => "torrent",
             JobType::LiveStream => "live_stream",
+            JobType::ManagedMedia => "managed_media",
         }
     }
 
@@ -107,6 +109,7 @@ impl std::str::FromStr for JobType {
             "dash_vod" => Ok(JobType::DashVod),
             "torrent" => Ok(JobType::Torrent),
             "live_stream" | "live" => Ok(JobType::LiveStream),
+            "managed_media" | "media" => Ok(JobType::ManagedMedia),
             _ => Err(()),
         }
     }

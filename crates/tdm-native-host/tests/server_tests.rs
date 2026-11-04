@@ -402,3 +402,73 @@ async fn test_server_rejects_webpage_download_urls() {
 
     shutdown.cancel();
 }
+
+#[tokio::test]
+async fn test_server_media_endpoints() {
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().join("server_test_media.sqlite");
+    let db = Database::open(&db_path).unwrap();
+    let event_bus = EventBus::default();
+    let manager = Arc::new(DownloadManager::new(db.clone(), event_bus).unwrap());
+    let shutdown = CancellationToken::new();
+
+    let (port, token) = start_server(manager, db.clone(), shutdown.clone())
+        .await
+        .unwrap();
+
+    let client = reqwest::Client::new();
+    let base_url = format!("http://127.0.0.1:{}", port);
+
+    // 1. GET /api/v1/media/status
+    let status_resp = client
+        .get(format!("{}/api/v1/media/status", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(status_resp.status(), 200);
+    let status_json: serde_json::Value = status_resp.json().await.unwrap();
+    assert_eq!(status_json["yt_dlp_available"], true);
+
+    // 2. POST /api/v1/media/resolve without token -> 401
+    let unauth_resp = client
+        .post(format!("{}/api/v1/media/resolve", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .json(&serde_json::json!({ "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth_resp.status(), 401);
+
+    // 3. POST /api/v1/media/resolve with SSRF URL -> 400
+    let ssrf_resp = client
+        .post(format!("{}/api/v1/media/resolve", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &token)
+        .json(&serde_json::json!({ "url": "http://127.0.0.1:9999/secret" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ssrf_resp.status(), 400);
+
+    // 4. POST /api/v1/media/download creates managed media job
+    let dl_resp = client
+        .post(format!("{}/api/v1/media/download", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &token)
+        .json(&serde_json::json!({
+            "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+            "format_id": "18",
+            "filename": "test_bunny.mp4",
+            "destination": temp_dir.path().to_str().unwrap()
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dl_resp.status(), 200);
+    let dl_json: serde_json::Value = dl_resp.json().await.unwrap();
+    assert_eq!(dl_json["status"], "ok");
+    assert!(dl_json["job_id"].is_string());
+
+    shutdown.cancel();
+}

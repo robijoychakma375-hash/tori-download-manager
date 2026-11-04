@@ -196,9 +196,61 @@
     let selectedIdx = 0;
     let isDownloaded = false;
     let tabMediaCandidates = [];
+    let resolvedMeta = null;
+    let isResolving = false;
+    let resolveError = null;
 
     // Collect genuine detected media candidates (never hardcoded, never webpage URL)
     function getAvailableFormats() {
+      if (resolvedMeta && Array.isArray(resolvedMeta.formats) && resolvedMeta.formats.length > 0) {
+        const title = resolvedMeta.title || getMediaTitle(videoEl);
+        const durStr = formatDuration(resolvedMeta.duration_seconds || videoEl.duration);
+        const subInfo = durStr ? `${durStr} · ${resolvedMeta.site_name}` : resolvedMeta.site_name;
+
+        const videoFormats = [];
+        const audioFormats = [];
+
+        resolvedMeta.formats.forEach((f) => {
+          const isAudio = !f.has_video && f.has_audio;
+          const isHd = !!(f.height && f.height >= 720);
+          let sizeStr = '';
+          if (f.filesize_type === 'exact' && f.filesize) {
+            sizeStr = formatBytes(f.filesize);
+          } else if (f.filesize_type === 'estimated' && f.filesize_approx) {
+            sizeStr = `~${formatBytes(f.filesize_approx)}`;
+          } else {
+            sizeStr = 'Size unknown';
+          }
+
+          const item = {
+            q: f.resolution_label,
+            tg: (f.container || 'mp4').toUpperCase(),
+            hd: isHd ? 'HD' : null,
+            cd: f.format_note || f.vcodec || f.acodec || f.protocol,
+            sz: sizeStr,
+            url: f.direct_stream_url || resolvedMeta.source_url,
+            format_id: f.format_id,
+            filename: sanitizeFilename(title, (f.container || 'mp4').toLowerCase()),
+            isAudio,
+            isManaged: f.download_capability === 'managed_extractor',
+          };
+
+          if (isAudio) {
+            audioFormats.push(item);
+          } else {
+            videoFormats.push(item);
+          }
+        });
+
+        return {
+          title,
+          subInfo,
+          videoFormats,
+          audioFormats,
+          hasAnyCandidates: videoFormats.length > 0 || audioFormats.length > 0,
+        };
+      }
+
       const title = getMediaTitle(videoEl);
       const host = window.location.hostname;
       const durationStr = formatDuration(videoEl.duration);
@@ -350,12 +402,35 @@
       document.querySelectorAll('.tori-pn.on').forEach((p) => p.classList.remove('on'));
 
       if (!isOpen) {
+        pn.classList.add('on');
+
         // Query background service worker for all streams captured on this tab
         chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA' }, (res) => {
           tabMediaCandidates = res?.media || [];
           updatePillTag();
-          renderPanel();
-          pn.classList.add('on');
+
+          const { hasAnyCandidates } = getAvailableFormats();
+          if (!hasAnyCandidates && !resolvedMeta && !isResolving) {
+            isResolving = true;
+            resolveError = null;
+            renderPanel();
+
+            chrome.runtime.sendMessage(
+              { action: 'RESOLVE_MEDIA', url: window.location.href },
+              (rRes) => {
+                isResolving = false;
+                if (rRes && rRes.status === 'ok' && rRes.metadata) {
+                  resolvedMeta = rRes.metadata;
+                  updatePillTag();
+                } else {
+                  resolveError = rRes?.message || 'Protected or unsupported stream';
+                }
+                renderPanel();
+              }
+            );
+          } else {
+            renderPanel();
+          }
         });
       }
     });
@@ -374,7 +449,14 @@
       const currentItem = currentList[selectedIdx];
 
       let listHtml = '';
-      if (hasAnyCandidates) {
+      if (isResolving) {
+        listHtml = `
+          <div class="tori-empty-box" style="padding:28px 16px">
+            <div class="tori-spin"></div>
+            <b>Resolving media formats…</b>
+            <p>Querying TORI Universal Media Resolver for genuine resolutions and streams</p>
+          </div>`;
+      } else if (hasAnyCandidates) {
         if (currentList.length > 0) {
           listHtml = currentList
             .map(
@@ -401,7 +483,7 @@
             <i class="tori-ft" style="--c:#f59e0b;margin-bottom:4px">
               <svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
             </i>
-            <b>No Downloadable Stream Detected</b>
+            <b>${escapeHtml(resolveError || 'No Downloadable Stream Detected')}</b>
             <p>This player uses protected MediaSource blob streaming without an accessible direct file or HLS/DASH manifest.</p>
             <span style="font-size:10px;color:var(--tori-mut)">TORI respects DRM boundaries and does not inject scrapers.</span>
           </div>`;
@@ -509,34 +591,41 @@
             return;
           }
           const target = currentList[selectedIdx];
-          if (!target || !target.url) {
+          if (!target || (!target.url && !target.format_id)) {
             showToast('No downloadable stream available', true);
             return;
           }
 
-          chrome.runtime.sendMessage(
-            {
-              action: 'START_DOWNLOAD',
-              url: target.url,
-              filename: target.filename,
-              priority: 'high',
-            },
-            (res) => {
-              if (res && res.status === 'ok') {
-                isDownloaded = true;
-                renderPanel();
-                showToast('Sent to Tori');
-                setTimeout(() => {
-                  isDownloaded = false;
-                  pn.classList.remove('on');
-                }, 1600);
-              } else if (res && res.status === 'already_exists') {
-                showToast('Already downloading in Tori');
-              } else {
-                showToast(res?.message || 'Download failed', true);
+          const reqPayload = target.isManaged && resolvedMeta
+            ? {
+                action: 'START_MEDIA_DOWNLOAD',
+                url: resolvedMeta.source_url,
+                format_id: target.format_id,
+                filename: target.filename,
+                priority: 'high',
               }
+            : {
+                action: 'START_DOWNLOAD',
+                url: target.url,
+                filename: target.filename,
+                priority: 'high',
+              };
+
+          chrome.runtime.sendMessage(reqPayload, (res) => {
+            if (res && res.status === 'ok') {
+              isDownloaded = true;
+              renderPanel();
+              showToast('Sent to Tori');
+              setTimeout(() => {
+                isDownloaded = false;
+                pn.classList.remove('on');
+              }, 1600);
+            } else if (res && res.status === 'already_exists') {
+              showToast('Already downloading in Tori');
+            } else {
+              showToast(res?.message || 'Download failed', true);
             }
-          );
+          });
         });
       }
     }
@@ -549,28 +638,35 @@
       }
       const list = settings.kind === 'Audio only' && audioFormats.length > 0 ? audioFormats : videoFormats;
       const target = list[0];
-      if (!target || !target.url) {
+      if (!target || (!target.url && !target.format_id)) {
         showToast('No downloadable stream available', true);
         return;
       }
 
-      chrome.runtime.sendMessage(
-        {
-          action: 'START_DOWNLOAD',
-          url: target.url,
-          filename: target.filename,
-          priority: 'high',
-        },
-        (res) => {
-          if (res && res.status === 'ok') {
-            showToast('Sent to Tori');
-          } else if (res && res.status === 'already_exists') {
-            showToast('Already downloading in Tori');
-          } else {
-            showToast(res?.message || 'Download failed', true);
+      const reqPayload = target.isManaged && resolvedMeta
+        ? {
+            action: 'START_MEDIA_DOWNLOAD',
+            url: resolvedMeta.source_url,
+            format_id: target.format_id,
+            filename: target.filename,
+            priority: 'high',
           }
+        : {
+            action: 'START_DOWNLOAD',
+            url: target.url,
+            filename: target.filename,
+            priority: 'high',
+          };
+
+      chrome.runtime.sendMessage(reqPayload, (res) => {
+        if (res && res.status === 'ok') {
+          showToast('Sent to Tori');
+        } else if (res && res.status === 'already_exists') {
+          showToast('Already downloading in Tori');
+        } else {
+          showToast(res?.message || 'Download failed', true);
         }
-      );
+      });
     }
 
     // Dynamic state updates when media metadata loads or changes

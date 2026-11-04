@@ -34,6 +34,7 @@ pub struct ServerState {
     pub manager: Arc<DownloadManager>,
     pub db: Database,
     pub config: RwLock<ServerConfig>,
+    pub resolver: Arc<tdm_core::MediaResolver>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -71,6 +72,22 @@ pub struct CreateDownloadResp {
     pub state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveMediaReq {
+    pub url: String,
+    #[allow(dead_code)]
+    pub force_refresh: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateMediaDownloadReq {
+    pub url: String,
+    pub format_id: String,
+    pub filename: Option<String>,
+    pub destination: Option<String>,
+    pub priority: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -451,6 +468,160 @@ async fn handle_create_download(
     }
 }
 
+async fn handle_media_status(
+    State(_state): State<Arc<ServerState>>,
+    _headers: HeaderMap,
+) -> Json<tdm_core::ResolverStatus> {
+    Json(tdm_core::resolver::get_resolver_status())
+}
+
+async fn handle_media_resolve(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(payload): Json<ResolveMediaReq>,
+) -> Result<Json<tdm_core::MediaMetadata>, (StatusCode, Json<serde_json::Value>)> {
+    let config = state.config.read().await;
+    if !check_auth(&headers, None, &config.token) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Authentication required. Provide X-Tori-Token or Authorization Bearer header."
+            })),
+        ));
+    }
+
+    let raw_url = payload.url.trim();
+    if raw_url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Missing media URL to resolve"
+            })),
+        ));
+    }
+
+    match state.resolver.resolve(raw_url).await {
+        Ok(metadata) => Ok(Json(metadata)),
+        Err(e) => {
+            let (status, msg) = match e {
+                tdm_core::EngineError::InvalidUrl(msg) => (StatusCode::BAD_REQUEST, msg),
+                tdm_core::EngineError::Other(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg),
+                err => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            };
+            Err((
+                status,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": msg
+                })),
+            ))
+        }
+    }
+}
+
+async fn handle_create_media_download(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateMediaDownloadReq>,
+) -> Result<Json<CreateDownloadResp>, (StatusCode, Json<serde_json::Value>)> {
+    let config = state.config.read().await;
+    if !check_auth(&headers, None, &config.token) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Authentication required."
+            })),
+        ));
+    }
+
+    let raw_url = payload.url.trim();
+    if raw_url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Missing media URL"
+            })),
+        ));
+    }
+
+    let format_id = payload.format_id.trim();
+    if format_id.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Missing format_id"
+            })),
+        ));
+    }
+
+    // Sanitize destination path if provided
+    let dest_path = if let Some(ref d) = payload.destination {
+        let clean = d.trim();
+        if clean.contains("..") {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": "Invalid destination path: directory traversal rejected."
+                })),
+            ));
+        }
+        PathBuf::from(clean)
+    } else if let Ok(profile) = std::env::var("USERPROFILE") {
+        PathBuf::from(profile).join("Downloads")
+    } else {
+        PathBuf::from(".")
+    };
+
+    let prio = match payload.priority.as_deref() {
+        Some("high") => Priority::High,
+        Some("low") => Priority::Low,
+        _ => Priority::Normal,
+    };
+
+    let initial_filename = payload
+        .filename
+        .unwrap_or_else(|| "media_download.mp4".to_string());
+
+    match state
+        .manager
+        .create_managed_media_download(raw_url, format_id, &initial_filename, &dest_path, prio)
+        .await
+    {
+        Ok(job) => {
+            let job_id = job.id.clone();
+            let fname = job.filename.clone();
+            let _ = state.manager.start_download(&job_id);
+
+            Ok(Json(CreateDownloadResp {
+                status: "ok".to_string(),
+                job_id: Some(job_id),
+                filename: Some(fname),
+                state: Some("downloading".to_string()),
+                message: Some("Managed media download started in TORI".to_string()),
+            }))
+        }
+        Err(e) => {
+            let status = match e {
+                tdm_core::EngineError::InvalidUrl(_) => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            Err((
+                status,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": format!("Failed to create media download: {}", e)
+                })),
+            ))
+        }
+    }
+}
+
 async fn handle_list_downloads(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -791,6 +962,9 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
         )
         .route("/api/v1/window/show", post(handle_show_window))
         .route("/api/v1/events", get(handle_events))
+        .route("/api/v1/media/status", get(handle_media_status))
+        .route("/api/v1/media/resolve", post(handle_media_resolve))
+        .route("/api/v1/media/download", post(handle_create_media_download))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             security_middleware,
@@ -847,6 +1021,7 @@ pub async fn start_server(
         manager,
         db,
         config: RwLock::new(config),
+        resolver: Arc::new(tdm_core::MediaResolver::new()),
     });
 
     let app = build_router(server_state);

@@ -118,9 +118,87 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (items.length === 0) {
           mediaList.innerHTML = `
             <div class="empty-state" style="padding:16px 12px;text-align:center">
-              <div style="font-weight:600;margin-bottom:4px">No downloadable media detected</div>
-              <div style="font-size:11px;color:var(--mut);line-height:1.4">Protected or blob-based streaming (e.g. YouTube watch pages) does not expose direct downloadable files.</div>
+              <div style="font-weight:600;margin-bottom:4px">No direct media stream detected</div>
+              <div style="font-size:11px;color:var(--mut);line-height:1.4">Streaming platforms (YouTube, Vimeo, Facebook, etc.) require media resolution.</div>
+              <button class="btn mb def" id="btnResolveTabMedia" style="margin-top:12px;padding:6px 16px">
+                <svg viewBox="0 0 24 24" style="width:14px;height:14px;margin-right:6px"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg>
+                Resolve Media on Page
+              </button>
             </div>`;
+
+          const btnResolve = document.getElementById('btnResolveTabMedia');
+          if (btnResolve) {
+            btnResolve.addEventListener('click', () => {
+              btnResolve.textContent = 'Resolving media…';
+              btnResolve.disabled = true;
+
+              chrome.runtime.sendMessage({ action: 'RESOLVE_MEDIA', url: tab.url }, (res) => {
+                if (res && res.status === 'ok' && res.metadata && res.metadata.formats) {
+                  const meta = res.metadata;
+                  mediaCountHeader.textContent = `Resolved Formats · ${meta.formats.length}`;
+                  showToast(`Found ${meta.formats.length} formats`);
+
+                  mediaList.innerHTML = meta.formats
+                    .map((fmt, idx) => {
+                      const isAudio = !fmt.has_video && fmt.has_audio;
+                      const cat = isAudio ? 'Music' : 'Video';
+                      let sizeStr = '';
+                      if (fmt.filesize_type === 'exact' && fmt.filesize) {
+                        sizeStr = ` · ${formatBytes(fmt.filesize)}`;
+                      } else if (fmt.filesize_type === 'estimated' && fmt.filesize_approx) {
+                        sizeStr = ` · ~${formatBytes(fmt.filesize_approx)}`;
+                      }
+                      const sub = `${(fmt.container || 'mp4').toUpperCase()}${sizeStr}`;
+
+                      return `
+                      <div class="row">
+                        ${chip(cat)}
+                        <div class="t">
+                          <b>${escapeHtml(fmt.resolution_label || 'Media')}</b>
+                          <span class="s">${escapeHtml(meta.title.substring(0, 36))} · ${escapeHtml(sub)}</span>
+                        </div>
+                        <button class="btn mb def" data-fidx="${idx}">Download</button>
+                      </div>`;
+                    })
+                    .join('');
+
+                  mediaList.querySelectorAll('button[data-fidx]').forEach((b) => {
+                    b.addEventListener('click', () => {
+                      const fidx = parseInt(b.dataset.fidx, 10);
+                      const selected = meta.formats[fidx];
+                      if (!selected) return;
+
+                      b.textContent = 'Sending…';
+                      chrome.runtime.sendMessage(
+                        {
+                          action: 'START_MEDIA_DOWNLOAD',
+                          url: meta.source_url,
+                          format_id: selected.format_id,
+                          filename: `${meta.title.replace(/[\\/:*?"<>|]/g, '') || 'media'}.${selected.container || 'mp4'}`,
+                          priority: 'high',
+                        },
+                        (dlRes) => {
+                          if (dlRes && dlRes.status === 'ok') {
+                            b.textContent = 'Sent';
+                            b.classList.add('ok');
+                            showToast('Sent to Tori');
+                            loadRecentDownloads();
+                          } else {
+                            b.textContent = 'Retry';
+                            showToast(dlRes?.message || 'Download failed', true);
+                          }
+                        }
+                      );
+                    });
+                  });
+                } else {
+                  btnResolve.textContent = 'Resolve Media on Page';
+                  btnResolve.disabled = false;
+                  showToast(res?.message || 'Media resolution failed', true);
+                }
+              });
+            });
+          }
         } else {
           mediaList.innerHTML = items
             .map((item, idx) => {

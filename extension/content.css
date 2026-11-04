@@ -532,3 +532,19 @@
   opacity: 1;
   transform: translate(-50%, 0);
 }
+
+/* Spinner */
+.tori-spin {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--tori-bline);
+  border-top-color: #007aff;
+  border-radius: 50%;
+  animation: tori-rotate 0.8s linear infinite;
+  margin: 0 auto 8px;
+}
+
+@keyframes tori-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
