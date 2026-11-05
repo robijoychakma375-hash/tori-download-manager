@@ -1,4 +1,5 @@
 import React from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 
 interface TitleBarProps {
@@ -16,6 +17,40 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onMaximize,
   isModal = false,
 }) => {
+  const handleMouseDown = async (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+
+    const target = e.target as HTMLElement;
+    if (target.closest('.wc') || target.closest('.xb') || target.closest('button')) {
+      return;
+    }
+
+    if (e.detail === 2) {
+      if (!isModal) {
+        if (onMaximize) {
+          onMaximize();
+        } else {
+          try {
+            await invoke('window_maximize');
+          } catch {
+            try {
+              const win = getCurrentWindow();
+              await win.toggleMaximize();
+            } catch {}
+          }
+        }
+      }
+      return;
+    }
+
+    try {
+      const win = getCurrentWindow();
+      await win.startDragging();
+    } catch (err) {
+      // Ignore if not in Tauri
+    }
+  };
+
   const handleClose = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (onClose) {
@@ -50,13 +85,20 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       try {
         await invoke('window_maximize');
       } catch (err) {
-        console.error('Failed to maximize window:', err);
+        try {
+          const win = getCurrentWindow();
+          await win.toggleMaximize();
+        } catch {}
       }
     }
   };
 
   return (
-    <div className="wbar" data-tauri-drag-region>
+    <div
+      className="wbar"
+      data-tauri-drag-region
+      onMouseDown={handleMouseDown}
+    >
       {title}
       {isModal ? (
         <button className="xb" onClick={handleClose} title="Close">
