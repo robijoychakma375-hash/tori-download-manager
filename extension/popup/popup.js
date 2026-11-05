@@ -205,7 +205,37 @@ function formatBytes(bytes) {
     val /= 1024;
     i++;
   }
-  return `${val.toFixed(val >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+  if (i === 0) return `${val} B`;
+  const formatted = val < 100 ? (val.toFixed(1).endsWith('.0') ? val.toFixed(0) : val.toFixed(1)) : val.toFixed(0);
+  return `${formatted} ${units[i]}`;
+}
+
+// Format filesize display strictly following Gate 12.5.2 priority:
+// 1. Exact filesize when reliably available: "24.6 MB"
+// 2. Otherwise filesize_approx: "~24.6 MB"
+// 3. Otherwise duration × bitrate estimate: "~24.6 MB"
+// 4. Otherwise: "Size unknown"
+function formatFilesizeDisplay(fmt, durationSeconds) {
+  if (!fmt) return 'Size unknown';
+  const fType = String(fmt.filesize_type || '').toLowerCase();
+  if (fmt.filesize && fmt.filesize > 0 && fType !== 'estimated') {
+    return formatBytes(fmt.filesize);
+  }
+  if (fmt.filesize_approx && fmt.filesize_approx > 0) {
+    return `~${formatBytes(fmt.filesize_approx)}`;
+  }
+  if (fmt.filesize && fmt.filesize > 0 && fType === 'estimated') {
+    return `~${formatBytes(fmt.filesize)}`;
+  }
+  const dur = durationSeconds || fmt.duration_seconds || fmt.duration || 0;
+  const br = fmt.bitrate_kbps || 0;
+  if (dur > 0 && br > 0) {
+    const est = Math.round((dur * br * 1000) / 8);
+    if (est > 0) {
+      return `~${formatBytes(est)}`;
+    }
+  }
+  return 'Size unknown';
 }
 
 function showToast(text, isError = false) {
@@ -507,15 +537,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       .map((fmt, idx) => {
         const isAudio = !fmt.has_video && fmt.has_audio;
         const cat = isAudio ? 'Music' : 'Video';
-        let sizeStr = '';
-        if (fmt.filesize_type === 'exact' && fmt.filesize) {
-          sizeStr = ` · ${formatBytes(fmt.filesize)}`;
-        } else if (fmt.filesize_type === 'estimated' && fmt.filesize_approx) {
-          sizeStr = ` · ~${formatBytes(fmt.filesize_approx)}`;
-        } else {
-          sizeStr = ' · Size unknown';
-        }
-        const sub = `${(fmt.container || 'mp4').toUpperCase()}${sizeStr}`;
+        const sizeText = formatFilesizeDisplay(fmt, meta.duration_seconds);
+        const sub = `${(fmt.container || 'mp4').toUpperCase()} · ${sizeText}`;
 
         return `
         <div class="row">

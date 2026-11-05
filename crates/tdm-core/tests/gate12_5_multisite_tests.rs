@@ -7,7 +7,8 @@ use tdm_core::resolver::discovery::{find_ffmpeg, find_ffprobe, find_yt_dlp};
 use tdm_core::resolver::downloader::download_managed_media;
 use tdm_core::resolver::extractor::clean_ytdlp_error;
 use tdm_core::resolver::pipeline::{
-    normalize_platform_media_url, select_compatible_audio_and_container,
+    extract_bitrate_kbps_from_url, normalize_platform_media_url, parse_single_format,
+    select_compatible_audio_and_container,
 };
 use tdm_core::resolver::{FilesizeType, ParsedRawFormat};
 use tdm_core::types::{DownloadJob, JobState, JobType, Priority};
@@ -433,4 +434,168 @@ fn test_gate12_5_1_facebook_reel_url_normalization_and_validation() {
         err_login.contains("Authentication required on the host platform"),
         "login.php must be classified as authentication required"
     );
+}
+
+#[test]
+fn test_gate12_5_2_media_filesize_reporting_priority_and_accuracy() {
+    // 1. Priority 1: Exact filesize when reliably available
+    let json_exact = serde_json::json!({
+        "format_id": "18",
+        "ext": "mp4",
+        "width": 640,
+        "height": 360,
+        "filesize": 25794969u64,
+        "vcodec": "avc1.42001E",
+        "acodec": "mp4a.40.2"
+    });
+    let fmt_exact = parse_single_format(&json_exact, Some(120.0)).expect("Parse exact");
+    assert_eq!(fmt_exact.filesize, Some(25794969));
+    assert_eq!(fmt_exact.filesize_approx, None);
+    assert_eq!(fmt_exact.filesize_type, FilesizeType::Exact);
+
+    // 2. Priority 2: filesize_approx when exact filesize is absent
+    let json_approx = serde_json::json!({
+        "format_id": "22",
+        "ext": "mp4",
+        "width": 1280,
+        "height": 720,
+        "filesize": null,
+        "filesize_approx": 12500000u64,
+        "vcodec": "avc1.64001F",
+        "acodec": "mp4a.40.2"
+    });
+    let fmt_approx = parse_single_format(&json_approx, Some(120.0)).expect("Parse approx");
+    assert_eq!(fmt_approx.filesize, None);
+    assert_eq!(fmt_approx.filesize_approx, Some(12500000));
+    assert_eq!(fmt_approx.filesize_type, FilesizeType::Estimated);
+
+    // 3. Priority 3: duration_seconds * bitrate_kbps * 1000 / 8 when neither filesize nor filesize_approx is present
+    let json_bitrate = serde_json::json!({
+        "format_id": "hd1080",
+        "ext": "mp4",
+        "width": 1920,
+        "height": 1080,
+        "tbr": 2000.0,
+        "vcodec": "avc1.640028",
+        "acodec": "mp4a.40.2"
+    });
+    // duration = 74.304s, bitrate = 2000 kbps
+    // (74.304 * 2000.0 * 1000 / 8) = 18_576_000 bytes
+    let fmt_bitrate = parse_single_format(&json_bitrate, Some(74.304)).expect("Parse bitrate");
+    assert_eq!(fmt_bitrate.filesize, None);
+    assert_eq!(fmt_bitrate.filesize_approx, Some(18576000));
+    assert_eq!(fmt_bitrate.filesize_type, FilesizeType::Estimated);
+
+    // 4. Priority 3 with Facebook Reel URL embedded bitrate (SD stream: bitrate=127000 bps -> 127 kbps)
+    let fb_sd_url = "https://video.xx.fbcdn.net/o1/v/t2/f2.mp4?bitrate=127000&tag=1";
+    assert_eq!(extract_bitrate_kbps_from_url(fb_sd_url), Some(127.0));
+
+    let json_fb_sd = serde_json::json!({
+        "format_id": "sd",
+        "ext": "mp4",
+        "url": fb_sd_url,
+        "width": 480,
+        "height": 854,
+        "vcodec": "avc1.4d401f",
+        "acodec": "mp4a.40.2"
+    });
+    // duration = 74.304s, bitrate = 127 kbps
+    // (74.304 * 127.0 * 1000 / 8) = 1_179_576 bytes (~1.1 MB)
+    let fmt_fb_sd = parse_single_format(&json_fb_sd, Some(74.304)).expect("Parse FB SD");
+    assert_eq!(fmt_fb_sd.filesize, None);
+    assert_eq!(fmt_fb_sd.filesize_approx, Some(1179576));
+    assert_eq!(fmt_fb_sd.filesize_type, FilesizeType::Estimated);
+
+    // 5. Priority 3 with Facebook Reel URL embedded bitrate (HD stream: bitrate=580000 bps -> 580 kbps)
+    let fb_hd_url = "https://video.xx.fbcdn.net/o1/v/t2/f1.mp4?bitrate=580000&tag=1";
+    assert_eq!(extract_bitrate_kbps_from_url(fb_hd_url), Some(580.0));
+
+    let json_fb_hd = serde_json::json!({
+        "format_id": "hd",
+        "ext": "mp4",
+        "url": fb_hd_url,
+        "width": 1080,
+        "height": 1920,
+        "vcodec": "avc1.640028",
+        "acodec": "mp4a.40.2"
+    });
+    // duration = 74.304s, bitrate = 580 kbps
+    // (74.304 * 580.0 * 1000 / 8) = 5_387_040 bytes (~5.1 MB)
+    let fmt_fb_hd = parse_single_format(&json_fb_hd, Some(74.304)).expect("Parse FB HD");
+    assert_eq!(fmt_fb_hd.filesize, None);
+    assert_eq!(fmt_fb_hd.filesize_approx, Some(5387040));
+    assert_eq!(fmt_fb_hd.filesize_type, FilesizeType::Estimated);
+
+    // 6. Separate video + audio streams combined estimation:
+    // When combining video + audio, the result must ALWAYS be FilesizeType::Estimated
+    // to account for container/merging overhead and prevent misleading users with exact sizes.
+    let raw_v = ParsedRawFormat {
+        format_id: "137".to_string(),
+        format_note: Some("1080p".to_string()),
+        width: Some(1920),
+        height: Some(1080),
+        resolution_label: "1080p".to_string(),
+        fps: Some(30.0),
+        vcodec: Some("avc1.640028".to_string()),
+        acodec: None,
+        container: "mp4".to_string(),
+        protocol: "https".to_string(),
+        bitrate_kbps: Some(4000.0),
+        has_video: true,
+        has_audio: false,
+        filesize: Some(20_000_000),
+        filesize_approx: None,
+        filesize_type: FilesizeType::Exact,
+        is_storyboard: false,
+        audio_channels: None,
+        sample_rate: None,
+        direct_url: None,
+        http_headers: None,
+    };
+    let raw_a = ParsedRawFormat {
+        format_id: "140".to_string(),
+        format_note: Some("medium".to_string()),
+        width: None,
+        height: None,
+        resolution_label: "Audio".to_string(),
+        fps: None,
+        vcodec: None,
+        acodec: Some("mp4a.40.2".to_string()),
+        container: "m4a".to_string(),
+        protocol: "https".to_string(),
+        bitrate_kbps: Some(128.0),
+        has_video: false,
+        has_audio: true,
+        filesize: Some(2_000_000),
+        filesize_approx: None,
+        filesize_type: FilesizeType::Exact,
+        is_storyboard: false,
+        audio_channels: Some(2),
+        sample_rate: Some(44100),
+        direct_url: None,
+        http_headers: None,
+    };
+
+    let v_eff = raw_v.filesize.or(raw_v.filesize_approx);
+    let a_eff = raw_a.filesize.or(raw_a.filesize_approx);
+    let (combined_exact, combined_approx, combined_type): (Option<u64>, Option<u64>, FilesizeType) =
+        match (v_eff, a_eff) {
+            (Some(v_sz), Some(a_sz)) => (None, Some(v_sz + a_sz), FilesizeType::Estimated),
+            _ => (None, None, FilesizeType::Unknown),
+        };
+    assert_eq!(combined_exact, None);
+    assert_eq!(combined_approx, Some(22_000_000));
+    assert_eq!(combined_type, FilesizeType::Estimated);
+
+    // 7. Priority 4: Unknown size when all indicators are missing
+    let json_unknown = serde_json::json!({
+        "format_id": "stream_live",
+        "ext": "mp4",
+        "vcodec": "avc1.4d401f",
+        "acodec": "mp4a.40.2"
+    });
+    let fmt_unknown = parse_single_format(&json_unknown, None).expect("Parse unknown");
+    assert_eq!(fmt_unknown.filesize, None);
+    assert_eq!(fmt_unknown.filesize_approx, None);
+    assert_eq!(fmt_unknown.filesize_type, FilesizeType::Unknown);
 }

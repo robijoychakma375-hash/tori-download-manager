@@ -113,7 +113,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
     const audioFormats = resolvedMedia.formats.filter((f) => !f.has_video && f.has_audio);
     for (const fmt of audioFormats) {
       const label = `Audio Only (${fmt.acodec || fmt.container.toUpperCase()})${
-        fmt.filesize ? ` · ${fmtB(fmt.filesize)}` : ''
+        fmt.filesize ? ` · ${fmtB(fmt.filesize)}` : fmt.filesize_approx ? ` · ~${fmtB(fmt.filesize_approx)}` : ''
       }`;
       if (!seen.has(fmt.format_id)) {
         seen.add(fmt.format_id);

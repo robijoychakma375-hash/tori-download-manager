@@ -450,7 +450,7 @@ impl MediaResolver {
         let mut progressive_tracks: Vec<ParsedRawFormat> = Vec::new();
 
         for f in &raw_formats {
-            if let Some(parsed) = parse_single_format(f) {
+            if let Some(parsed) = parse_single_format(f, duration_seconds) {
                 if parsed.is_storyboard {
                     continue;
                 }
@@ -835,7 +835,23 @@ pub fn select_compatible_audio_and_container(
     }
 }
 
-fn parse_single_format(f: &serde_json::Value) -> Option<ParsedRawFormat> {
+pub fn extract_bitrate_kbps_from_url(url: &str) -> Option<f64> {
+    if let Some(pos) = url.find("bitrate=") {
+        let after = &url[pos + 8..];
+        let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(b) = digits.parse::<f64>() {
+            if b > 0.0 {
+                return Some(if b > 5000.0 { b / 1000.0 } else { b });
+            }
+        }
+    }
+    None
+}
+
+pub fn parse_single_format(
+    f: &serde_json::Value,
+    duration_seconds: Option<f64>,
+) -> Option<ParsedRawFormat> {
     let format_id = f.get("format_id")?.as_str()?.to_string();
     let format_note = f
         .get("format_note")
@@ -917,26 +933,75 @@ fn parse_single_format(f: &serde_json::Value) -> Option<ParsedRawFormat> {
 
     let fps = f.get("fps").and_then(|v| v.as_f64());
 
-    let tbr = f.get("tbr").and_then(|v| v.as_f64());
-    let vbr = f.get("vbr").and_then(|v| v.as_f64());
-    let abr = f.get("abr").and_then(|v| v.as_f64());
-    let bitrate_kbps = tbr.or_else(|| {
-        if vbr.is_some() || abr.is_some() {
-            Some(vbr.unwrap_or(0.0) + abr.unwrap_or(0.0))
+    let direct_url = f.get("url").and_then(|v| v.as_str()).map(String::from);
+
+    let tbr = f.get("tbr").and_then(|v| v.as_f64()).filter(|&b| b > 0.0);
+    let vbr = f.get("vbr").and_then(|v| v.as_f64()).filter(|&b| b > 0.0);
+    let abr = f.get("abr").and_then(|v| v.as_f64()).filter(|&b| b > 0.0);
+    let raw_bitrate = f
+        .get("bitrate")
+        .and_then(|v| v.as_f64())
+        .filter(|&b| b > 0.0)
+        .map(|b| if b > 5000.0 { b / 1000.0 } else { b });
+    let url_bitrate = direct_url
+        .as_deref()
+        .and_then(extract_bitrate_kbps_from_url);
+
+    let bitrate_kbps = tbr
+        .or_else(|| {
+            if vbr.is_some() || abr.is_some() {
+                Some(vbr.unwrap_or(0.0) + abr.unwrap_or(0.0))
+            } else {
+                None
+            }
+        })
+        .or(raw_bitrate)
+        .or(url_bitrate)
+        .or_else(|| {
+            format_note.as_deref().and_then(|note| {
+                let trimmed = note.trim().trim_end_matches("bps").trim_end_matches('k');
+                trimmed.parse::<f64>().ok().filter(|&b| b > 0.0)
+            })
+        });
+
+    let raw_filesize = f
+        .get("filesize")
+        .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|n| n as u64)))
+        .filter(|&sz| sz > 0);
+    let raw_filesize_approx = f
+        .get("filesize_approx")
+        .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|n| n as u64)))
+        .filter(|&sz| sz > 0);
+
+    let fmt_duration = f
+        .get("duration")
+        .and_then(|v| v.as_f64())
+        .filter(|&d| d > 0.0)
+        .or(duration_seconds);
+
+    // Gate 12.5.2 Size Reporting Priority:
+    // 1. Use exact filesize when reliably available.
+    // 2. Otherwise use filesize_approx.
+    // 3. Otherwise, where reliable duration and bitrate exist, estimate:
+    //    estimated_bytes = duration_seconds × bitrate_kbps × 1000 / 8
+    // 4. Otherwise display "Size unknown".
+    let (filesize, filesize_approx, filesize_type) = if let Some(sz) = raw_filesize {
+        (Some(sz), None, FilesizeType::Exact)
+    } else if let Some(approx) = raw_filesize_approx {
+        (None, Some(approx), FilesizeType::Estimated)
+    } else if let (Some(dur), Some(br)) = (fmt_duration, bitrate_kbps) {
+        if dur > 0.0 && br > 0.0 {
+            let est_bytes = (dur * br * 1000.0 / 8.0).round() as u64;
+            if est_bytes > 0 {
+                (None, Some(est_bytes), FilesizeType::Estimated)
+            } else {
+                (None, None, FilesizeType::Unknown)
+            }
         } else {
-            None
+            (None, None, FilesizeType::Unknown)
         }
-    });
-
-    let filesize = f.get("filesize").and_then(|v| v.as_u64());
-    let filesize_approx = f.get("filesize_approx").and_then(|v| v.as_u64());
-
-    let filesize_type = if filesize.is_some() {
-        FilesizeType::Exact
-    } else if filesize_approx.is_some() {
-        FilesizeType::Estimated
     } else {
-        FilesizeType::Unknown
+        (None, None, FilesizeType::Unknown)
     };
 
     let audio_channels = f
@@ -944,7 +1009,6 @@ fn parse_single_format(f: &serde_json::Value) -> Option<ParsedRawFormat> {
         .and_then(|v| v.as_u64())
         .map(|c| c as u32);
     let sample_rate = f.get("asr").and_then(|v| v.as_u64()).map(|r| r as u32);
-    let direct_url = f.get("url").and_then(|v| v.as_str()).map(String::from);
 
     let http_headers = f
         .get("http_headers")
