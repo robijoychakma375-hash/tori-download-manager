@@ -412,3 +412,4 @@ main().catch((err) => {
   console.error('Fatal error during Phase A verification:', err);
   process.exit(1);
 });
+

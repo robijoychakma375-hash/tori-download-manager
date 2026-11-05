@@ -54,10 +54,10 @@ Implement Gate 12.4 in two strictly separated, verified phases:
 
 ---
 
-## Phase B Plan — Download Speed Accuracy & Audit (To Follow Phase A)
-- Task 1: Audit speed calculation (monotonic clock, byte aggregation, unit verification).
-- Task 2: Controlled direct HTTP benchmarks across 1, 4, 8, 16, 32 connections.
-- Task 3: Managed media benchmarking against direct yt-dlp baseline.
-- Task 4: Independent throughput validation.
-- Task 5: Bottleneck analysis and optimization roadmap.
-- Generate `GATE12_4_DOWNLOAD_SPEED_AUDIT_REPORT.md` and commit to Git.
+## Phase B Plan — Download Speed Accuracy & Audit (COMPLETED & VERIFIED)
+- [x] Task 1: Audit speed calculation (monotonic clock backed by QPC, byte aggregation, unit verification).
+- [x] Task 2: Controlled direct HTTP benchmarks across 1, 4, 8, 16, 32 connections on 80 MB payload.
+- [x] Task 3: Managed media benchmarking against direct yt-dlp baseline on Big Buck Bunny `160+139`.
+- [x] Task 4: Independent throughput validation and resumed download byte exclusion test.
+- [x] Task 5: Bottleneck analysis and diagnostic recommendations.
+- [x] Task 6: Comprehensive verification runner `scripts/audit_speed_and_performance.js` and report `GATE12_4_DOWNLOAD_SPEED_AUDIT_REPORT.md`.

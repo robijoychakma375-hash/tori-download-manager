@@ -76,3 +76,4 @@ Captured real Windows visual screenshots:
 2. `actual_toast_gate12_4_normal.png` — Normal reference mode (470px card).
 3. `actual_toast_gate12_4_large.png` — Large mode (580px card) with extended filename title area.
 4. `actual_toast_gate12_4_expanded_large.png` — Large mode expanded drawer with chunk map and download details.
+
