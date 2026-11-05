@@ -12,6 +12,7 @@ html.toast-mode #root {
 }
 
 .toast-host-container {
+  position: relative;
   box-sizing: border-box;
   padding: 12px !important;
   display: flex;
@@ -34,12 +35,112 @@ html.toast-mode #root {
   padding: 0 !important;
   margin: 0 !important;
   width: 470px;
+  min-width: 360px;
+  max-width: 720px;
   border-radius: 22px;
   background: var(--panel);
   box-shadow: 0 0 0 1px var(--bline), 0 6px 18px rgba(0, 0, 0, 0.28);
   box-sizing: border-box;
   pointer-events: auto !important;
   overflow: visible !important;
+}
+
+/* Resize Handles (West edge & NorthWest corner) */
+.toast-resize-handle {
+  position: absolute;
+  z-index: 100;
+  -webkit-app-region: no-drag !important;
+  pointer-events: auto !important;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.toast-resize-handle-w {
+  left: 2px;
+  top: 14px;
+  bottom: 14px;
+  width: 10px;
+  cursor: ew-resize;
+  border-radius: 4px;
+}
+
+.toast-resize-handle-w:hover {
+  background: color-mix(in srgb, var(--a3) 35%, transparent);
+}
+
+.toast-resize-handle-nw {
+  left: 2px;
+  top: 2px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  border-radius: 4px;
+}
+
+.toast-resize-handle-nw:hover {
+  background: color-mix(in srgb, var(--a3) 50%, transparent);
+}
+
+/* Context Menu for Size Presets */
+.toast-context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 6px;
+  min-width: 155px;
+  box-shadow: 0 0 0 1px var(--bline), 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: auto !important;
+  -webkit-app-region: no-drag !important;
+  user-select: none;
+  font-family: inherit;
+}
+
+.toast-context-menu-title {
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--mut);
+}
+
+.toast-context-menu-item {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--txt);
+  transition: background 0.1s ease;
+}
+
+.toast-context-menu-item:hover {
+  background: color-mix(in srgb, var(--a3) 18%, transparent);
+}
+
+.toast-context-menu-item.active {
+  color: var(--a3);
+  font-weight: 600;
+}
+
+.toast-size-badge {
+  font-size: 10px;
+  color: var(--mut);
+  font-variant-numeric: tabular-nums;
+  margin-left: 8px;
+}
+
+.toast-context-menu-separator {
+  height: 1px;
+  background: var(--bline);
+  margin: 4px 0;
 }
 
 .toast.open {

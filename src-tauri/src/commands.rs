@@ -472,16 +472,27 @@ pub async fn open_progress_window_internal(
     let url = format!("index.html?window=toast&id={}", id);
     let title = format!("TORI Download - {}", job.filename);
 
+    let initial_width = manager
+        .database()
+        .get_setting("toast_preferred_width")
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(494.0)
+        .clamp(384.0, 744.0);
+
     let mut builder =
         tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
             .title(title)
-            .inner_size(494.0, 100.0)
+            .inner_size(initial_width, 100.0)
+            .min_inner_size(384.0, 76.0)
+            .max_inner_size(744.0, 800.0)
             .always_on_top(true)
             .decorations(false)
             .transparent(true)
             .skip_taskbar(true)
             .focused(false)
-            .resizable(false)
+            .resizable(true)
             .shadow(false);
 
     let (saved_x, saved_y) =
@@ -502,7 +513,7 @@ pub async fn open_progress_window_internal(
             (None, None)
         };
 
-    let (x, y) = get_clamped_toast_position(app, saved_x, saved_y, 494.0, 100.0);
+    let (x, y) = get_clamped_toast_position(app, saved_x, saved_y, initial_width, 100.0);
     builder = builder.position(x, y);
 
     let _win = builder
@@ -733,6 +744,31 @@ pub async fn save_toast_position(x: f64, y: f64, state: State<'_, AppState>) -> 
         .set_setting("toast_window_position", &json)
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn save_toast_size(width: f64, state: State<'_, AppState>) -> Result<(), String> {
+    let clamped = width.clamp(384.0, 744.0);
+    state
+        .manager
+        .database()
+        .set_setting("toast_preferred_width", &clamped.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_toast_size(state: State<'_, AppState>) -> Result<Option<f64>, String> {
+    if let Ok(Some(s)) = state
+        .manager
+        .database()
+        .get_setting("toast_preferred_width")
+    {
+        if let Ok(w) = s.parse::<f64>() {
+            return Ok(Some(w.clamp(384.0, 744.0)));
+        }
+    }
+    Ok(None)
 }
 
 #[tauri::command]

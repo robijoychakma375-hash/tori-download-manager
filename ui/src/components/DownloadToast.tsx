@@ -82,6 +82,20 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
   const isTextMovedRef = useRef<boolean>(false);
   const lastBoundsRef = useRef<{ w: number; h: number }>({ w: 494, h: 100 });
 
+  // User preferred width (default: 494 = 470px card + 24px padding)
+  const [toastWidth, setToastWidth] = useState<number>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const w = parseFloat(params.get('width') || '');
+    if (w && isFinite(w) && w >= 384 && w <= 744) return w;
+    const preset = params.get('preset');
+    if (preset === 'compact') return 404; // 380px card
+    if (preset === 'large') return 604; // 580px card
+    return 494; // 470px card (normal)
+  });
+  const toastWidthRef = useRef<number>(toastWidth);
+  toastWidthRef.current = toastWidth;
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
+
   // Apply theme & accent from stored settings
   useEffect(() => {
     document.documentElement.classList.add('toast-mode');
@@ -490,6 +504,116 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
     return () => clearInterval(timer);
   }, [activeIds, jobs]);
 
+  // Listen to window resized event to persist size
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let timer: any = null;
+    try {
+      const win = getCurrentWebviewWindow();
+      win.onResized(({ payload: size }) => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(async () => {
+          try {
+            const scale = await win.scaleFactor();
+            const logicalW = Math.round(size.width / scale);
+            const clamped = Math.max(384, Math.min(744, logicalW));
+            if (Math.abs(toastWidthRef.current - clamped) >= 2) {
+              setToastWidth(clamped);
+              await invoke('save_toast_size', { width: clamped });
+            }
+          } catch {
+            const clamped = Math.max(384, Math.min(744, Math.round(size.width)));
+            if (Math.abs(toastWidthRef.current - clamped) >= 2) {
+              setToastWidth(clamped);
+              await invoke('save_toast_size', { width: clamped }).catch(() => {});
+            }
+          }
+        }, 200);
+      }).then((u) => {
+        unlisten = u;
+      }).catch(() => {});
+    } catch {
+      // ignore
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // Fetch initial stored preferred width
+  useEffect(() => {
+    invoke<number | null>('get_toast_size')
+      .then((savedWidth) => {
+        if (savedWidth && savedWidth >= 384 && savedWidth <= 744) {
+          setToastWidth(savedWidth);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Preset selection handler
+  const handleSelectPreset = useCallback((preset: 'compact' | 'normal' | 'large') => {
+    const widthMap = {
+      compact: 404, // 380px card + 24px padding
+      normal: 494,  // 470px card + 24px padding (reference)
+      large: 604,   // 580px card + 24px padding
+    };
+    const targetW = widthMap[preset];
+    setToastWidth(targetW);
+    setContextMenuPos(null);
+    invoke('save_toast_size', { width: targetW }).catch(() => {});
+    if (containerRef.current) {
+      const h = Math.max(100, Math.ceil(containerRef.current.getBoundingClientRect().height));
+      invoke('update_toast_bounds', { width: targetW, height: h }).catch(() => {});
+    }
+  }, []);
+
+  const handleHandleDoubleClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Cycle: compact (404) -> normal (494) -> large (604) -> compact (404)
+    if (toastWidthRef.current < 450) {
+      handleSelectPreset('normal');
+    } else if (toastWidthRef.current < 550) {
+      handleSelectPreset('large');
+    } else {
+      handleSelectPreset('compact');
+    }
+  }, [handleSelectPreset]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (
+      target.closest('button') ||
+      target.closest('.ib') ||
+      target.closest('.cx') ||
+      target.closest('.dr')
+    ) {
+      return;
+    }
+    e.preventDefault();
+    setContextMenuPos({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  const handleResetPosition = useCallback(async () => {
+    try {
+      await invoke('save_toast_position', { x: -1, y: -1 });
+      if (containerRef.current) {
+        const h = Math.max(100, Math.ceil(containerRef.current.getBoundingClientRect().height));
+        await invoke('update_toast_bounds', { width: toastWidthRef.current, height: h });
+      }
+    } catch {}
+    setContextMenuPos(null);
+  }, []);
+
+  useEffect(() => {
+    if (!contextMenuPos) return;
+    const handleOutsideClick = () => setContextMenuPos(null);
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, [contextMenuPos]);
+
   // Adjust window bounds whenever container size or contents change
   useEffect(() => {
     if (!containerRef.current) return;
@@ -515,9 +639,8 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
         }
       });
 
-      const contentWidth = Math.ceil(maxRight - minLeft);
       const contentHeight = Math.ceil(maxBottom - minTop);
-      const w = Math.max(494, Math.max(Math.ceil(containerRect.width), contentWidth));
+      const w = Math.max(384, Math.min(744, toastWidthRef.current));
       const h = Math.max(100, Math.max(Math.ceil(containerRect.height), contentHeight));
 
       if (
@@ -542,7 +665,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
       cancelAnimationFrame(raf);
       observer.disconnect();
     };
-  }, [expanded, activeIds]);
+  }, [expanded, activeIds, toastWidth]);
 
   const handleDismiss = useCallback(
     async (id: string) => {
@@ -590,9 +713,38 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
 
   const visibleIds = activeIds.slice(0, 3);
   const remainingCount = Math.max(0, activeIds.length - 3);
+  const cardWidth = Math.max(360, Math.min(720, toastWidth - 24));
 
   return (
     <div className="toast-host-container" ref={containerRef}>
+      {/* West edge resize handle */}
+      <div
+        className="toast-resize-handle toast-resize-handle-w"
+        title="Drag left/right to resize width, double-click to cycle presets"
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            getCurrentWebviewWindow().startResizeDragging('West');
+          } catch {}
+        }}
+        onDoubleClick={handleHandleDoubleClick}
+      />
+      {/* NorthWest corner resize handle */}
+      <div
+        className="toast-resize-handle toast-resize-handle-nw"
+        title="Drag to resize, double-click to cycle presets"
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            getCurrentWebviewWindow().startResizeDragging('NorthWest');
+          } catch {}
+        }}
+        onDoubleClick={handleHandleDoubleClick}
+      />
       {visibleIds.map((id) => {
         const job = jobs[id];
         if (!job) return null;
@@ -705,7 +857,11 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
           <div
             key={id}
             className={`toast ${isOpen ? 'open' : ''}`}
-            style={{ ['--rc' as any]: ringColor }}
+            style={{
+              ['--rc' as any]: ringColor,
+              width: `${cardWidth}px`,
+            }}
+            onContextMenu={handleContextMenu}
             onMouseDown={handleDragStart}
             onMouseEnter={() => {
               hoveredRef.current[id] = true;
@@ -929,6 +1085,51 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
 
       {remainingCount > 0 && (
         <div className="toast-more">+{remainingCount} more active download(s)</div>
+      )}
+
+      {contextMenuPos && (
+        <div
+          className="toast-context-menu"
+          style={{
+            left: `${Math.min(window.innerWidth - 165, Math.max(10, contextMenuPos.x))}px`,
+            top: `${Math.min(window.innerHeight - 155, Math.max(10, contextMenuPos.y))}px`,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="toast-context-menu-title">Toast Size</div>
+          <button
+            type="button"
+            className={`toast-context-menu-item ${cardWidth === 380 ? 'active' : ''}`}
+            onClick={() => handleSelectPreset('compact')}
+          >
+            <span>Compact</span>
+            <span className="toast-size-badge">380px</span>
+          </button>
+          <button
+            type="button"
+            className={`toast-context-menu-item ${cardWidth === 470 ? 'active' : ''}`}
+            onClick={() => handleSelectPreset('normal')}
+          >
+            <span>Normal</span>
+            <span className="toast-size-badge">470px</span>
+          </button>
+          <button
+            type="button"
+            className={`toast-context-menu-item ${cardWidth === 580 ? 'active' : ''}`}
+            onClick={() => handleSelectPreset('large')}
+          >
+            <span>Large</span>
+            <span className="toast-size-badge">580px</span>
+          </button>
+          <div className="toast-context-menu-separator" />
+          <button
+            type="button"
+            className="toast-context-menu-item"
+            onClick={handleResetPosition}
+          >
+            <span>Reset Position</span>
+          </button>
+        </div>
       )}
     </div>
   );

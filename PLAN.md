@@ -1,38 +1,63 @@
-# TORI Download Manager — Gate 12.3 Execution Plan
+# TORI Download Manager — Gate 12.4 Execution Plan
 
 ## Milestone Objective
-Resolve the clipped top of the circular progress ring and enforce exact 20 CSS px bottom-right margins and invariant bottom-edge upward expansion for the native Download Toast window in TORI Download Manager v2.0.
-
-Reference: `design/tori-final/tori-download-toast.html`
-
-### Key Requirements
-1. **Fix Clipped Top of Progress Ring:**
-   - Root cause: CSS collision between `#main .toast` in `App.css` and `.toast` in `DownloadToast.css`, where `bottom: 34px` with `position: relative` shifted the card upward by 34px (`top: -22px`), clipping the top of the circular progress ring.
-   - Resolution: Scope banner styling to `#main .toast` in `App.css`; explicitly reset `.toast` with `top: auto !important; bottom: auto !important; padding: 0 !important; margin: 0 !important; overflow: visible !important;` in `DownloadToast.css`.
-   - Compute bounding box union across `.toast, .toast-more, .row, .rg, .chip, .bd, .dr` with `ResizeObserver` and eager `toast-mode` styling on `document.documentElement`.
-2. **Exact 20 CSS px Work Area Margins:**
-   - Native window host container has 12px transparent outer padding (`padding: 12px !important;`).
-   - Window right gap: $20.0 - 12.0 = 8.0$ logical px.
-   - Window bottom gap: $20.0 - 12.0 = 8.0$ logical px.
-   - $X = \text{workArea.right} - \text{width} - 8.0$
-   - $Y = \text{workArea.bottom} - \text{height} - 8.0$
-   - Result: Visible card right edge sits at $\text{workArea.right} - 20.0$, and visible card bottom edge sits at $\text{workArea.bottom} - 20.0$.
-   - Scale-invariant across 100%, 125%, 150%, 200% DPI.
-3. **Upward Expansion with Invariant Bottom Edge:**
-   - On detail drawer expansion or collapse, card bottom edge remains pinned at $\text{workArea.bottom} - 20.0$.
-   - Window shifts upward by exact drawer expansion height $\Delta h$.
-   - Preserve manual user coordinates when `is_manual: true`.
-4. **Multi-Card Stacking Geometry:**
-   - 10px gaps between stacked cards (`gap: 10px !important;`).
-   - Up to 3 stacked cards + "+N more" badge.
+Implement Gate 12.4 in two strictly separated, verified phases:
+- **Phase A**: User-Resizable Download Toast (native edge/corner resize, preset modes: Compact / Normal / Large / Custom, separate size persistence, safe control regions, DPI invariance).
+- **Phase B**: Download Speed Accuracy and Performance Audit (diagnostic audit of speed calculations, multi-connection HTTP benchmarks, managed media vs yt-dlp comparison, bottleneck analysis, and optimization roadmap).
 
 ---
 
-## Order of Execution
-- [x] Phase 1: CSS specificity collision fix in `App.css` and `DownloadToast.css`.
-- [x] Phase 2: Exact 8.0px window gap calculation in `src-tauri/src/commands.rs`.
-- [x] Phase 3: Dynamic bounds union computation & multi-item demo support in `DownloadToast.tsx`.
-- [x] Phase 4: Full compilation, `cargo fmt`, `cargo clippy`, and cargo tests (108 tests passing).
-- [x] Phase 5: Complete verification harness `scripts/verify_gate12_3.js` (37 assertions passing).
-- [x] Phase 6: Capture production screenshots (`actual_toast_gate12_3_collapsed.png`, `actual_toast_gate12_3_expanded.png`, `actual_toast_gate12_3_stacked_2.png`, `actual_toast_gate12_3_stacked_3.png`).
-- [x] Phase 7: Verification report `GATE12_3_TOAST_GEOMETRY_VERIFICATION_REPORT.md` and Git commit.
+## Phase A Plan — User-Resizable Download Toast
+
+### Requirements Breakdown
+1. **Preserve Visual Design & Reference Proportions:**
+   - Normal reference size remains 470px card (494px window with 12px transparent padding).
+   - Bottom-right positioning, transparent window, circular progress ring, category chips/thumbnails, drawer, and action buttons remain pixel-faithful to `design/tori-final/`.
+2. **Native Resizing Capabilities & Window Configuration:**
+   - Add `"core:window:allow-start-resize-dragging"` capability in `src-tauri/capabilities/default.json`.
+   - Update `open_progress_window_internal` in `src-tauri/src/commands.rs`:
+     - Set `.resizable(true)` on `progress_toast` window builder.
+     - Set `.min_inner_size(384.0, 76.0)` and `.max_inner_size(744.0, 800.0)`.
+     - Load preferred width from database setting (`toast_preferred_width`), defaulting to 494.0.
+   - Add Tauri commands:
+     - `save_toast_size(width: f64)`
+     - `get_toast_size() -> Result<Option<f64>, String>`
+3. **Safe Edge / Corner Resize Zones:**
+   - Add non-intrusive edge resize handle on the West (left) edge and NorthWest (top-left) corner of `.toast-host-container`.
+   - On `mousedown` on West handle, trigger `startResizeDragging('West')`.
+   - On `mousedown` on NorthWest handle, trigger `startResizeDragging('NorthWest')`.
+   - Ensure interactive elements (Pause, Resume, Dismiss, Expand, Drawer) remain 100% clickable with `pointer-events: auto !important;` and `-webkit-app-region: no-drag !important;`.
+   - Native dragging via `startDragging()` on row/neutral areas remains intact.
+4. **Size Presets & Custom Scaling:**
+   - Preset options:
+     - **Compact**: 380px card / 404px window
+     - **Normal**: 470px card / 494px window (exact reference design)
+     - **Large**: 580px card / 604px window
+     - **Custom**: mouse-resized width between 384px and 744px
+   - Right-click context menu on toast card allowing user to switch presets or reset to Normal.
+   - Double-click on left resize border cycles Compact $\to$ Normal $\to$ Large.
+   - Dynamic height accommodation: `ResizeObserver` measures rendered content height; height continues to accommodate collapsed/expanded states and stacked cards dynamically.
+   - Height never overwrites user's preferred width.
+5. **Separate Persistence & Position Independence:**
+   - Width is persisted to `toast_preferred_width`.
+   - Position is persisted to `toast_window_position` (`{ x, y, is_manual }`).
+   - Restoring or changing size does not reset manual position.
+   - In default bottom-right mode, $X = \text{workArea.right} - \text{width} - 8.0$, keeping the 20px right margin exact.
+6. **Testing & Verification:**
+   - Create `scripts/verify_gate12_4_phase_a.js`:
+     - Test Compact (404px), Normal (494px), Large (604px), and custom widths.
+     - Test window boundaries across 100%, 125%, 150%, 200% scale factors.
+     - Test separate persistence of position and size.
+     - Verify no clipping of buttons or progress ring.
+     - Capture screenshots: `actual_toast_gate12_4_compact.png`, `actual_toast_gate12_4_normal.png`, `actual_toast_gate12_4_large.png`, `actual_toast_gate12_4_expanded_large.png`.
+   - Generate `GATE12_4_TOAST_RESIZING_REPORT.md` and commit to Git.
+
+---
+
+## Phase B Plan — Download Speed Accuracy & Audit (To Follow Phase A)
+- Task 1: Audit speed calculation (monotonic clock, byte aggregation, unit verification).
+- Task 2: Controlled direct HTTP benchmarks across 1, 4, 8, 16, 32 connections.
+- Task 3: Managed media benchmarking against direct yt-dlp baseline.
+- Task 4: Independent throughput validation.
+- Task 5: Bottleneck analysis and optimization roadmap.
+- Generate `GATE12_4_DOWNLOAD_SPEED_AUDIT_REPORT.md` and commit to Git.

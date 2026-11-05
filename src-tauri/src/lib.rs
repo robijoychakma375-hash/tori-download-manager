@@ -163,6 +163,8 @@ pub fn run() {
             update_toast_bounds,
             hide_toast_window,
             save_toast_position,
+            save_toast_size,
+            get_toast_size,
             resolve_playlist,
             enqueue_playlist_items,
             resolve_media,
