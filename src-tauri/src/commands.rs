@@ -658,10 +658,10 @@ fn get_clamped_toast_position(
             let work_right = wr / scale;
             let work_bottom = wb / scale;
 
-            let min_x = work_left + 10.0;
-            let max_x = (work_right - width - 10.0).max(min_x);
-            let min_y = work_top + 10.0;
-            let max_y = (work_bottom - height - 10.0).max(min_y);
+            let min_x = work_left + 8.0;
+            let max_x = (work_right - width - 8.0).max(min_x);
+            let min_y = work_top + 8.0;
+            let max_y = (work_bottom - height - 8.0).max(min_y);
 
             (px.clamp(min_x, max_x), py.clamp(min_y, max_y))
         } else if let Some(mon) = best_monitor {
@@ -673,10 +673,10 @@ fn get_clamped_toast_position(
             let mon_w = size.width as f64 / scale;
             let mon_h = size.height as f64 / scale;
 
-            let min_x = left + 10.0;
-            let max_x = (left + mon_w - width - 10.0).max(min_x);
-            let min_y = top + 10.0;
-            let max_y = (top + mon_h - height - 10.0).max(min_y);
+            let min_x = left + 8.0;
+            let max_x = (left + mon_w - width - 8.0).max(min_x);
+            let min_y = top + 8.0;
+            let max_y = (top + mon_h - height - 8.0).max(min_y);
 
             (px.clamp(min_x, max_x), py.clamp(min_y, max_y))
         } else {
@@ -695,19 +695,23 @@ fn get_clamped_toast_position(
         #[cfg(not(target_os = "windows"))]
         let work_area: Option<(f64, f64, f64, f64)> = None;
 
-        if let Some((_wl, _wt, wr, wb)) = work_area {
+        if let Some((wl, wt, wr, wb)) = work_area {
+            let work_left = wl / scale;
+            let work_top = wt / scale;
             let work_right = wr / scale;
             let work_bottom = wb / scale;
-            let x = work_right - width - 20.0;
-            let y = work_bottom - height - 20.0;
+            let x = (work_right - width - 8.0).max(work_left + 8.0);
+            let y = (work_bottom - height - 8.0).max(work_top + 8.0);
             (x, y)
         } else if let Some(mon) = primary {
             let pos = mon.position();
             let size = mon.size();
+            let mon_left = pos.x as f64 / scale;
+            let mon_top = pos.y as f64 / scale;
             let mon_w = size.width as f64 / scale;
             let mon_h = size.height as f64 / scale;
-            let x = pos.x as f64 / scale + mon_w - width - 20.0;
-            let y = pos.y as f64 / scale + mon_h - height - 20.0;
+            let x = (mon_left + mon_w - width - 8.0).max(mon_left + 8.0);
+            let y = (mon_top + mon_h - height - 8.0).max(mon_top + 8.0);
             (x, y)
         } else {
             (100.0, 100.0)

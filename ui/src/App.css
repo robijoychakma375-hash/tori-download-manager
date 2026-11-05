@@ -1207,8 +1207,8 @@ label.cb {
   margin: 4px 2px;
 }
 
-/* ================= TOASTS ================= */
-.toast {
+/* ================= TOASTS (IN-APP BANNER) ================= */
+#main .toast {
   position: fixed;
   bottom: 34px;
   left: 50%;

@@ -16,7 +16,7 @@ html.toast-mode #root {
   padding: 12px !important;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px !important;
   align-items: flex-end;
   justify-content: flex-end;
   background: transparent !important;
@@ -25,13 +25,21 @@ html.toast-mode #root {
 }
 
 .toast {
-  position: relative;
+  position: relative !important;
+  top: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  right: auto !important;
+  transform: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
   width: 470px;
   border-radius: 22px;
   background: var(--panel);
   box-shadow: 0 0 0 1px var(--bline), 0 6px 18px rgba(0, 0, 0, 0.28);
   box-sizing: border-box;
   pointer-events: auto !important;
+  overflow: visible !important;
 }
 
 .toast.open {

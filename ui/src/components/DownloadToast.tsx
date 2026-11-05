@@ -183,9 +183,54 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
         eta_seconds: isUnknownDemo ? null : 3,
       };
 
-      setActiveIds(['demo-toast']);
-      setJobs({ 'demo-toast': demoJob });
-      setChunks({ 'demo-toast': demoChunks });
+      const countParam = parseInt(params.get('count') || '1', 10);
+      const activeList: string[] = ['demo-toast'];
+      const jobMap: Record<string, DownloadJob> = { 'demo-toast': demoJob };
+      const chunkMap: Record<string, ChunkRecord[]> = { 'demo-toast': demoChunks };
+
+      if (countParam >= 2) {
+        activeList.push('demo-toast-2');
+        jobMap['demo-toast-2'] = {
+          ...demoJob,
+          id: 'demo-toast-2',
+          filename: 'Node-v20.11.0-x64.msi',
+          total_bytes: 32000000,
+          downloaded_bytes: 18000000,
+          speed_bps: 1200000,
+          eta_seconds: 11,
+          state: 'downloading',
+        };
+      }
+      if (countParam >= 3) {
+        activeList.push('demo-toast-3');
+        jobMap['demo-toast-3'] = {
+          ...demoJob,
+          id: 'demo-toast-3',
+          filename: 'ambient-soundtrack.flac',
+          total_bytes: 45000000,
+          downloaded_bytes: 45000000,
+          speed_bps: 0,
+          eta_seconds: null,
+          state: 'completed',
+        };
+      }
+      if (countParam >= 4) {
+        activeList.push('demo-toast-4');
+        jobMap['demo-toast-4'] = {
+          ...demoJob,
+          id: 'demo-toast-4',
+          filename: 'design-assets.zip',
+          total_bytes: 120000000,
+          downloaded_bytes: 60000000,
+          speed_bps: 2400000,
+          eta_seconds: 25,
+          state: 'downloading',
+        };
+      }
+
+      setActiveIds(activeList);
+      setJobs(jobMap);
+      setChunks(chunkMap);
       if (isOpen) {
         setExpanded({ 'demo-toast': true });
       }
@@ -445,15 +490,35 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
     return () => clearInterval(timer);
   }, [activeIds, jobs]);
 
-  // Adjust window bounds whenever container size changes
+  // Adjust window bounds whenever container size or contents change
   useEffect(() => {
     if (!containerRef.current) return;
 
     const updateBounds = () => {
       if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const w = Math.max(494, Math.ceil(rect.width));
-      const h = Math.max(100, Math.ceil(rect.height));
+      const containerRect = containerRef.current.getBoundingClientRect();
+      let minTop = containerRect.top;
+      let maxBottom = containerRect.bottom;
+      let minLeft = containerRect.left;
+      let maxRight = containerRect.right;
+
+      const children = containerRef.current.querySelectorAll(
+        '.toast, .toast-more, .row, .rg, .chip, .bd, .dr'
+      );
+      children.forEach((child) => {
+        const r = child.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          if (r.top < minTop) minTop = r.top;
+          if (r.bottom > maxBottom) maxBottom = r.bottom;
+          if (r.left < minLeft) minLeft = r.left;
+          if (r.right > maxRight) maxRight = r.right;
+        }
+      });
+
+      const contentWidth = Math.ceil(maxRight - minLeft);
+      const contentHeight = Math.ceil(maxBottom - minTop);
+      const w = Math.max(494, Math.max(Math.ceil(containerRect.width), contentWidth));
+      const h = Math.max(100, Math.max(Math.ceil(containerRect.height), contentHeight));
 
       if (
         Math.abs(lastBoundsRef.current.w - w) >= 1 ||
@@ -471,8 +536,13 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
     observer.observe(containerRef.current);
     updateBounds();
 
-    return () => observer.disconnect();
-  }, []);
+    const raf = requestAnimationFrame(updateBounds);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, [expanded, activeIds]);
 
   const handleDismiss = useCallback(
     async (id: string) => {

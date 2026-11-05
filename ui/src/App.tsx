@@ -232,6 +232,7 @@ export function App() {
   const windowJobId = urlParams.get('id');
 
   if (windowMode === 'toast' || windowMode === 'progress') {
+    document.documentElement.classList.add('toast-mode');
     return <DownloadToast initialId={windowJobId || undefined} />;
   }
 
