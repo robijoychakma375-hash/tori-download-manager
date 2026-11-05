@@ -91,6 +91,34 @@ pub struct CreateMediaDownloadReq {
     pub thumbnail_url: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ResolvePlaylistReq {
+    pub url: String,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EnqueuePlaylistItem {
+    pub url: String,
+    pub title: String,
+    pub thumbnail_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EnqueuePlaylistReq {
+    pub items: Vec<EnqueuePlaylistItem>,
+    pub destination: Option<String>,
+    pub format_id: Option<String>,
+    pub playlist_title: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EnqueuePlaylistResp {
+    pub status: String,
+    pub enqueued_count: usize,
+    pub job_ids: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct JobListResp {
     pub status: String,
@@ -669,6 +697,125 @@ async fn handle_create_media_download(
     }
 }
 
+async fn handle_playlist_resolve(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(payload): Json<ResolvePlaylistReq>,
+) -> Result<Json<tdm_core::PlaylistMetadata>, (StatusCode, Json<serde_json::Value>)> {
+    let config = state.config.read().await;
+    if !check_auth(&headers, None, &config.token) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Authentication required."
+            })),
+        ));
+    }
+
+    let raw_url = payload.url.trim();
+    if raw_url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Missing playlist URL to resolve"
+            })),
+        ));
+    }
+
+    match state.resolver.resolve_playlist(raw_url, payload.limit).await {
+        Ok(metadata) => Ok(Json(metadata)),
+        Err(e) => {
+            let (status, msg) = match e {
+                tdm_core::EngineError::InvalidUrl(msg) => (StatusCode::BAD_REQUEST, msg),
+                tdm_core::EngineError::Other(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg),
+                err => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            };
+            Err((
+                status,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": msg
+                })),
+            ))
+        }
+    }
+}
+
+async fn handle_playlist_enqueue(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(payload): Json<EnqueuePlaylistReq>,
+) -> Result<Json<EnqueuePlaylistResp>, (StatusCode, Json<serde_json::Value>)> {
+    let config = state.config.read().await;
+    if !check_auth(&headers, None, &config.token) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Authentication required."
+            })),
+        ));
+    }
+
+    let dest_path = if let Some(ref d) = payload.destination {
+        let clean = d.trim();
+        if clean.contains("..") {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": "Invalid destination path: directory traversal rejected."
+                })),
+            ));
+        }
+        std::path::PathBuf::from(clean)
+    } else if let Ok(profile) = std::env::var("USERPROFILE") {
+        std::path::PathBuf::from(profile).join("Downloads")
+    } else {
+        std::path::PathBuf::from(".")
+    };
+
+    let format = payload.format_id.as_deref().unwrap_or("best");
+    let mut job_ids = Vec::new();
+
+    for item in payload.items {
+        if item.url.trim().is_empty() {
+            continue;
+        }
+        let clean_filename = format!("{}.mp4", tdm_core::sanitize_filename(&item.title));
+        match state
+            .manager
+            .create_managed_media_download(
+                &item.url,
+                format,
+                &clean_filename,
+                &dest_path,
+                tdm_core::Priority::Normal,
+                item.thumbnail_url,
+            )
+            .await
+        {
+            Ok(job) => {
+                let id = job.id.clone();
+                let _ = state.manager.start_download(&id);
+                job_ids.push(id);
+            }
+            Err(e) => {
+                eprintln!("[TORI] Failed to enqueue playlist item '{}': {}", item.title, e);
+            }
+        }
+    }
+
+    let count = job_ids.len();
+    Ok(Json(EnqueuePlaylistResp {
+        status: "ok".to_string(),
+        enqueued_count: count,
+        job_ids,
+    }))
+}
+
 async fn handle_list_downloads(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -1018,6 +1165,14 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
         .route("/api/v1/media/status", get(handle_media_status))
         .route("/api/v1/media/resolve", post(handle_media_resolve))
         .route("/api/v1/media/download", post(handle_create_media_download))
+        .route(
+            "/api/v1/media/playlist/resolve",
+            post(handle_playlist_resolve),
+        )
+        .route(
+            "/api/v1/media/playlist/enqueue",
+            post(handle_playlist_enqueue),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             security_middleware,

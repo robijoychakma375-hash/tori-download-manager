@@ -14,6 +14,7 @@ import { DownloadToast } from './components/DownloadToast';
 import { SettingsModal } from './components/SettingsModal';
 import { ContextMenu } from './components/ContextMenu';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
+import { PlaylistModal } from './components/PlaylistModal';
 import { typeOfJob } from './utils';
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -255,6 +256,14 @@ export function App() {
 
   // Modals & popups
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [playlistModalUrl, setPlaylistModalUrl] = useState<string | null>(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('modal') === 'playlist') {
+        return 'https://www.youtube.com/playlist?list=PL6B3937A5D230E335';
+      }
+    } catch {}
+    return null;
+  });
   const [progressJobId, setProgressJobId] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(() => {
     try {
@@ -750,6 +759,7 @@ export function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsAddModalOpen(false);
+        setPlaylistModalUrl(null);
         setProgressJobId(null);
         setIsSettingsModalOpen(false);
         setDeleteConfirmJobs(null);
@@ -873,6 +883,22 @@ export function App() {
           defaultConnections={settings.con}
           onClose={() => setIsAddModalOpen(false)}
           onSubmit={handleAddUrls}
+          onOpenPlaylist={(url) => {
+            setIsAddModalOpen(false);
+            setPlaylistModalUrl(url);
+          }}
+        />
+      )}
+
+      {playlistModalUrl !== null && (
+        <PlaylistModal
+          initialUrl={playlistModalUrl}
+          defaultDir={settings.dir}
+          onClose={() => setPlaylistModalUrl(null)}
+          onEnqueued={(count) => {
+            loadDownloads();
+            showToast(`Enqueued ${count} videos from playlist`);
+          }}
         />
       )}
 

@@ -163,6 +163,8 @@ pub fn run() {
             update_toast_bounds,
             hide_toast_window,
             save_toast_position,
+            resolve_playlist,
+            enqueue_playlist_items,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running TORI Download Manager desktop application");

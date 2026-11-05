@@ -849,6 +849,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === 'RESOLVE_PLAYLIST') {
+    const rawUrl = (message.url || '').trim();
+    if (!rawUrl) {
+      sendResponse({ status: 'error', message: 'Missing playlist URL' });
+      return false;
+    }
+    callDesktopApi('/api/v1/media/playlist/resolve', 'POST', { url: rawUrl, limit: message.limit || 100 }).then((httpRes) => {
+      if (httpRes.ok && httpRes.data) {
+        sendResponse({ status: 'ok', playlist: httpRes.data });
+      } else {
+        sendResponse({ status: 'error', message: httpRes.data?.message || 'Playlist resolution failed' });
+      }
+    }).catch((err) => {
+      sendResponse({ status: 'error', message: err.message });
+    });
+    return true;
+  }
+
+  if (message.action === 'ENQUEUE_PLAYLIST') {
+    callDesktopApi('/api/v1/media/playlist/enqueue', 'POST', {
+      items: message.items,
+      destination: message.destination,
+      format_id: message.format_id,
+      playlist_title: message.playlist_title,
+    }).then((httpRes) => {
+      if (httpRes.ok && httpRes.data) {
+        sendResponse(httpRes.data);
+      } else {
+        sendResponse({ status: 'error', message: httpRes.data?.message || 'Playlist enqueue failed' });
+      }
+    }).catch((err) => {
+      sendResponse({ status: 'error', message: err.message });
+    });
+    return true;
+  }
+
   return false;
 });
 

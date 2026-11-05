@@ -100,3 +100,24 @@ export interface AppSettings {
   details?: boolean;
   showDownloadPopup?: 'always' | 'on_start' | 'never';
 }
+
+export interface PlaylistItem {
+  id: string;
+  title: string;
+  url: string;
+  duration_seconds: number | null;
+  thumbnail_url: string | null;
+  channel: string | null;
+  index: number;
+}
+
+export interface PlaylistMetadata {
+  id: string;
+  title: string;
+  webpage_url: string;
+  thumbnail_url: string | null;
+  extractor: string;
+  channel: string | null;
+  item_count: number;
+  items: PlaylistItem[];
+}

@@ -4,9 +4,10 @@ use std::time::Duration;
 use url::Url;
 
 use crate::error::{EngineError, Result};
-use crate::resolver::extractor::execute_yt_dlp_dump;
+use crate::resolver::extractor::{execute_yt_dlp_dump, execute_yt_dlp_playlist_dump};
 use crate::resolver::models::{
-    DownloadCapability, FilesizeType, MediaMetadata, ResolvedMediaFormat,
+    DownloadCapability, FilesizeType, MediaMetadata, PlaylistItem, PlaylistMetadata,
+    ResolvedMediaFormat,
 };
 use crate::resolver::ssrf::validate_safe_media_url;
 
@@ -59,6 +60,19 @@ impl MediaResolver {
         // 4. Universal Platform Extraction via yt-dlp
         let json_val = execute_yt_dlp_dump(url_str, None).await?;
         self.parse_ytdlp_metadata(url_str, &json_val)
+    }
+
+    /// Resolves metadata and item list for a media playlist (e.g. YouTube playlist, channel).
+    pub async fn resolve_playlist(
+        &self,
+        raw_url: &str,
+        limit: Option<usize>,
+    ) -> Result<PlaylistMetadata> {
+        let safe_url = validate_safe_media_url(raw_url).await?;
+        let url_str = safe_url.as_str();
+
+        let json_val = execute_yt_dlp_playlist_dump(url_str, limit, None).await?;
+        parse_ytdlp_playlist_metadata(url_str, &json_val)
     }
 
     /// Probes direct media URLs via HTTP HEAD/GET.
@@ -971,4 +985,157 @@ fn parse_content_disposition(header: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Parses yt-dlp flat-playlist JSON into structured PlaylistMetadata.
+pub fn parse_ytdlp_playlist_metadata(
+    url_str: &str,
+    json_val: &serde_json::Value,
+) -> Result<PlaylistMetadata> {
+    let id = json_val
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let title = json_val
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Untitled Playlist")
+        .to_string();
+
+    let webpage_url = json_val
+        .get("webpage_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or(url_str)
+        .to_string();
+
+    let extractor = json_val
+        .get("extractor")
+        .and_then(|v| v.as_str())
+        .unwrap_or("generic")
+        .to_string();
+
+    let channel = json_val
+        .get("channel")
+        .or_else(|| json_val.get("uploader"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let thumbnail_url = if let Some(thumb) = json_val.get("thumbnail").and_then(|v| v.as_str()) {
+        Some(thumb.to_string())
+    } else if let Some(thumbs) = json_val.get("thumbnails").and_then(|v| v.as_array()) {
+        thumbs
+            .last()
+            .and_then(|t| t.get("url").and_then(|u| u.as_str()))
+            .map(|s| s.to_string())
+    } else {
+        None
+    };
+
+    let mut items = Vec::new();
+
+    if let Some(entries) = json_val.get("entries").and_then(|v| v.as_array()) {
+        for (i, entry) in entries.iter().enumerate() {
+            if entry.is_null() {
+                continue;
+            }
+            let item_id = entry
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let item_title = entry
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Untitled Video")
+                .to_string();
+
+            let item_url = if let Some(u) = entry.get("url").and_then(|v| v.as_str()) {
+                if u.starts_with("http://") || u.starts_with("https://") {
+                    u.to_string()
+                } else if !item_id.is_empty() {
+                    format!("https://www.youtube.com/watch?v={}", item_id)
+                } else {
+                    u.to_string()
+                }
+            } else if !item_id.is_empty() {
+                format!("https://www.youtube.com/watch?v={}", item_id)
+            } else {
+                url_str.to_string()
+            };
+
+            let duration_seconds = entry
+                .get("duration")
+                .and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|u| u as f64)));
+
+            let item_thumb = if let Some(t) = entry.get("thumbnail").and_then(|v| v.as_str()) {
+                Some(t.to_string())
+            } else if let Some(thumbs) = entry.get("thumbnails").and_then(|v| v.as_array()) {
+                thumbs
+                    .last()
+                    .and_then(|t| t.get("url").and_then(|u| u.as_str()))
+                    .map(|s| s.to_string())
+            } else {
+                None
+            };
+
+            let item_channel = entry
+                .get("channel")
+                .or_else(|| entry.get("uploader"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            items.push(PlaylistItem {
+                id: item_id,
+                title: item_title,
+                url: item_url,
+                duration_seconds,
+                thumbnail_url: item_thumb,
+                channel: item_channel,
+                index: i + 1,
+            });
+        }
+    } else {
+        // Single video fallback treated as 1-item playlist
+        let item_id = json_val
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let item_url = json_val
+            .get("webpage_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or(url_str)
+            .to_string();
+
+        let duration_seconds = json_val
+            .get("duration")
+            .and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|u| u as f64)));
+
+        items.push(PlaylistItem {
+            id: item_id,
+            title: title.clone(),
+            url: item_url,
+            duration_seconds,
+            thumbnail_url: thumbnail_url.clone(),
+            channel: channel.clone(),
+            index: 1,
+        });
+    }
+
+    let item_count = items.len();
+
+    Ok(PlaylistMetadata {
+        id,
+        title,
+        webpage_url,
+        thumbnail_url,
+        extractor,
+        channel,
+        item_count,
+        items,
+    })
 }

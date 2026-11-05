@@ -6,6 +6,7 @@ interface AddDownloadModalProps {
   defaultConnections: number;
   onClose: () => void;
   onSubmit: (urls: string[], dir: string, connections: number, startImmediately: boolean) => Promise<void>;
+  onOpenPlaylist?: (url: string) => void;
 }
 
 export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
@@ -13,6 +14,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
   defaultConnections,
   onClose,
   onSubmit,
+  onOpenPlaylist,
 }) => {
   const [urlText, setUrlText] = useState('');
   const [saveDir, setSaveDir] = useState(defaultDir);
@@ -93,6 +95,24 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
                 onChange={(e) => setUrlText(e.target.value)}
                 autoFocus
               />
+              {onOpenPlaylist && (urlText.includes('list=') || urlText.includes('playlist')) && (
+                <div style={{ marginTop: 6 }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{
+                      fontSize: 11,
+                      padding: '3px 8px',
+                      color: 'var(--accent, #6366f1)',
+                      borderColor: 'var(--accent, #6366f1)',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => onOpenPlaylist(urlText.trim())}
+                  >
+                    ⚡ Detected Playlist — Open in Playlist Downloader
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 

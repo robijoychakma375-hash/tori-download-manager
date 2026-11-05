@@ -132,6 +132,129 @@ pub async fn execute_yt_dlp_dump(
     Ok(parsed_json)
 }
 
+/// Invokes `yt-dlp` to dump fast flat JSON metadata for a playlist URL.
+pub async fn execute_yt_dlp_playlist_dump(
+    url: &str,
+    limit: Option<usize>,
+    timeout_dur: Option<Duration>,
+) -> Result<serde_json::Value> {
+    let yt_dlp_bin = find_yt_dlp().ok_or_else(|| {
+        EngineError::Other(
+            "yt-dlp executable was not found. Please install yt-dlp or place it in the TORI bin folder."
+                .to_string(),
+        )
+    })?;
+
+    let timeout = timeout_dur.unwrap_or(DEFAULT_RESOLVER_TIMEOUT);
+
+    let mut args: Vec<String> = vec![
+        "-J".to_string(),
+        "--flat-playlist".to_string(),
+        "--no-warnings".to_string(),
+        "--no-call-home".to_string(),
+        "--no-check-certificates".to_string(),
+        "--skip-download".to_string(),
+        "--no-color".to_string(),
+    ];
+
+    if let Some(max_items) = limit {
+        args.push("--playlist-end".to_string());
+        args.push(max_items.to_string());
+    }
+
+    if let Some(ffmpeg_bin) = find_ffmpeg() {
+        if let Some(parent) = ffmpeg_bin.parent() {
+            args.push("--ffmpeg-location".to_string());
+            args.push(parent.to_string_lossy().to_string());
+        }
+    }
+
+    args.push(url.to_string());
+
+    let mut cmd = Command::new(&yt_dlp_bin);
+    cmd.args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| EngineError::Other(format!("Failed to spawn yt-dlp process: {}", e)))?;
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| EngineError::Other("Failed to capture yt-dlp stdout".to_string()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| EngineError::Other("Failed to capture yt-dlp stderr".to_string()))?;
+
+    let mut stdout_buf = Vec::new();
+    let mut stderr_buf = Vec::new();
+
+    let read_future = async {
+        let mut out_chunk = [0u8; 8192];
+        let mut err_chunk = [0u8; 8192];
+
+        loop {
+            tokio::select! {
+                n = stdout.read(&mut out_chunk) => {
+                    let n = n.map_err(|e| EngineError::Other(format!("Stdout read error: {}", e)))?;
+                    if n == 0 {
+                        let _ = stderr.read_to_end(&mut stderr_buf).await;
+                        break;
+                    }
+                    if stdout_buf.len() + n > MAX_JSON_OUTPUT_BYTES {
+                        return Err(EngineError::Other("yt-dlp output exceeded maximum memory limit (12MB)".to_string()));
+                    }
+                    stdout_buf.extend_from_slice(&out_chunk[..n]);
+                }
+                n = stderr.read(&mut err_chunk) => {
+                    let n = n.map_err(|e| EngineError::Other(format!("Stderr read error: {}", e)))?;
+                    if n > 0 && stderr_buf.len() < 32768 {
+                        stderr_buf.extend_from_slice(&err_chunk[..n]);
+                    }
+                }
+            }
+        }
+
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| EngineError::Other(format!("Failed waiting for yt-dlp exit: {}", e)))?;
+
+        Ok::<std::process::ExitStatus, EngineError>(status)
+    };
+
+    let status = match tokio::time::timeout(timeout, read_future).await {
+        Ok(res) => res?,
+        Err(_) => {
+            return Err(EngineError::Other(format!(
+                "yt-dlp resolution timed out after {} seconds.",
+                timeout.as_secs()
+            )));
+        }
+    };
+
+    if !status.success() {
+        let err_str = String::from_utf8_lossy(&stderr_buf);
+        let cleaned_err = clean_ytdlp_error(&err_str);
+        return Err(EngineError::Other(cleaned_err));
+    }
+
+    let parsed_json: serde_json::Value = serde_json::from_slice(&stdout_buf)
+        .map_err(|e| EngineError::Other(format!("Failed to parse yt-dlp JSON output: {}", e)))?;
+
+    Ok(parsed_json)
+}
+
 /// Categorizes and cleans yt-dlp stderr for user-facing error reporting.
 pub fn clean_ytdlp_error(raw_stderr: &str) -> String {
     let lower = raw_stderr.to_lowercase();

@@ -376,3 +376,59 @@ async fn test_resolver_real_youtube_video_metadata() {
         }
     }
 }
+
+#[test]
+fn test_parse_ytdlp_playlist_metadata_unit() {
+    let raw_json = serde_json::json!({
+        "_type": "playlist",
+        "id": "PL_test_123",
+        "title": "Sample Coding Playlist",
+        "webpage_url": "https://www.youtube.com/playlist?list=PL_test_123",
+        "channel": "Tech Channel",
+        "thumbnails": [
+            { "url": "https://example.com/thumb_small.jpg" },
+            { "url": "https://example.com/thumb_large.jpg" }
+        ],
+        "entries": [
+            {
+                "id": "vid_1",
+                "title": "Episode 1: Introduction",
+                "url": "https://www.youtube.com/watch?v=vid_1",
+                "duration": 345,
+                "thumbnail": "https://example.com/vid1.jpg",
+                "channel": "Tech Channel"
+            },
+            {
+                "id": "vid_2",
+                "title": "Episode 2: Advanced Concepts",
+                "url": "https://www.youtube.com/watch?v=vid_2",
+                "duration": 612,
+                "thumbnails": [
+                    { "url": "https://example.com/vid2_high.jpg" }
+                ],
+                "channel": "Tech Channel"
+            }
+        ]
+    });
+
+    let parsed = tdm_core::resolver::parse_ytdlp_playlist_metadata("https://www.youtube.com/playlist?list=PL_test_123", &raw_json).expect("Playlist parse should succeed");
+
+    assert_eq!(parsed.id, "PL_test_123");
+    assert_eq!(parsed.title, "Sample Coding Playlist");
+    assert_eq!(parsed.channel.as_deref(), Some("Tech Channel"));
+    assert_eq!(parsed.thumbnail_url.as_deref(), Some("https://example.com/thumb_large.jpg"));
+    assert_eq!(parsed.item_count, 2);
+    assert_eq!(parsed.items.len(), 2);
+
+    assert_eq!(parsed.items[0].id, "vid_1");
+    assert_eq!(parsed.items[0].title, "Episode 1: Introduction");
+    assert_eq!(parsed.items[0].duration_seconds, Some(345.0));
+    assert_eq!(parsed.items[0].thumbnail_url.as_deref(), Some("https://example.com/vid1.jpg"));
+    assert_eq!(parsed.items[0].index, 1);
+
+    assert_eq!(parsed.items[1].id, "vid_2");
+    assert_eq!(parsed.items[1].title, "Episode 2: Advanced Concepts");
+    assert_eq!(parsed.items[1].duration_seconds, Some(612.0));
+    assert_eq!(parsed.items[1].thumbnail_url.as_deref(), Some("https://example.com/vid2_high.jpg"));
+    assert_eq!(parsed.items[1].index, 2);
+}

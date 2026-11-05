@@ -755,6 +755,16 @@
           <button class="tori-x" data-act="close" title="Close">×</button>
         </div>
 
+        ${
+          window.location.href.includes('list=')
+            ? `
+        <div style="margin: 6px 14px 2px; padding: 6px 10px; background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.3); border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <span style="font-size: 11px; color: #e0e7ff; font-weight: 500;">⚡ Playlist available</span>
+          <button type="button" data-act="open-playlist" style="font-size: 11px; padding: 3px 8px; background: #6366f1; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Download Playlist</button>
+        </div>`
+            : ''
+        }
+
         <div class="tori-seg">
           <button class="${activeTab === 'Video' ? 'on' : ''}" data-tab="Video">Video</button>
           <button class="${activeTab === 'Audio' ? 'on' : ''}" data-tab="Audio">Audio only</button>
@@ -834,6 +844,20 @@
               showToast('Could not copy link', true);
             }
           }
+        });
+      }
+
+      const playlistBtn = pn.querySelector('[data-act="open-playlist"]');
+      if (playlistBtn) {
+        playlistBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          chrome.runtime.sendMessage({ action: 'SHOW_DESKTOP' });
+          chrome.runtime.sendMessage({
+            action: 'RESOLVE_PLAYLIST',
+            url: window.location.href,
+          });
+          pn.classList.remove('on');
+          showToast('Opening Playlist in TORI...');
         });
       }
 

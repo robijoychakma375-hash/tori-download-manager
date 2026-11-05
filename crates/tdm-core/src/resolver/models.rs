@@ -85,3 +85,26 @@ pub struct ResolveRequest {
     #[serde(default)]
     pub force_refresh: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaylistItem {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    pub duration_seconds: Option<f64>,
+    pub thumbnail_url: Option<String>,
+    pub channel: Option<String>,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaylistMetadata {
+    pub id: String,
+    pub title: String,
+    pub webpage_url: String,
+    pub thumbnail_url: Option<String>,
+    pub extractor: String,
+    pub channel: Option<String>,
+    pub item_count: usize,
+    pub items: Vec<PlaylistItem>,
+}

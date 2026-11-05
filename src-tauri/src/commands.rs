@@ -653,3 +653,74 @@ fn get_default_download_path() -> PathBuf {
     }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct EnqueuePlaylistItemReq {
+    pub url: String,
+    pub title: String,
+    pub thumbnail_url: Option<String>,
+}
+
+#[tauri::command]
+pub async fn resolve_playlist(
+    url: String,
+    limit: Option<usize>,
+) -> Result<tdm_core::PlaylistMetadata, String> {
+    let resolver = tdm_core::MediaResolver::new();
+    resolver
+        .resolve_playlist(&url, limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn enqueue_playlist_items(
+    items: Vec<EnqueuePlaylistItemReq>,
+    destination: Option<String>,
+    format_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let dest_path = if let Some(ref d) = destination {
+        let clean = d.trim();
+        if !clean.is_empty() {
+            PathBuf::from(clean)
+        } else {
+            get_default_download_path()
+        }
+    } else {
+        get_default_download_path()
+    };
+
+    let format = format_id.as_deref().unwrap_or("best");
+    let mut created_ids = Vec::new();
+
+    for item in items {
+        if item.url.trim().is_empty() {
+            continue;
+        }
+        let clean_filename = format!("{}.mp4", tdm_core::sanitize_filename(&item.title));
+        match state
+            .manager
+            .create_managed_media_download(
+                &item.url,
+                format,
+                &clean_filename,
+                &dest_path,
+                tdm_core::Priority::Normal,
+                item.thumbnail_url,
+            )
+            .await
+        {
+            Ok(job) => {
+                let id = job.id.clone();
+                let _ = state.manager.start_download(&id);
+                created_ids.push(id);
+            }
+            Err(e) => {
+                eprintln!("[TORI] Failed to enqueue playlist item '{}': {}", item.title, e);
+            }
+        }
+    }
+
+    Ok(created_ids)
+}
