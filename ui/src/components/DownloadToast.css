@@ -13,7 +13,7 @@ html.toast-mode #root {
 
 .toast-host-container {
   box-sizing: border-box;
-  padding: 8px 10px 10px 10px;
+  padding: 12px !important;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -32,7 +32,6 @@ html.toast-mode #root {
   box-shadow: 0 0 0 1px var(--bline), 0 6px 18px rgba(0, 0, 0, 0.28);
   box-sizing: border-box;
   pointer-events: auto !important;
-  -webkit-app-region: no-drag !important;
 }
 
 .toast.open {
@@ -47,7 +46,6 @@ html.toast-mode #root {
   box-sizing: border-box;
   cursor: grab;
   pointer-events: auto !important;
-  -webkit-app-region: no-drag !important;
 }
 
 .toast .row:active {
@@ -162,7 +160,6 @@ html.toast-mode #root {
   padding: 2px 0;
   cursor: pointer;
   pointer-events: auto !important;
-  -webkit-app-region: no-drag !important;
 }
 
 .toast .tx b {
@@ -181,6 +178,8 @@ html.toast-mode #root {
   font-size: 11.5px;
   margin-top: 2px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 
@@ -188,9 +187,9 @@ html.toast-mode #root {
   text-align: right;
   flex: none;
   min-width: 58px;
+  max-width: 90px;
   cursor: pointer;
   pointer-events: auto !important;
-  -webkit-app-region: no-drag !important;
 }
 
 .toast .eta b {
@@ -199,6 +198,9 @@ html.toast-mode #root {
   font-weight: 700;
   line-height: 1;
   color: var(--rc);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 
@@ -207,6 +209,9 @@ html.toast-mode #root {
   color: var(--mut);
   font-size: 10.5px;
   margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .toast .ib {

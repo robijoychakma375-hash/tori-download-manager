@@ -475,7 +475,7 @@ pub async fn open_progress_window_internal(
     let mut builder =
         tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
             .title(title)
-            .inner_size(490.0, 96.0)
+            .inner_size(494.0, 100.0)
             .always_on_top(true)
             .decorations(false)
             .transparent(true)
@@ -487,7 +487,14 @@ pub async fn open_progress_window_internal(
     let (saved_x, saved_y) =
         if let Ok(Some(saved)) = manager.database().get_setting("toast_window_position") {
             if let Ok(pos) = serde_json::from_str::<ToastPosition>(&saved) {
-                (Some(pos.x), Some(pos.y))
+                if pos.is_manual
+                    && !(pos.x >= 239.0 && pos.x <= 241.0 && pos.y >= 179.0 && pos.y <= 181.0)
+                {
+                    (Some(pos.x), Some(pos.y))
+                } else {
+                    let _ = manager.database().set_setting("toast_window_position", "");
+                    (None, None)
+                }
             } else {
                 (None, None)
             }
@@ -495,7 +502,7 @@ pub async fn open_progress_window_internal(
             (None, None)
         };
 
-    let (x, y) = get_clamped_toast_position(app, saved_x, saved_y, 490.0, 96.0);
+    let (x, y) = get_clamped_toast_position(app, saved_x, saved_y, 494.0, 100.0);
     builder = builder.position(x, y);
 
     let _win = builder
@@ -505,10 +512,111 @@ pub async fn open_progress_window_internal(
     Ok(())
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 struct ToastPosition {
     x: f64,
     y: f64,
+    #[serde(default)]
+    is_manual: bool,
+}
+
+#[cfg(target_os = "windows")]
+#[allow(clippy::upper_case_acronyms)]
+mod win_workarea {
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug)]
+    pub struct RECT {
+        pub left: i32,
+        pub top: i32,
+        pub right: i32,
+        pub bottom: i32,
+    }
+
+    #[repr(C)]
+    pub struct POINT {
+        pub x: i32,
+        pub y: i32,
+    }
+
+    #[repr(C)]
+    pub struct MONITORINFO {
+        pub cb_size: u32,
+        pub rc_monitor: RECT,
+        pub rc_work: RECT,
+        pub dw_flags: u32,
+    }
+
+    extern "system" {
+        pub fn MonitorFromPoint(pt: POINT, dw_flags: u32) -> isize;
+        pub fn GetMonitorInfoW(h_monitor: isize, lpmi: *mut MONITORINFO) -> i32;
+        pub fn SystemParametersInfoW(
+            ui_action: u32,
+            ui_param: u32,
+            pv_param: *mut std::ffi::c_void,
+            f_win_ini: u32,
+        ) -> i32;
+    }
+
+    pub fn get_primary_work_area() -> Option<(f64, f64, f64, f64)> {
+        unsafe {
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            if SystemParametersInfoW(
+                0x0030, // SPI_GETWORKAREA
+                0,
+                &mut rect as *mut _ as *mut std::ffi::c_void,
+                0,
+            ) != 0
+            {
+                Some((
+                    rect.left as f64,
+                    rect.top as f64,
+                    rect.right as f64,
+                    rect.bottom as f64,
+                ))
+            } else {
+                None
+            }
+        }
+    }
+
+    pub fn get_work_area_at(x: i32, y: i32) -> Option<(f64, f64, f64, f64)> {
+        unsafe {
+            let pt = POINT { x, y };
+            let h_mon = MonitorFromPoint(pt, 1 /* MONITOR_DEFAULTTOPRIMARY */);
+            if h_mon != 0 {
+                let mut mi = MONITORINFO {
+                    cb_size: std::mem::size_of::<MONITORINFO>() as u32,
+                    rc_monitor: RECT {
+                        left: 0,
+                        top: 0,
+                        right: 0,
+                        bottom: 0,
+                    },
+                    rc_work: RECT {
+                        left: 0,
+                        top: 0,
+                        right: 0,
+                        bottom: 0,
+                    },
+                    dw_flags: 0,
+                };
+                if GetMonitorInfoW(h_mon, &mut mi) != 0 {
+                    return Some((
+                        mi.rc_work.left as f64,
+                        mi.rc_work.top as f64,
+                        mi.rc_work.right as f64,
+                        mi.rc_work.bottom as f64,
+                    ));
+                }
+            }
+            get_primary_work_area()
+        }
+    }
 }
 
 fn get_clamped_toast_position(
@@ -519,65 +627,87 @@ fn get_clamped_toast_position(
     height: f64,
 ) -> (f64, f64) {
     let monitors = app.available_monitors().unwrap_or_default();
-    if monitors.is_empty() {
-        return (preferred_x.unwrap_or(100.0), preferred_y.unwrap_or(100.0));
-    }
 
     if let (Some(px), Some(py)) = (preferred_x, preferred_y) {
-        let mut best_monitor = &monitors[0];
-        let mut min_dist_sq = f64::MAX;
+        let primary = app.primary_monitor().ok().flatten();
+        let best_monitor = monitors
+            .iter()
+            .find(|m| {
+                let scale = m.scale_factor();
+                let pos = m.position();
+                let size = m.size();
+                let left = pos.x as f64 / scale;
+                let top = pos.y as f64 / scale;
+                let right = left + (size.width as f64 / scale);
+                let bottom = top + (size.height as f64 / scale);
+                px >= left && px <= right && py >= top && py <= bottom
+            })
+            .or(primary.as_ref())
+            .or_else(|| monitors.first());
 
-        for mon in &monitors {
+        let scale = best_monitor.map(|m| m.scale_factor()).unwrap_or(1.0);
+
+        #[cfg(target_os = "windows")]
+        let work_area = win_workarea::get_work_area_at((px * scale) as i32, (py * scale) as i32);
+        #[cfg(not(target_os = "windows"))]
+        let work_area: Option<(f64, f64, f64, f64)> = None;
+
+        if let Some((wl, wt, wr, wb)) = work_area {
+            let work_left = wl / scale;
+            let work_top = wt / scale;
+            let work_right = wr / scale;
+            let work_bottom = wb / scale;
+
+            let min_x = work_left + 10.0;
+            let max_x = (work_right - width - 10.0).max(min_x);
+            let min_y = work_top + 10.0;
+            let max_y = (work_bottom - height - 10.0).max(min_y);
+
+            (px.clamp(min_x, max_x), py.clamp(min_y, max_y))
+        } else if let Some(mon) = best_monitor {
             let scale = mon.scale_factor();
             let pos = mon.position();
             let size = mon.size();
             let left = pos.x as f64 / scale;
             let top = pos.y as f64 / scale;
-            let right = left + (size.width as f64 / scale);
-            let bottom = top + (size.height as f64 / scale);
+            let mon_w = size.width as f64 / scale;
+            let mon_h = size.height as f64 / scale;
 
-            if px >= left && px <= right && py >= top && py <= bottom {
-                best_monitor = mon;
-                break;
-            }
+            let min_x = left + 10.0;
+            let max_x = (left + mon_w - width - 10.0).max(min_x);
+            let min_y = top + 10.0;
+            let max_y = (top + mon_h - height - 10.0).max(min_y);
 
-            let cx = (left + right) / 2.0;
-            let cy = (top + bottom) / 2.0;
-            let dist = (px - cx).powi(2) + (py - cy).powi(2);
-            if dist < min_dist_sq {
-                min_dist_sq = dist;
-                best_monitor = mon;
-            }
+            (px.clamp(min_x, max_x), py.clamp(min_y, max_y))
+        } else {
+            (px, py)
         }
-
-        let scale = best_monitor.scale_factor();
-        let pos = best_monitor.position();
-        let size = best_monitor.size();
-        let left = pos.x as f64 / scale;
-        let top = pos.y as f64 / scale;
-        let mon_w = size.width as f64 / scale;
-        let mon_h = size.height as f64 / scale;
-
-        let max_x = (left + mon_w - width).max(left);
-        let max_y = (top + mon_h - height).max(top);
-
-        let clamped_x = px.clamp(left, max_x);
-        let clamped_y = py.clamp(top, max_y);
-        (clamped_x, clamped_y)
     } else {
         let primary = app
             .primary_monitor()
             .ok()
             .flatten()
             .or_else(|| monitors.into_iter().next());
-        if let Some(mon) = primary {
-            let scale = mon.scale_factor();
+        let scale = primary.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
+
+        #[cfg(target_os = "windows")]
+        let work_area = win_workarea::get_primary_work_area();
+        #[cfg(not(target_os = "windows"))]
+        let work_area: Option<(f64, f64, f64, f64)> = None;
+
+        if let Some((_wl, _wt, wr, wb)) = work_area {
+            let work_right = wr / scale;
+            let work_bottom = wb / scale;
+            let x = work_right - width - 20.0;
+            let y = work_bottom - height - 20.0;
+            (x, y)
+        } else if let Some(mon) = primary {
             let pos = mon.position();
             let size = mon.size();
             let mon_w = size.width as f64 / scale;
             let mon_h = size.height as f64 / scale;
             let x = pos.x as f64 / scale + mon_w - width - 20.0;
-            let y = pos.y as f64 / scale + mon_h - height - 58.0;
+            let y = pos.y as f64 / scale + mon_h - height - 20.0;
             (x, y)
         } else {
             (100.0, 100.0)
@@ -587,7 +717,11 @@ fn get_clamped_toast_position(
 
 #[tauri::command]
 pub async fn save_toast_position(x: f64, y: f64, state: State<'_, AppState>) -> Result<(), String> {
-    let pos = ToastPosition { x, y };
+    let pos = ToastPosition {
+        x,
+        y,
+        is_manual: true,
+    };
     let json = serde_json::to_string(&pos).map_err(|e| e.to_string())?;
     state
         .manager
@@ -622,7 +756,17 @@ pub async fn update_toast_bounds(
             .get_setting("toast_window_position")
         {
             if let Ok(pos) = serde_json::from_str::<ToastPosition>(&saved) {
-                (Some(pos.x), Some(pos.y))
+                if pos.is_manual
+                    && !(pos.x >= 239.0 && pos.x <= 241.0 && pos.y >= 179.0 && pos.y <= 181.0)
+                {
+                    (Some(pos.x), Some(pos.y))
+                } else {
+                    let _ = state
+                        .manager
+                        .database()
+                        .set_setting("toast_window_position", "");
+                    (None, None)
+                }
             } else {
                 (None, None)
             }

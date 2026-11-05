@@ -45,12 +45,28 @@ const CATEGORY_CHIPS: Record<
 
 function formatEta(seconds: number | null | undefined): string {
   if (seconds == null || !isFinite(seconds) || seconds < 0) return '--';
+  if (seconds >= 3600) {
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${mins}m`;
+  }
   if (seconds >= 60) {
     const mins = Math.floor(seconds / 60);
     const secs = Math.round(seconds % 60);
     return `${mins}m ${secs}s`;
   }
   return `${Math.round(seconds)}s`;
+}
+
+function fmtProgressBytes(downloaded: number, total: number): string {
+  if (total <= 0) return fmtB(downloaded);
+  if (total >= 1e9 && downloaded >= 1e8) {
+    return `${(downloaded / 1e9).toFixed(2)} of ${(total / 1e9).toFixed(2)} GB`;
+  }
+  if (total >= 1e6 && downloaded >= 1e5) {
+    return `${(downloaded / 1e6).toFixed(1)} of ${(total / 1e6).toFixed(1)} MB`;
+  }
+  return `${fmtB(downloaded)} of ${fmtB(total)}`;
 }
 
 export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
@@ -62,6 +78,9 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const dismissedIdsRef = useRef<Set<string>>(new Set());
   const isUserDraggingRef = useRef<boolean>(false);
+  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const isTextMovedRef = useRef<boolean>(false);
+  const lastBoundsRef = useRef<{ w: number; h: number }>({ w: 494, h: 100 });
 
   // Apply theme & accent from stored settings
   useEffect(() => {
@@ -130,27 +149,38 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
         is_complete: jobState === 'completed' || ratio >= 1,
       }));
 
+      const isUnknownDemo = params.get('unknown') === '1';
       const demoJob: DownloadJob = {
         id: 'demo-toast',
-        url: 'https://download-installer.cdn.mozilla.net/pub/firefox/releases/61.0.2/mac/en-US/Firefox%2061.0.2.dmg',
+        url: isUnknownDemo
+          ? 'https://live.example.com/hls/stream.m3u8'
+          : 'https://download-installer.cdn.mozilla.net/pub/firefox/releases/61.0.2/mac/en-US/Firefox%2061.0.2.dmg',
         resolved_url: null,
-        filename: 'Firefox 61.0.2.dmg',
-        target_path: 'C:\\Users\\ritud\\Downloads\\Tori\\Programs',
-        temp_path: 'C:\\Users\\ritud\\Downloads\\Tori\\Programs\\Firefox 61.0.2.dmg.tdm-part',
-        total_bytes: 57968590,
-        downloaded_bytes: jobState === 'completed' ? 57968590 : 51227000,
+        filename: isUnknownDemo ? 'live_event_stream.mp4' : 'Firefox 61.0.2.dmg',
+        target_path: isUnknownDemo
+          ? 'C:\\Users\\ritud\\Downloads\\Tori\\Video'
+          : 'C:\\Users\\ritud\\Downloads\\Tori\\Programs',
+        temp_path: isUnknownDemo
+          ? 'C:\\Users\\ritud\\Downloads\\Tori\\Video\\live_event_stream.mp4.tdm-part'
+          : 'C:\\Users\\ritud\\Downloads\\Tori\\Programs\\Firefox 61.0.2.dmg.tdm-part',
+        total_bytes: isUnknownDemo ? null : 57968590,
+        downloaded_bytes: isUnknownDemo
+          ? 48900000
+          : jobState === 'completed'
+          ? 57968590
+          : 51227000,
         state: jobState,
-        job_type: 'http_file',
+        job_type: isUnknownDemo ? 'live_stream' : 'http_file',
         etag: null,
         last_modified: null,
-        is_resumable: true,
-        chunk_count: 11,
+        is_resumable: !isUnknownDemo,
+        chunk_count: isUnknownDemo ? 1 : 11,
         priority: 'normal',
         error_message: jobState === 'failed' ? 'Connection lost · 3 retries failed' : null,
         created_at: 'Today 10:42',
         updated_at: 'Today 10:42',
         speed_bps: 512000,
-        eta_seconds: 3,
+        eta_seconds: isUnknownDemo ? null : 3,
       };
 
       setActiveIds(['demo-toast']);
@@ -282,7 +312,23 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
     return () => clearInterval(interval);
   }, [activeIds, jobs]);
 
-  // Handle native window dragging
+  const handleToggleExpand = useCallback(async (id: string) => {
+    setExpanded((prev) => {
+      const willOpen = !prev[id];
+      if (willOpen && (!chunks[id] || chunks[id].length === 0)) {
+        invoke<ChunkRecord[]>('get_download_chunks', { id })
+          .then((c) => {
+            if (c && c.length > 0) {
+              setChunks((ch) => ({ ...ch, [id]: c }));
+            }
+          })
+          .catch(() => {});
+      }
+      return { ...prev, [id]: willOpen };
+    });
+  }, [chunks]);
+
+  // Handle native window dragging on safe neutral areas
   const handleDragStart = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
@@ -310,6 +356,43 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
     }
   }, []);
 
+  const handleTextMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    dragStartPosRef.current = { x: e.clientX, y: e.clientY };
+    isTextMovedRef.current = false;
+  }, []);
+
+  const handleTextMouseMove = useCallback((e: React.MouseEvent) => {
+    if (e.buttons === 1 && dragStartPosRef.current && !isTextMovedRef.current) {
+      const dist = Math.hypot(
+        e.clientX - dragStartPosRef.current.x,
+        e.clientY - dragStartPosRef.current.y
+      );
+      if (dist > 5) {
+        isTextMovedRef.current = true;
+        isUserDraggingRef.current = true;
+        try {
+          getCurrentWebviewWindow().startDragging();
+        } catch {
+          // ignore if not running in Tauri window
+        }
+      }
+    }
+  }, []);
+
+  const handleTextClick = useCallback(
+    (id: string) => {
+      if (isTextMovedRef.current) {
+        isTextMovedRef.current = false;
+        dragStartPosRef.current = null;
+        return;
+      }
+      dragStartPosRef.current = null;
+      handleToggleExpand(id);
+    },
+    [handleToggleExpand]
+  );
+
   // Listen to window moved event to persist position
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -320,6 +403,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
         if (!isUserDraggingRef.current) return;
         if (timer) clearTimeout(timer);
         timer = setTimeout(async () => {
+          isUserDraggingRef.current = false;
           try {
             const scale = await win.scaleFactor();
             const x = pos.x / scale;
@@ -328,7 +412,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
           } catch {
             await invoke('save_toast_position', { x: pos.x, y: pos.y }).catch(() => {});
           }
-        }, 200);
+        }, 300);
       }).then((u) => {
         unlisten = u;
       }).catch(() => {});
@@ -365,16 +449,28 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const h = Math.ceil(entry.contentRect.height) + 18;
-        invoke('update_toast_bounds', { width: 490.0, height: Math.max(94.0, h) }).catch(
-          () => {}
-        );
+    const updateBounds = () => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const w = Math.max(494, Math.ceil(rect.width));
+      const h = Math.max(100, Math.ceil(rect.height));
+
+      if (
+        Math.abs(lastBoundsRef.current.w - w) >= 1 ||
+        Math.abs(lastBoundsRef.current.h - h) >= 1
+      ) {
+        lastBoundsRef.current = { w, h };
+        invoke('update_toast_bounds', { width: w, height: h }).catch(() => {});
       }
+    };
+
+    const observer = new ResizeObserver(() => {
+      updateBounds();
     });
 
     observer.observe(containerRef.current);
+    updateBounds();
+
     return () => observer.disconnect();
   }, []);
 
@@ -422,22 +518,6 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
     }
   };
 
-  const handleToggleExpand = async (id: string) => {
-    setExpanded((prev) => {
-      const willOpen = !prev[id];
-      if (willOpen && (!chunks[id] || chunks[id].length === 0)) {
-        invoke<ChunkRecord[]>('get_download_chunks', { id })
-          .then((c) => {
-            if (c && c.length > 0) {
-              setChunks((ch) => ({ ...ch, [id]: c }));
-            }
-          })
-          .catch(() => {});
-      }
-      return { ...prev, [id]: willOpen };
-    });
-  };
-
   const visibleIds = activeIds.slice(0, 3);
   const remainingCount = Math.max(0, activeIds.length - 3);
 
@@ -461,22 +541,44 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
           ? 'var(--amber)'
           : 'var(--a3)';
 
-        // Percent calculation
-        const total = job.total_bytes || 0;
+        // Percent & bytes calculation
+        const total = job.total_bytes && job.total_bytes > 0 ? job.total_bytes : 0;
         const downloaded = job.downloaded_bytes || 0;
-        const pct = total > 0 ? Math.min(100, Math.max(0, (downloaded / total) * 100)) : 0;
-        const offset = isComplete ? 0 : CIRCUMFERENCE * (1 - pct / 100);
+        const hasKnownTotal = total > 0;
+        const pct = hasKnownTotal ? Math.min(100, Math.max(0, (downloaded / total) * 100)) : 0;
+
+        // Empty ring if total is unknown or starting, full ring if complete, else dashoffset
+        const offset = isComplete
+          ? 0
+          : hasKnownTotal
+          ? CIRCUMFERENCE * (1 - pct / 100)
+          : CIRCUMFERENCE;
+
+        // Speed string
+        const speedStr = fmtSp(job.speed_bps);
+        const speedPart = speedStr ? ` · ${speedStr}` : '';
 
         // Subtext line
-        const subtext = isComplete
-          ? `${fmtB(total || downloaded)} · Download complete`
-          : isFailed
-          ? job.error_message || 'Connection lost · 3 retries failed'
-          : isPaused
-          ? `${fmtB(downloaded)}${total > 0 ? ` of ${fmtB(total)}` : ''} · Paused`
-          : `${fmtB(downloaded)}${total > 0 ? ` of ${fmtB(total)}` : ''} · ${fmtSp(
-              job.speed_bps || 0
-            )}`;
+        let subtext = '';
+        if (isComplete) {
+          const finalBytes = hasKnownTotal ? total : downloaded;
+          subtext = `${fmtB(finalBytes)} · Download complete`;
+        } else if (isFailed) {
+          subtext = job.error_message || 'Connection lost · 3 retries failed';
+        } else if (isPaused) {
+          subtext = hasKnownTotal
+            ? `${fmtProgressBytes(downloaded, total)} · Paused`
+            : `${fmtB(downloaded)} · Paused`;
+        } else {
+          // Active states: downloading, probing, verifying
+          if (downloaded === 0) {
+            subtext = 'Starting…';
+          } else if (hasKnownTotal) {
+            subtext = `${fmtProgressBytes(downloaded, total)}${speedPart}`;
+          } else {
+            subtext = `${fmtB(downloaded)}${speedPart}`;
+          }
+        }
 
         // ETA display
         let etaNum = '--';
@@ -486,13 +588,28 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
           etaSub = 'Finished';
         } else if (isFailed) {
           etaNum = 'Failed';
-          etaSub = `${Math.floor(pct)}%`;
+          etaSub = hasKnownTotal ? `${Math.floor(pct)}%` : '';
         } else if (isPaused) {
           etaNum = 'Paused';
-          etaSub = `${Math.floor(pct)}%`;
+          etaSub = hasKnownTotal ? `${Math.floor(pct)}%` : '';
         } else {
-          etaNum = formatEta(job.eta_seconds);
-          etaSub = 'left';
+          // Active downloading
+          if (downloaded === 0) {
+            etaNum = 'Starting…';
+            etaSub = '';
+          } else if (!hasKnownTotal) {
+            etaNum = 'Live';
+            etaSub = 'Unknown size';
+          } else {
+            const formatted = formatEta(job.eta_seconds);
+            if (formatted === '--') {
+              etaNum = '--';
+              etaSub = 'calculating';
+            } else {
+              etaNum = formatted;
+              etaSub = 'left';
+            }
+          }
         }
 
         // Category icon
@@ -586,7 +703,9 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
 
               <div
                 className="tx"
-                onClick={() => handleToggleExpand(id)}
+                onMouseDown={handleTextMouseDown}
+                onMouseMove={handleTextMouseMove}
+                onClick={() => handleTextClick(id)}
                 title="Click for details"
               >
                 <b>{job.filename}</b>
@@ -595,11 +714,13 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
 
               <div
                 className="eta"
-                onClick={() => handleToggleExpand(id)}
+                onMouseDown={handleTextMouseDown}
+                onMouseMove={handleTextMouseMove}
+                onClick={() => handleTextClick(id)}
                 title="Click for details"
               >
                 <b>{etaNum}</b>
-                <span>{etaSub}</span>
+                {etaSub ? <span>{etaSub}</span> : null}
               </div>
 
               {isDown && (
