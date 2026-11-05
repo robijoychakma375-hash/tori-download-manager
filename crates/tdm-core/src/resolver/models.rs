@@ -79,11 +79,62 @@ pub struct ResolverStatus {
     pub setup_command: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoveryStrategy {
+    PlatformExtractor,
+    DirectMediaProbe,
+    HlsManifest,
+    DashManifest,
+    HtmlMetadata,
+    StreamlinkAdapter,
+    BrowserCandidate,
+}
+
+impl std::fmt::Display for DiscoveryStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PlatformExtractor => write!(f, "Platform Extractor (yt-dlp)"),
+            Self::DirectMediaProbe => write!(f, "Direct Media Resource Probe"),
+            Self::HlsManifest => write!(f, "HLS Manifest Parser (.m3u8)"),
+            Self::DashManifest => write!(f, "DASH Manifest Parser (.mpd)"),
+            Self::HtmlMetadata => write!(f, "HTML5 / OpenGraph Metadata"),
+            Self::StreamlinkAdapter => write!(f, "Streamlink Adapter"),
+            Self::BrowserCandidate => write!(f, "Browser Captured Stream"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaCandidate {
+    pub url: String,
+    pub strategy: DiscoveryStrategy,
+    pub protocol: String,
+    pub container: String,
+    pub resolution_label: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub bitrate_kbps: Option<f64>,
+    pub filesize: Option<u64>,
+    pub format_note: Option<String>,
+    pub vcodec: Option<String>,
+    pub acodec: Option<String>,
+    pub download_capability: DownloadCapability,
+    pub direct_stream_url: Option<String>,
+    pub http_headers: Option<std::collections::HashMap<String, String>>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ResolveRequest {
     pub url: String,
     #[serde(default)]
     pub force_refresh: bool,
+    #[serde(default)]
+    pub candidates: Vec<String>,
+    #[serde(default)]
+    pub page_title: Option<String>,
+    #[serde(default)]
+    pub thumbnail_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

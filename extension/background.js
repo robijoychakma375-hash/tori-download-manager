@@ -680,6 +680,29 @@ async function recordCandidate(tabId, candidate) {
   }
 }
 
+function isLikelyAdOrTracker(url) {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  const adHosts = [
+    'doubleclick.net',
+    'google-analytics.com',
+    'googletagmanager.com',
+    'adservice.google.com',
+    'adnxs.com',
+    'advertising.com',
+    'scorecardresearch.com',
+    'amazon-adsystem.com',
+    'facebook.com/tr/',
+    'analytics.',
+    'telemetry.',
+  ];
+  if (adHosts.some((h) => lower.includes(h))) return true;
+  if (lower.includes('/ads/') || lower.includes('/ad_break') || lower.includes('ad_type=') || lower.includes('pagead/')) {
+    return true;
+  }
+  return false;
+}
+
 // -------------------------------------------------------------------------
 // WebRequest Listener: intercept media responses in background
 // -------------------------------------------------------------------------
@@ -689,8 +712,14 @@ chrome.webRequest.onHeadersReceived.addListener(
     if (details.tabId < 0) return;
     const url = details.url;
 
-    // Ignore browser internal schemes
-    if (url.startsWith('chrome:') || url.startsWith('edge:') || url.startsWith('blob:') || url.startsWith('data:')) {
+    // Ignore browser internal schemes and ad/tracker requests
+    if (
+      url.startsWith('chrome:') ||
+      url.startsWith('edge:') ||
+      url.startsWith('blob:') ||
+      url.startsWith('data:') ||
+      isLikelyAdOrTracker(url)
+    ) {
       return;
     }
 
@@ -1063,16 +1092,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const resolutionPromise = (async () => {
       const tabId = sender.tab?.id || message.tabId;
       const cachedStreams = tabId ? (tabMediaCache.get(tabId) || []) : [];
-      const streamingCandidate = cachedStreams.find((c) => c.type === 'hls' || c.type === 'dash');
 
-      // If we have an intercepted stream manifest on a generic site, probe it directly!
+      // Merge DOM candidates and network-captured candidates
+      const candidateSet = new Set(Array.isArray(message.candidates) ? message.candidates : []);
+      for (const item of cachedStreams) {
+        if (item.url && !item.url.startsWith('blob:') && !item.url.startsWith('data:')) {
+          candidateSet.add(item.url);
+        }
+      }
+      const candidatesList = Array.from(candidateSet);
+
+      // If we have an intercepted stream manifest or direct media candidate on a generic site, probe it directly!
+      const streamingCandidate = cachedStreams.find((c) => c.type === 'hls' || c.type === 'dash') ||
+                                 cachedStreams.find((c) => c.type === 'direct');
+
       if (!isPlatform && streamingCandidate && streamingCandidate.url) {
         logSanitizedDiagnostic('RESOLVE_STREAM_PROBE', {
           requestId: correlationId,
           url: streamingCandidate.url,
           protocol: streamingCandidate.type,
         });
-        const streamRes = await callDesktopApi('/api/v1/media/resolve', 'POST', { url: streamingCandidate.url }, 8000);
+        const streamRes = await callDesktopApi(
+          '/api/v1/media/resolve',
+          'POST',
+          {
+            url: streamingCandidate.url,
+            candidates: candidatesList,
+            page_title: message.page_title || null,
+            thumbnail_url: message.thumbnail_url || null,
+          },
+          8000
+        );
         if (streamRes.ok && streamRes.data && Array.isArray(streamRes.data.formats) && streamRes.data.formats.length > 0) {
           logSanitizedDiagnostic('RESOLVE_SUCCESS', {
             requestId: correlationId,
@@ -1093,7 +1143,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       }
 
-      const httpRes = await callDesktopApi('/api/v1/media/resolve', 'POST', { url: targetUrl }, customTimeout);
+      const resolvePayload = {
+        url: targetUrl,
+        candidates: candidatesList,
+        page_title: message.page_title || null,
+        thumbnail_url: message.thumbnail_url || null,
+      };
+
+      const httpRes = await callDesktopApi('/api/v1/media/resolve', 'POST', resolvePayload, customTimeout);
       const elapsed = Date.now() - startTime;
 
       if (httpRes.ok && httpRes.data) {

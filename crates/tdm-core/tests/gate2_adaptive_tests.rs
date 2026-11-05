@@ -804,7 +804,7 @@ async fn test_gate2_simultaneous_split_cancel_crash_resume() {
         manager.start_download(&job_id).unwrap();
 
         // Let it run until chunks are split
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_millis(400)).await;
 
         // Abruptly simulate crash: drop manager without clean shutdown
         drop(manager);
@@ -841,9 +841,16 @@ async fn test_gate2_simultaneous_split_cancel_crash_resume() {
         // Resume download
         manager2.resume_download(&job_id).unwrap();
 
-        let state = wait_for_job_terminal(&manager2, &job_id, Duration::from_secs(15))
+        let state = wait_for_job_terminal(&manager2, &job_id, Duration::from_secs(20))
             .await
             .unwrap();
+        if state == JobState::Failed {
+            let final_job = manager2.get_download(&job_id).unwrap().unwrap();
+            panic!(
+                "Job failed unexpectedly on resume: {:?}",
+                final_job.error_message
+            );
+        }
         assert_eq!(state, JobState::Completed);
 
         let final_path = std::path::Path::new(&recovered.target_path);

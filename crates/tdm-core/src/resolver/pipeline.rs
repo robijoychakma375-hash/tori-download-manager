@@ -34,6 +34,19 @@ impl MediaResolver {
         Self { client }
     }
 
+    /// Resolves media metadata using multi-strategy discovery orchestrator when candidates or context are present.
+    pub async fn resolve_with_request(
+        &self,
+        req: &crate::resolver::models::ResolveRequest,
+    ) -> Result<MediaMetadata> {
+        if req.candidates.is_empty() && req.page_title.is_none() && req.thumbnail_url.is_none() {
+            self.resolve(&req.url).await
+        } else {
+            let orchestrator = crate::resolver::orchestrator::DiscoveryOrchestrator::new();
+            orchestrator.resolve_multi_strategy(self, req).await
+        }
+    }
+
     /// Resolves media metadata for any direct URL, streaming manifest, or video platform webpage.
     pub async fn resolve(&self, raw_url: &str) -> Result<MediaMetadata> {
         let safe_url = validate_safe_media_url(raw_url).await?;

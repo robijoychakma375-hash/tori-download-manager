@@ -82,6 +82,61 @@ pub fn find_yt_dlp() -> Option<PathBuf> {
     None
 }
 
+/// Locates the `streamlink` executable on the system if installed (optional adapter).
+pub fn find_streamlink() -> Option<PathBuf> {
+    // 1. Check PATH via where.exe
+    if let Ok(output) = silent_command("where.exe").arg("streamlink").output() {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(line) = stdout.lines().next() {
+                let p = PathBuf::from(line.trim());
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+
+    // 2. Check application directory & sidecar bin
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let p1 = dir.join("streamlink.exe");
+            if p1.exists() {
+                return Some(p1);
+            }
+            let p2 = dir.join("bin").join("streamlink.exe");
+            if p2.exists() {
+                return Some(p2);
+            }
+        }
+    }
+
+    // 3. User local runtime location (%LOCALAPPDATA%\tori-download-manager\bin\streamlink.exe)
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let p = PathBuf::from(&local_app_data)
+            .join("tori-download-manager")
+            .join("bin")
+            .join("streamlink.exe");
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 4. Common system installation locations
+    for cand in [
+        r"C:\Program Files\Streamlink\bin\streamlink.exe",
+        r"C:\Program Files (x86)\Streamlink\bin\streamlink.exe",
+        r"C:\ProgramData\chocolatey\bin\streamlink.exe",
+    ] {
+        let p = PathBuf::from(cand);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    None
+}
+
 /// Locates an available JavaScript runtime for yt-dlp-ejs / YouTube signature challenges.
 /// Deno is prioritized because it is a single standalone secure executable.
 pub fn find_js_runtime() -> Option<(String, PathBuf)> {

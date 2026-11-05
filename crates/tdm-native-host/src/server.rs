@@ -79,6 +79,9 @@ pub struct ResolveMediaReq {
     pub url: String,
     #[allow(dead_code)]
     pub force_refresh: Option<bool>,
+    pub candidates: Option<Vec<String>>,
+    pub page_title: Option<String>,
+    pub thumbnail_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -642,7 +645,15 @@ async fn handle_media_resolve(
         ));
     }
 
-    match state.resolver.resolve(raw_url).await {
+    let resolve_req = tdm_core::ResolveRequest {
+        url: raw_url.to_string(),
+        force_refresh: payload.force_refresh.unwrap_or(false),
+        candidates: payload.candidates.unwrap_or_default(),
+        page_title: payload.page_title,
+        thumbnail_url: payload.thumbnail_url,
+    };
+
+    match state.resolver.resolve_with_request(&resolve_req).await {
         Ok(metadata) => Ok(Json(metadata)),
         Err(e) => {
             let (status, category, msg) = categorize_resolver_error(&e);

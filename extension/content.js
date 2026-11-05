@@ -374,6 +374,45 @@ function normalizePlatformUrl(rawUrl) {
     return null;
   }
 
+  // Extract direct HTML5 video src, source elements, and OpenGraph video tags from DOM
+  function extractDomMediaCandidates(videoEl = null) {
+    const candidates = new Set();
+    try {
+      if (videoEl) {
+        if (videoEl.currentSrc && !videoEl.currentSrc.startsWith('blob:') && !videoEl.currentSrc.startsWith('data:')) {
+          candidates.add(videoEl.currentSrc);
+        }
+        if (videoEl.src && !videoEl.src.startsWith('blob:') && !videoEl.src.startsWith('data:')) {
+          candidates.add(videoEl.src);
+        }
+        const sources = videoEl.querySelectorAll('source');
+        for (const s of sources) {
+          const src = s.src || s.getAttribute('src');
+          if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
+            candidates.add(src);
+          }
+        }
+      }
+
+      // Check OpenGraph and Twitter video metadata tags
+      const metaSelectors = [
+        'meta[property="og:video"]',
+        'meta[property="og:video:url"]',
+        'meta[property="og:video:secure_url"]',
+        'meta[name="twitter:player:stream"]',
+        'link[rel="video_src"]',
+      ];
+      for (const sel of metaSelectors) {
+        const el = document.querySelector(sel);
+        const val = el?.getAttribute('content') || el?.getAttribute('href');
+        if (val && !val.startsWith('blob:') && !val.startsWith('data:')) {
+          candidates.add(val);
+        }
+      }
+    } catch (_) {}
+    return Array.from(candidates);
+  }
+
   // Extract platform media identity to detect client-side SPA navigation
   function extractMediaIdentity(url, videoEl = null) {
     const rawUrl = url || window.location.href;
@@ -623,8 +662,20 @@ function normalizePlatformUrl(rawUrl) {
         }
       });
 
+      const domCandidates = extractDomMediaCandidates(videoEl);
+      const domThumbnail = extractPageThumbnail(videoEl);
+      const mediaTitle = getMediaTitle(videoEl);
+
       chrome.runtime.sendMessage(
-        { action: 'RESOLVE_MEDIA', url: targetUrl, generation: thisGen, correlation_id: reqId },
+        {
+          action: 'RESOLVE_MEDIA',
+          url: targetUrl,
+          generation: thisGen,
+          correlation_id: reqId,
+          candidates: domCandidates,
+          page_title: mediaTitle,
+          thumbnail_url: domThumbnail,
+        },
         (rRes) => {
           if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
           if (thisGen !== currentGeneration) {
