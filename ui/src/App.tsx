@@ -10,7 +10,7 @@ import { DownloadTable } from './components/DownloadTable';
 import { StatusBar } from './components/StatusBar';
 import { AddDownloadModal } from './components/AddDownloadModal';
 import { ProgressModal } from './components/ProgressModal';
-import { ProgressWindow } from './components/ProgressWindow';
+import { DownloadToast } from './components/DownloadToast';
 import { SettingsModal } from './components/SettingsModal';
 import { ContextMenu } from './components/ContextMenu';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
@@ -41,6 +41,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   accent: 'indigo',
   motion: false,
   details: false,
+  showDownloadPopup: 'always',
 };
 
 function loadStoredSettings(): AppSettings {
@@ -229,8 +230,8 @@ export function App() {
   const windowMode = urlParams.get('window');
   const windowJobId = urlParams.get('id');
 
-  if (windowMode === 'progress' && windowJobId) {
-    return <ProgressWindow id={windowJobId} />;
+  if (windowMode === 'toast' || windowMode === 'progress') {
+    return <DownloadToast initialId={windowJobId || undefined} />;
   }
 
   const [downloads, setDownloads] = useState<DownloadJob[]>([]);

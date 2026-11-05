@@ -198,3 +198,22 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
   5. State Synchronization across Windows.
   6. Cancelation Correctness (`cancel_download` wired to UI).
 - **Real Edge Extension Verification**: 14/14 automated browser integration steps verified with Microsoft Edge CDP, Options UI, Popup UI, media resolution, 720p/1080p downloads with FFprobe stream verification, and zero duplicate overlays (`node scripts/verify_gate10_5_3_2.js`).
+
+## Gate 11: Exact Design Reproduction & Download Toast Migration
+
+- **Stage A (Main Window & Settings)**:
+  - **Status**: **VERIFIED**
+  - **Git Safety**: Project root `C:\Users\ritud\Downloads\final tori download manager` preserved; full 14+ commit history intact. Checkpoint commit `bb1e6d8`.
+  - **Test Inventory**: 105 passed across all 13 suites. Discrepancy explained: previous report summed first 12 suites (98 tests) and omitted `server_tests` (7 tests). Zero tests removed or disabled.
+  - **Production Build**: Verified standalone launch of `target\release\tori-download-manager.exe` without Vite. Embedded UI loads with persistent SQLite downloads.
+  - **Design Fidelity**: Exact visual match with `design/tori-final/tori-app-ndm-win.html` across Light/Dark modes, 4 accent themes (Indigo, Ocean, Emerald, Rose), and all 4 Settings tabs.
+
+- **Stage B (Download Toast)**:
+  - **Status**: **VERIFIED**
+  - **Visual Match**: Exact reproduction of `design/tori-final/tori-download-toast.html` (`DownloadToast.tsx`, `DownloadToast.css`). 52px SVG circular progress ring (`stroke-dasharray="131.95"`), 30px category chip with linear gradients and SVGs, 18px status badge (`.bd`), tabular ETA, round action buttons (`.ib`), dismiss button (`.cx`), expandable connection drawer (`.dr`, `.ms`).
+  - **Window Mechanics**: Tauri 2 `WebviewWindow` (`progress_toast`), `always_on_top(true)`, `decorations(false)`, `transparent(true)`, `skip_taskbar(true)`, `focused(false)`, positioned bottom-right above taskbar, dynamically sized via `update_toast_bounds` to avoid dead blocking regions.
+  - **Lifecycle & Dismissal**: Real Pause / Resume / Open / Folder / Dismiss. Auto-dismisses completed downloads after 9s (paused while hovered). Dismissing toast does not cancel download.
+  - **Multi-Toast**: Supports up to 3 cards visible simultaneously with `+N more` indicator when > 3 jobs.
+  - **Settings Integration**: Added and persisted `showDownloadPopup` ('always', 'on_start', 'never') in SettingsModal and SQLite.
+  - **Functional Verification**: Tested real byte-range download lifecycle and pause/resume via `node scripts/verify_stage_b_toast.js`. All 10 visual screenshots captured via `node scripts/verify_toast_visual.js`.
+

@@ -21,9 +21,16 @@ Implement the exact design reproduction from `design/tori-final/` into the TORI 
 
 ---
 
-## Stage B (Download Toast Popup) — UPCOMING
-1. **Toast Component:** Implement `ToastNotification.tsx` matching `tori-download-toast.html`.
-2. **Circular Progress Ring:** 52px SVG with dynamic `stroke-dashoffset` for download percentage.
-3. **Category Chip Badge:** 30x30 chip centered inside the progress ring.
-4. **Expandable Drawer:** Toggle connection meters, source, save-to destination on name/time click.
-5. **Non-Focus Window / Popup:** Multi-window toast window positioned at bottom right of screen, never stealing keyboard focus.
+## Status of Stage B (Download Toast Popup) — COMPLETED
+- [x] **Toast Component:** Implemented `DownloadToast.tsx` and `DownloadToast.css` matching `tori-download-toast.html` down to the pixel.
+- [x] **Circular Progress Ring:** 52px SVG with dynamic `stroke-dashoffset` (`stroke-dasharray="131.95"`), 4.5px stroke width, radius 21.
+- [x] **Category Chip & Badge:** 30x30 chip centered inside ring with category SVGs and linear gradients; 18px badge overlay for complete (checkmark) and failed (alert).
+- [x] **Tabular Subtext & ETA:** Bold filename with ellipsis, secondary line with downloaded/total and speed, tabular numeric ETA.
+- [x] **Action Buttons & Dismissal:** 36px round buttons (`.ib`) for Pause, Resume, Open, Folder, Retry. 24px dismiss button (`.cx`) that dismisses toast without cancelling download.
+- [x] **Expandable Drawer:** Toggled on filename/ETA click, shows real connection segment meters, hostname, save-to destination, and connection count / resumable flag.
+- [x] **Auto-Dismissal & Hover Pause:** 9-second auto-dismiss on completion; paused while mouse hovers over card.
+- [x] **Window Mechanics:** Tauri 2 `WebviewWindow` (`progress_toast`), `always_on_top(true)`, `decorations(false)`, `transparent(true)`, `skip_taskbar(true)`, `focused(false)`, anchored bottom-right above taskbar, dynamically sized via `update_toast_bounds`.
+- [x] **Multi-Toast Management:** Up to 3 cards visible simultaneously, with `+N more` indicator when > 3 active downloads.
+- [x] **Settings Integration:** "Show download popup: Always / On start only / Never" added to SettingsModal and persisted in SQLite.
+- [x] **Verification & Artifacts:** All 10 screenshots captured in brain directory, verified with real byte-range server download and process safety checks. Full workspace tests (105/105 passed), cargo clippy (0 warnings), rustfmt (clean).
+

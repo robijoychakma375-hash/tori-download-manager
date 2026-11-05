@@ -97,4 +97,5 @@ export interface AppSettings {
   accent?: 'indigo' | 'ocean' | 'emerald' | 'rose';
   motion: boolean;
   details?: boolean;
+  showDownloadPopup?: 'always' | 'on_start' | 'never';
 }

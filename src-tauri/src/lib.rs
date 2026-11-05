@@ -99,7 +99,8 @@ pub fn run() {
                             let id_c = id.clone();
                             tauri::async_runtime::spawn(async move {
                                 let _ =
-                                    commands::open_progress_window_internal(&app, &m, &id_c).await;
+                                    commands::open_progress_window_internal(&app, &m, &id_c, false)
+                                        .await;
                             });
                         }
                         _ => {}
@@ -158,6 +159,8 @@ pub fn run() {
             regenerate_pairing_token,
             get_download,
             open_progress_window,
+            update_toast_bounds,
+            hide_toast_window,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running TORI Download Manager desktop application");

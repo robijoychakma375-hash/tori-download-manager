@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tdm_core::{ChunkRecord, DownloadJob};
 
 #[cfg(windows)]
@@ -426,29 +426,61 @@ pub async fn open_progress_window_internal(
     app: &tauri::AppHandle,
     manager: &tdm_core::DownloadManager,
     id: &str,
+    force: bool,
 ) -> Result<(), String> {
+    if !force {
+        let db = manager.database();
+        if let Ok(Some(saved)) = db.get_setting("app_settings") {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&saved) {
+                if let Some(mode) = val.get("showDownloadPopup").and_then(|v| v.as_str()) {
+                    if mode == "never" {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
     let job = manager
         .get_download(id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Job {} not found", id))?;
 
-    let label = format!("progress_{}", id);
-    if let Some(win) = app.get_webview_window(&label) {
+    let label = "progress_toast";
+    if let Some(win) = app.get_webview_window(label) {
         let _ = win.show();
         let _ = win.unminimize();
-        let _ = win.set_focus();
+        let _ = app.emit("toast-add-download", id);
         return Ok(());
     }
 
-    let url = format!("index.html?window=progress&id={}", id);
+    let url = format!("index.html?window=toast&id={}", id);
     let title = format!("TORI Download - {}", job.filename);
 
-    let _win = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(url.into()))
-        .title(title)
-        .inner_size(800.0, 500.0)
-        .min_inner_size(600.0, 420.0)
-        .always_on_top(true)
-        .resizable(true)
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
+            .title(title)
+            .inner_size(490.0, 96.0)
+            .always_on_top(true)
+            .decorations(false)
+            .transparent(true)
+            .skip_taskbar(true)
+            .focused(false)
+            .resizable(false)
+            .shadow(false);
+
+    if let Ok(Some(monitor)) = app.primary_monitor() {
+        let size = monitor.size();
+        let scale = monitor.scale_factor();
+        let mon_pos = monitor.position();
+        let mon_w = size.width as f64 / scale;
+        let mon_h = size.height as f64 / scale;
+        let x = mon_pos.x as f64 / scale + mon_w - 490.0 - 20.0;
+        let y = mon_pos.y as f64 / scale + mon_h - 96.0 - 58.0;
+        builder = builder.position(x, y);
+    }
+
+    let _win = builder
         .build()
         .map_err(|e| format!("Failed to create progress window: {}", e))?;
 
@@ -461,7 +493,37 @@ pub async fn open_progress_window(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    open_progress_window_internal(&app, &state.manager, &id).await
+    open_progress_window_internal(&app, &state.manager, &id, true).await
+}
+
+#[tauri::command]
+pub async fn update_toast_bounds(
+    width: f64,
+    height: f64,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("progress_toast") {
+        let _ = win.set_size(tauri::LogicalSize::new(width, height));
+        if let Ok(Some(monitor)) = win.current_monitor() {
+            let size = monitor.size();
+            let scale = monitor.scale_factor();
+            let mon_pos = monitor.position();
+            let mon_w = size.width as f64 / scale;
+            let mon_h = size.height as f64 / scale;
+            let x = mon_pos.x as f64 / scale + mon_w - width - 20.0;
+            let y = mon_pos.y as f64 / scale + mon_h - height - 58.0;
+            let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn hide_toast_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("progress_toast") {
+        let _ = win.hide();
+    }
+    Ok(())
 }
 
 fn get_default_download_path() -> PathBuf {

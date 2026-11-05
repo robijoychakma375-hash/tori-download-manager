@@ -1,0 +1,295 @@
+/* TORI Download Toast — Exact reproduction of design/tori-final/tori-download-toast.html */
+
+html.toast-mode,
+html.toast-mode body,
+html.toast-mode #root {
+  background: transparent !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.toast-host-container {
+  box-sizing: border-box;
+  padding: 8px 10px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  justify-content: flex-end;
+  background: transparent !important;
+  user-select: none;
+  width: 100%;
+}
+
+.toast {
+  position: relative;
+  width: 470px;
+  border-radius: 22px;
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--bline), 0 6px 18px rgba(0, 0, 0, 0.28);
+  box-sizing: border-box;
+}
+
+.toast.open {
+  border-radius: 16px;
+}
+
+.toast .row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 12px 14px;
+  box-sizing: border-box;
+}
+
+.toast .rg {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  flex: none;
+}
+
+.toast .rg svg.r {
+  width: 52px;
+  height: 52px;
+  transform: rotate(-90deg);
+  display: block;
+}
+
+.toast .rt {
+  fill: none;
+  stroke: var(--pline);
+  stroke-width: 4.5;
+}
+
+.toast .rp {
+  fill: none;
+  stroke: var(--rc);
+  stroke-width: 4.5;
+  stroke-linecap: round;
+}
+
+.toast .chip {
+  position: absolute;
+  left: 11px;
+  top: 11px;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.4);
+}
+
+.toast .chip svg {
+  width: 17px;
+  height: 17px;
+  stroke: #fff;
+  fill: none;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  display: block;
+}
+
+.toast .bd {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--rc);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+.toast .bd svg {
+  width: 10px;
+  height: 10px;
+  stroke: #fff;
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  display: block;
+}
+
+.toast .tx {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.toast .tx b {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--txt);
+}
+
+.toast .tx span {
+  display: block;
+  color: var(--mut);
+  font-size: 11.5px;
+  margin-top: 2px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.toast .eta {
+  text-align: right;
+  flex: none;
+  min-width: 58px;
+  cursor: pointer;
+}
+
+.toast .eta b {
+  display: block;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--rc);
+  font-variant-numeric: tabular-nums;
+}
+
+.toast .eta span {
+  display: block;
+  color: var(--mut);
+  font-size: 10.5px;
+  margin-top: 3px;
+}
+
+.toast .ib {
+  all: unset;
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--pline);
+  cursor: pointer;
+  color: var(--txt);
+}
+
+.toast .ib:hover {
+  background: color-mix(in srgb, var(--rc) 22%, transparent);
+}
+
+.toast .ib.pr {
+  background: linear-gradient(var(--a1), var(--a2));
+  color: #fff;
+  box-shadow: 0 2px 8px rgb(var(--ar) / 0.4);
+}
+
+.toast .ib svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  display: block;
+}
+
+.toast .cx {
+  all: unset;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--mut);
+  cursor: pointer;
+}
+
+.toast .cx:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.toast .cx svg {
+  width: 9px;
+  height: 9px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
+  display: block;
+}
+
+.toast .dr {
+  display: none;
+  padding: 0 18px 16px;
+  margin-top: -2px;
+}
+
+.toast.open .dr {
+  display: block;
+}
+
+.toast .ms {
+  display: flex;
+  gap: 3px;
+  height: 6px;
+  margin: 4px 0 10px;
+}
+
+.toast .ms i {
+  flex: 1;
+  border-radius: 3px;
+  background: var(--pline);
+  position: relative;
+  overflow: hidden;
+}
+
+.toast .ms b {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--rc);
+}
+
+.toast .dr div.l {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  min-height: 24px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.toast .dr .l span {
+  color: var(--mut);
+}
+
+.toast .dr .l b {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--txt);
+}
+
+.toast-more {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 5px 14px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--mut);
+  box-shadow: 0 0 0 1px var(--bline), 0 4px 10px rgba(0, 0, 0, 0.15);
+  cursor: default;
+}

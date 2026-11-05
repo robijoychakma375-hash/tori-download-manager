@@ -347,6 +347,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     />
                   </div>
                 </div>
+
+                <div className="sr">
+                  <div>
+                    <b>Show Download Popup</b>
+                    <span className="sub">
+                      {settings.showDownloadPopup === 'never'
+                        ? 'Never show popup window'
+                        : settings.showDownloadPopup === 'on_start'
+                        ? 'Show on start only'
+                        : 'Always show floating toast during download'}
+                    </span>
+                  </div>
+                  <div className="sc">
+                    <select
+                      className="sl"
+                      value={settings.showDownloadPopup || 'always'}
+                      onChange={(e) =>
+                        update('showDownloadPopup', e.target.value as 'always' | 'on_start' | 'never')
+                      }
+                      style={{ width: 130 }}
+                    >
+                      <option value="always">Always</option>
+                      <option value="on_start">On start only</option>
+                      <option value="never">Never</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
               <div className="scard">
