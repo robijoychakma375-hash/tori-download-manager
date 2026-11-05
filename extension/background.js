@@ -223,6 +223,42 @@ function normalizePlatformUrl(rawUrl) {
 }
 
 /**
+ * Sanitizes URLs for diagnostic logging, removing sensitive tokens, keys, signatures, and cookies
+ */
+function sanitizeLogUrl(rawUrl) {
+  if (!rawUrl) return '';
+  try {
+    const u = new URL(rawUrl);
+    const sensitive = ['token', 'auth', 'sig', 'signature', 'key', 'pass', 'session', 'hmac', 'secret', 'oe', 'oh'];
+    for (const p of sensitive) {
+      if (u.searchParams.has(p)) {
+        u.searchParams.set(p, '[redacted]');
+      }
+    }
+    return u.toString();
+  } catch (_) {
+    return (rawUrl || '').split('?')[0];
+  }
+}
+
+/**
+ * Structured diagnostic logger ensuring NO secrets/tokens/credentials are ever emitted
+ */
+function logSanitizedDiagnostic(stage, details) {
+  const sanitizedUrl = sanitizeLogUrl(details.url);
+  console.log(`[TORI Diagnostic] [${stage}]`, {
+    requestId: details.requestId || 'n/a',
+    url: sanitizedUrl,
+    method: details.method || 'GET',
+    extractor: details.extractor || 'n/a',
+    protocol: details.protocol || 'n/a',
+    durationMs: details.durationMs || 0,
+    outcome: details.outcome || 'pending',
+    errorCategory: details.errorCategory || null,
+  });
+}
+
+/**
  * Determine endpoint-specific timeout deadline
  */
 function getEndpointTimeout(endpoint, customTimeout = null) {
@@ -292,7 +328,7 @@ async function callDesktopApi(
     if (err.name === 'AbortError') {
       code = 'TIMEOUT';
       if (endpoint.startsWith('/api/v1/media/resolve')) {
-        errorMsg = 'Media resolution timed out. The server or platform took longer than 35s to respond.';
+        errorMsg = `Media resolution timed out (${Math.round(timeoutDuration / 1000)}s). The server or platform took too long to respond.`;
       } else if (endpoint.startsWith('/api/v1/ping') || endpoint.startsWith('/api/v1/status')) {
         errorMsg = 'Desktop health check timed out (4s). Is TORI running?';
       } else {
@@ -1001,8 +1037,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     const targetUrl = norm.url || rawUrl;
+    const isPlatform = isManagedPlatform(targetUrl) || norm.platform !== 'generic';
     const correlationId = message.correlation_id || ('req_res_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
-    console.log(`[TORI Background] Resolving media: ${targetUrl} (corr: ${correlationId}, gen: ${generation})`);
+    const customTimeout = isPlatform ? 32000 : 12000;
+    const startTime = Date.now();
+
+    logSanitizedDiagnostic('RESOLVE_START', {
+      requestId: correlationId,
+      url: targetUrl,
+      method: 'POST',
+      protocol: isPlatform ? 'platform' : 'generic',
+    });
 
     // Deduplicate in-flight resolution requests for the same URL
     if (activeResolutions.has(targetUrl)) {
@@ -1016,8 +1061,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     const resolutionPromise = (async () => {
-      const httpRes = await callDesktopApi('/api/v1/media/resolve', 'POST', { url: targetUrl });
+      const tabId = sender.tab?.id || message.tabId;
+      const cachedStreams = tabId ? (tabMediaCache.get(tabId) || []) : [];
+      const streamingCandidate = cachedStreams.find((c) => c.type === 'hls' || c.type === 'dash');
+
+      // If we have an intercepted stream manifest on a generic site, probe it directly!
+      if (!isPlatform && streamingCandidate && streamingCandidate.url) {
+        logSanitizedDiagnostic('RESOLVE_STREAM_PROBE', {
+          requestId: correlationId,
+          url: streamingCandidate.url,
+          protocol: streamingCandidate.type,
+        });
+        const streamRes = await callDesktopApi('/api/v1/media/resolve', 'POST', { url: streamingCandidate.url }, 8000);
+        if (streamRes.ok && streamRes.data && Array.isArray(streamRes.data.formats) && streamRes.data.formats.length > 0) {
+          logSanitizedDiagnostic('RESOLVE_SUCCESS', {
+            requestId: correlationId,
+            url: streamingCandidate.url,
+            extractor: streamRes.data.extractor,
+            durationMs: Date.now() - startTime,
+            outcome: 'Formats Available',
+          });
+          chrome.runtime.sendMessage({
+            action: 'MEDIA_RESOLVED',
+            url: targetUrl,
+            rawUrl,
+            status: 'ok',
+            metadata: streamRes.data,
+            generation,
+          }).catch(() => {});
+          return { status: 'ok', metadata: streamRes.data };
+        }
+      }
+
+      const httpRes = await callDesktopApi('/api/v1/media/resolve', 'POST', { url: targetUrl }, customTimeout);
+      const elapsed = Date.now() - startTime;
+
       if (httpRes.ok && httpRes.data) {
+        logSanitizedDiagnostic('RESOLVE_SUCCESS', {
+          requestId: correlationId,
+          url: targetUrl,
+          extractor: httpRes.data.extractor || 'yt-dlp',
+          durationMs: elapsed,
+          outcome: 'Formats Available',
+        });
         chrome.runtime.sendMessage({
           action: 'MEDIA_RESOLVED',
           url: targetUrl,
@@ -1029,7 +1115,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return { status: 'ok', metadata: httpRes.data };
       }
 
-      let code = httpRes.code || 'RESOLVER_ERROR';
+      let code = httpRes.data?.error_category || httpRes.code || 'RESOLVER_ERROR';
       let message = httpRes.data?.message || httpRes.error || 'Media resolution failed';
       if (httpRes.status === 401) {
         code = 'UNAUTHORIZED';
@@ -1040,6 +1126,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } else if (httpRes.status === 400) {
         code = 'INVALID_REQUEST';
       }
+
+      logSanitizedDiagnostic('RESOLVE_FAILED', {
+        requestId: correlationId,
+        url: targetUrl,
+        durationMs: elapsed,
+        outcome: code,
+        errorCategory: code,
+      });
 
       chrome.runtime.sendMessage({
         action: 'MEDIA_RESOLUTION_FAILED',

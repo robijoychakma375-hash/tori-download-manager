@@ -7,6 +7,7 @@ use crate::error::{EngineError, Result};
 use crate::resolver::discovery::{find_ffmpeg, find_yt_dlp};
 
 pub const DEFAULT_RESOLVER_TIMEOUT: Duration = Duration::from_secs(30);
+pub const GENERIC_RESOLVER_TIMEOUT: Duration = Duration::from_secs(10);
 pub const MAX_JSON_OUTPUT_BYTES: usize = 12 * 1024 * 1024; // 12 MB max
 
 /// Invokes `yt-dlp` to dump structured JSON metadata for a media URL.
@@ -268,6 +269,7 @@ pub fn clean_ytdlp_error(raw_stderr: &str) -> String {
         || lower.contains("this video is drm protected")
         || lower.contains("widevine")
         || lower.contains("playready")
+        || lower.contains("fairplay")
     {
         return "This media is protected by Digital Rights Management (DRM) and cannot be downloaded.".to_string();
     }

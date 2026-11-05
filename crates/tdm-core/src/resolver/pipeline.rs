@@ -4,7 +4,10 @@ use std::time::Duration;
 use url::Url;
 
 use crate::error::{EngineError, Result};
-use crate::resolver::extractor::{execute_yt_dlp_dump, execute_yt_dlp_playlist_dump};
+use crate::resolver::extractor::{
+    execute_yt_dlp_dump, execute_yt_dlp_playlist_dump, DEFAULT_RESOLVER_TIMEOUT,
+    GENERIC_RESOLVER_TIMEOUT,
+};
 use crate::resolver::models::{
     DownloadCapability, FilesizeType, MediaMetadata, PlaylistItem, PlaylistMetadata,
     ResolvedMediaFormat,
@@ -68,8 +71,14 @@ impl MediaResolver {
         // 4. Normalize platform media URLs for universal extractor (e.g. Facebook /reels/<id> -> /reel/<id>)
         let target_url = normalize_platform_media_url(url_str)?;
 
-        // 5. Universal Platform Extraction via yt-dlp
-        let json_val = execute_yt_dlp_dump(&target_url, None).await?;
+        // 5. Universal Platform Extraction via yt-dlp with adaptive timeouts
+        let is_platform = is_known_platform_domain(&target_url);
+        let timeout = if is_platform {
+            DEFAULT_RESOLVER_TIMEOUT
+        } else {
+            GENERIC_RESOLVER_TIMEOUT
+        };
+        let json_val = execute_yt_dlp_dump(&target_url, Some(timeout)).await?;
         self.parse_ytdlp_metadata(&target_url, &json_val)
     }
 
@@ -1353,4 +1362,31 @@ pub fn normalize_platform_media_url(raw_url: &str) -> Result<String> {
     }
 
     Ok(raw_url.to_string())
+}
+
+/// Identifies whether a URL belongs to a dedicated video platform extractor vs an arbitrary webpage.
+pub fn is_known_platform_domain(url_str: &str) -> bool {
+    let lower = url_str.to_lowercase();
+    if let Ok(parsed) = url::Url::parse(&lower) {
+        if let Some(host) = parsed.host_str() {
+            let h = host.trim_start_matches("www.");
+            return h.contains("youtube.com")
+                || h.contains("youtu.be")
+                || h.contains("facebook.com")
+                || h.contains("fb.watch")
+                || h.contains("instagram.com")
+                || h.contains("tiktok.com")
+                || h.contains("twitter.com")
+                || h.contains("x.com")
+                || h.contains("reddit.com")
+                || h.contains("vimeo.com")
+                || h.contains("dailymotion.com")
+                || h.contains("twitch.tv")
+                || h.contains("soundcloud.com")
+                || h.contains("bilibili.com")
+                || h.contains("rumble.com")
+                || h.contains("streamable.com");
+        }
+    }
+    false
 }

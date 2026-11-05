@@ -394,22 +394,32 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function renderResolutionError(errMsg, tab) {
     stopResolutionPolling();
-    mediaCountHeader.textContent = 'Media Unavailable';
-    mediaList.innerHTML = `
-      <div class="empty-state" style="padding:16px 12px;text-align:center">
-        <div style="font-weight:600;margin-bottom:4px;color:#e5484d">Resolution Failed</div>
-        <div style="font-size:11px;color:var(--mut);line-height:1.4;margin-bottom:12px">${escapeHtml(errMsg)}</div>
-        <button class="btn mb def" id="btnRetryResolution" style="padding:6px 16px">
-          <svg viewBox="0 0 24 24" style="width:14px;height:14px;margin-right:6px"><path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
-          Retry Resolution
-        </button>
-      </div>`;
-    const btnRetry = document.getElementById('btnRetryResolution');
-    if (btnRetry) {
-      btnRetry.addEventListener('click', () => {
-        triggerManualResolve(tab);
-      });
-    }
+    // Check if background webRequest intercepted direct stream candidates for this tab
+    chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
+      const items = res?.media || [];
+      if (items.length > 0) {
+        mediaCountHeader.textContent = `Captured Streams · ${items.length}`;
+        renderDirectItems(items, tab);
+        return;
+      }
+
+      mediaCountHeader.textContent = 'Media Unavailable';
+      mediaList.innerHTML = `
+        <div class="empty-state" style="padding:16px 12px;text-align:center">
+          <div style="font-weight:600;margin-bottom:4px;color:#e5484d">Resolution Failed</div>
+          <div style="font-size:11px;color:var(--mut);line-height:1.4;margin-bottom:12px">${escapeHtml(errMsg)}</div>
+          <button class="btn mb def" id="btnRetryResolution" style="padding:6px 16px">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;margin-right:6px"><path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+            Retry Resolution
+          </button>
+        </div>`;
+      const btnRetry = document.getElementById('btnRetryResolution');
+      if (btnRetry) {
+        btnRetry.addEventListener('click', () => {
+          triggerManualResolve(tab);
+        });
+      }
+    });
   }
 
   function triggerManualResolve(tab) {
@@ -427,17 +437,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (chrome.runtime.lastError) {}
     });
 
+    const isPlatform = isManagedPlatform(tab.url);
+    const timeoutMs = isPlatform ? 25000 : 13000;
+
     // Hard safety timeout for popup manual resolve
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      renderResolutionError('Media resolution timed out. Remote platform took longer than 25s to respond.', tab);
-    }, 25000);
+      renderResolutionError(`Media resolution timed out (${Math.round(timeoutMs / 1000)}s). Remote host took too long to respond.`, tab);
+    }, timeoutMs);
 
     const norm = normalizePlatformUrl(tab.url);
     const targetUrl = norm.url || tab.url;
 
-    chrome.runtime.sendMessage({ action: 'RESOLVE_MEDIA', url: targetUrl }, (rRes) => {
+    chrome.runtime.sendMessage({ action: 'RESOLVE_MEDIA', url: targetUrl, tabId: tab.id }, (rRes) => {
       clearTimeout(timer);
       if (timedOut) return;
       if (rRes && rRes.status === 'ok' && rRes.metadata && Array.isArray(rRes.metadata.formats) && rRes.metadata.formats.length > 0) {
@@ -468,7 +481,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // 1. Try querying active media info from content script
       chrome.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_MEDIA_INFO' }, (info) => {
         if (!chrome.runtime.lastError && info && info.ok) {
-          if (info.isResolving) {
+          if (info.isResolving && !info.hasAnyCandidates) {
             mediaCountHeader.textContent = 'Resolving media on page…';
             mediaList.innerHTML = `
               <div class="empty-state" style="padding:20px 12px;text-align:center">

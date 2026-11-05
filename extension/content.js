@@ -469,17 +469,53 @@ function normalizePlatformUrl(rawUrl) {
 
   // Attach overlay to HTML5 video element
   function attachVideoOverlay(videoEl) {
-    if (videoEl.hasAttribute('data-tori-attached')) return;
+    if (!videoEl || videoEl.hasAttribute('data-tori-attached')) return;
     if (isSiteExcluded() || !settings.pill) return;
+
+    // In embedded iframes, skip tiny frames like ad widgets (< 160x120)
+    if (window !== window.top) {
+      if (window.innerWidth < 160 || window.innerHeight < 120) {
+        return;
+      }
+    }
 
     // Must have reasonable dimensions
     const rect = videoEl.getBoundingClientRect();
-    if (rect.width < 120 || rect.height < 90) return;
+    if (rect.width < 120 || rect.height < 90) {
+      if (!videoEl.__toriResizeObserved) {
+        videoEl.__toriResizeObserved = true;
+        const recheck = () => {
+          const r = videoEl.getBoundingClientRect();
+          if (r.width >= 120 && r.height >= 90) {
+            videoEl.removeEventListener('loadedmetadata', recheck);
+            videoEl.removeEventListener('playing', recheck);
+            videoEl.removeEventListener('canplay', recheck);
+            if (videoEl.__toriResizeObs) {
+              videoEl.__toriResizeObs.disconnect();
+              delete videoEl.__toriResizeObs;
+            }
+            attachVideoOverlay(videoEl);
+          }
+        };
+        videoEl.addEventListener('loadedmetadata', recheck, { once: true });
+        videoEl.addEventListener('playing', recheck, { once: true });
+        videoEl.addEventListener('canplay', recheck, { once: true });
+        if (typeof ResizeObserver === 'function') {
+          const ro = new ResizeObserver(() => recheck());
+          ro.observe(videoEl);
+          videoEl.__toriResizeObs = ro;
+        }
+      }
+      return;
+    }
 
     // Anchor to player container if available to avoid stacking context clipping
     const anchor = videoEl.closest('.html5-video-player') ||
                    videoEl.closest('.video-stream-container') ||
                    videoEl.closest('.player-container') ||
+                   videoEl.closest('.jwplayer') ||
+                   videoEl.closest('.video-js') ||
+                   videoEl.closest('.vjs-tech')?.parentElement ||
                    videoEl.parentElement;
     if (!anchor) return;
 
@@ -557,22 +593,34 @@ function normalizePlatformUrl(rawUrl) {
       const thisGen = currentGeneration;
       const targetUrl = currentMediaIdentity?.canonicalUrl || currentMediaIdentity?.rawUrl || window.location.href;
       const reqId = 'req_res_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+      const isPlatform = isSupportedPlatform(window.location.href) || isManagedPlatform(window.location.hostname);
+      const resolutionTimeoutMs = isPlatform ? 22000 : 12000;
+      const startTime = Date.now();
+
+      // Sanitized diagnostic log
+      console.log(`[TORI Diagnostic] Resolve started: ID=${reqId}, Host=${window.location.hostname}, Frame=${window === window.top ? 'top' : 'iframe'}, Platform=${isPlatform ? 'managed' : 'generic'}`);
 
       if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
-      // Hard bounded 20s timeout ensures UI ALWAYS transitions to a terminal state
+      // Hard bounded timeout ensures UI ALWAYS transitions to a terminal state
       resolveTimeoutTimer = setTimeout(() => {
         if (isResolving && thisGen === currentGeneration) {
-          console.warn(`[TORI Content] Resolution timed out for ${targetUrl} (gen ${thisGen})`);
+          const elapsed = Date.now() - startTime;
+          console.warn(`[TORI Diagnostic] Resolution timed out: ID=${reqId}, Elapsed=${elapsed}ms`);
           isResolving = false;
-          resolveError = 'Media resolution timed out. Remote platform took longer than 20s to respond.';
+          resolveError = `Media resolution timed out (${Math.round(resolutionTimeoutMs / 1000)}s). Remote host took too long to respond.`;
           updatePillTag();
           renderPanel();
         }
-      }, 20000);
+      }, resolutionTimeoutMs);
 
       chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA' }, (mRes) => {
         if (thisGen !== currentGeneration) return;
         tabMediaCandidates = mRes?.media || [];
+        // If on generic site and network candidates are captured, make them visible immediately
+        if (tabMediaCandidates.length > 0 && !isPlatform) {
+          updatePillTag();
+          renderPanel();
+        }
       });
 
       chrome.runtime.sendMessage(
@@ -584,11 +632,14 @@ function normalizePlatformUrl(rawUrl) {
             return;
           }
           isResolving = false;
+          const elapsed = Date.now() - startTime;
           if (rRes && rRes.status === 'ok' && rRes.metadata) {
             resolvedMeta = rRes.metadata;
             resolveError = null;
+            console.log(`[TORI Diagnostic] Resolve succeeded: ID=${reqId}, Extractor=${resolvedMeta.extractor || 'unknown'}, Formats=${resolvedMeta.formats?.length || 0}, Elapsed=${elapsed}ms`);
           } else {
             resolveError = rRes?.message || 'Protected, restricted, or unsupported stream.';
+            console.log(`[TORI Diagnostic] Resolve terminal failure: ID=${reqId}, Code=${rRes?.code || 'ERROR'}, Message=${resolveError}, Elapsed=${elapsed}ms`);
           }
           updatePillTag();
           renderPanel();
@@ -890,7 +941,7 @@ function normalizePlatformUrl(rawUrl) {
       if (lower.includes('timed out') || lower.includes('timeout')) {
         return {
           title: 'Resolution Timed Out',
-          desc: 'Media resolution timed out. The server or platform took longer than 35s to respond.',
+          desc: e.includes('(') ? e : 'Media resolution timed out. Remote platform took longer than expected to respond.',
           hint: 'Please check your connection and retry.',
           color: '#f59e0b',
         };
@@ -936,11 +987,13 @@ function normalizePlatformUrl(rawUrl) {
         lower.includes('drm') ||
         lower.includes('widevine') ||
         lower.includes('playready') ||
+        lower.includes('fairplay') ||
         lower.includes('encrypted') ||
-        lower.includes('plex.tv')
+        lower.includes('plex.tv') ||
+        lower.includes('protected')
       ) {
         return {
-          title: 'Protected Streaming Content (DRM)',
+          title: 'Protected Media (DRM)',
           desc: lower.includes('plex.tv')
             ? 'watch.plex.tv content is DRM-protected and not licensed for offline download.'
             : 'This stream is encrypted by digital rights management (DRM) or licensing restrictions.',
@@ -952,27 +1005,63 @@ function normalizePlatformUrl(rawUrl) {
         lower.includes('logged-in') ||
         lower.includes('cookies') ||
         lower.includes('login') ||
-        lower.includes('sign in')
+        lower.includes('sign in') ||
+        lower.includes('forbidden') ||
+        lower.includes('403') ||
+        lower.includes('access restricted') ||
+        lower.includes('access denied') ||
+        lower.includes('private video')
       ) {
         return {
-          title: 'Platform Login Required',
-          desc: e,
-          hint: 'This content requires account authentication on the host platform.',
+          title: 'Access Restricted',
+          desc: e || 'Remote server denied access (HTTP 403 or platform account login required).',
+          hint: 'Log in to the host platform or verify your account permissions.',
           color: '#f59e0b',
         };
       }
-      if (e) {
+      if (
+        lower.includes('unsupported extractor') ||
+        lower.includes('unsupported url') ||
+        lower.includes('no suitable extractor') ||
+        lower.includes('no supported media extractor')
+      ) {
         return {
-          title: 'No Downloadable Stream Detected',
-          desc: e,
-          hint: 'No direct media, HLS/DASH manifest, or extractor format was found.',
+          title: 'Unsupported Extractor',
+          desc: 'No dedicated media extractor is available for this webpage URL.',
+          hint: 'Play the video in your browser to capture its direct stream.',
+          color: '#8e8e93',
+        };
+      }
+      if (
+        lower.includes('connection lost') ||
+        lower.includes('connection reset') ||
+        lower.includes('network') ||
+        lower.includes('econnreset')
+      ) {
+        return {
+          title: 'Network Error',
+          desc: 'Connection interrupted or remote server closed the connection.',
+          hint: 'Check your network connection and retry.',
+          color: '#e5484d',
+        };
+      }
+      if (
+        lower.includes('no downloadable media') ||
+        lower.includes('no video formats') ||
+        lower.includes('no formats found') ||
+        lower.includes('no direct media')
+      ) {
+        return {
+          title: 'No Downloadable Media',
+          desc: e || 'No direct media, HLS/DASH manifest, or extractor format was found.',
+          hint: 'Play the video in your browser to allow network stream capture.',
           color: '#8e8e93',
         };
       }
       return {
-        title: 'No Media Stream Detected',
-        desc: 'No direct media stream or manifest detected on this player.',
-        hint: 'Use the extension popup to resolve page media.',
+        title: 'No Downloadable Media',
+        desc: e || 'No direct media stream or manifest detected on this player.',
+        hint: 'Play the video in your browser to capture the stream.',
         color: '#8e8e93',
       };
     }
@@ -984,7 +1073,7 @@ function normalizePlatformUrl(rawUrl) {
       const currentItem = currentList[selectedIdx];
 
       let listHtml = '';
-      if (isResolving) {
+      if (isResolving && !hasAnyCandidates) {
         listHtml = `
           <div class="tori-empty-box" style="padding:28px 16px">
             <div class="tori-spin"></div>
@@ -1418,6 +1507,31 @@ function normalizePlatformUrl(rawUrl) {
     });
   });
 
+  // Recursively collect all videos including inside open shadowRoot DOM trees
+  function getAllVideos(root = document) {
+    const list = [];
+    if (!root) return list;
+    try {
+      if (typeof root.querySelectorAll === 'function') {
+        const vids = root.querySelectorAll('video');
+        for (let i = 0; i < vids.length; i++) {
+          list.push(vids[i]);
+        }
+        const allElements = root.querySelectorAll('*');
+        for (let i = 0; i < allElements.length; i++) {
+          const el = allElements[i];
+          if (el.shadowRoot) {
+            const shadowVids = getAllVideos(el.shadowRoot);
+            for (let j = 0; j < shadowVids.length; j++) {
+              list.push(shadowVids[j]);
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return list;
+  }
+
   // Scan document for media elements
   function scanForMedia() {
     if (isSiteExcluded()) return;
@@ -1429,7 +1543,7 @@ function normalizePlatformUrl(rawUrl) {
       }
     });
 
-    const videos = document.querySelectorAll('video');
+    const videos = getAllVideos(document);
     videos.forEach((video) => {
       attachVideoOverlay(video);
     });

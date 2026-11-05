@@ -541,6 +541,80 @@ async fn handle_media_status(
     Json(tdm_core::resolver::get_resolver_status())
 }
 
+pub fn categorize_resolver_error(
+    err: &tdm_core::EngineError,
+) -> (StatusCode, &'static str, String) {
+    if let tdm_core::EngineError::InvalidUrl(msg) = err {
+        return (StatusCode::BAD_REQUEST, "invalid_url", msg.clone());
+    }
+
+    let msg = match err {
+        tdm_core::EngineError::Other(m) => m.clone(),
+        e => e.to_string(),
+    };
+    let lower = msg.to_lowercase();
+
+    if lower.contains("drm")
+        || lower.contains("protected")
+        || lower.contains("plex.tv")
+        || lower.contains("widevine")
+        || lower.contains("playready")
+        || lower.contains("fairplay")
+    {
+        return (StatusCode::UNPROCESSABLE_ENTITY, "protected_media", msg);
+    }
+
+    if lower.contains("unsupported url")
+        || lower.contains("no supported media extractor")
+        || lower.contains("no suitable extractor")
+        || lower.contains("unsupported extractor")
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_extractor",
+            msg,
+        );
+    }
+
+    if lower.contains("private video")
+        || lower.contains("sign in")
+        || lower.contains("login required")
+        || lower.contains("requires authentication")
+        || lower.contains("forbidden")
+        || lower.contains("403")
+        || lower.contains("members-only")
+        || lower.contains("age-restricted")
+    {
+        return (StatusCode::FORBIDDEN, "access_restricted", msg);
+    }
+
+    if lower.contains("timed out") || lower.contains("timeout") {
+        return (StatusCode::GATEWAY_TIMEOUT, "timed_out", msg);
+    }
+
+    if lower.contains("connection")
+        || lower.contains("network")
+        || lower.contains("unreachable")
+        || lower.contains("reset")
+        || lower.contains("econnreset")
+    {
+        return (StatusCode::BAD_GATEWAY, "network_error", msg);
+    }
+
+    if lower.contains("no video formats")
+        || lower.contains("no formats found")
+        || lower.contains("no downloadable media")
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "no_downloadable_media",
+            msg,
+        );
+    }
+
+    (StatusCode::INTERNAL_SERVER_ERROR, "other_error", msg)
+}
+
 async fn handle_media_resolve(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -571,16 +645,14 @@ async fn handle_media_resolve(
     match state.resolver.resolve(raw_url).await {
         Ok(metadata) => Ok(Json(metadata)),
         Err(e) => {
-            let (status, msg) = match e {
-                tdm_core::EngineError::InvalidUrl(msg) => (StatusCode::BAD_REQUEST, msg),
-                tdm_core::EngineError::Other(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg),
-                err => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-            };
+            let (status, category, msg) = categorize_resolver_error(&e);
             Err((
                 status,
                 Json(serde_json::json!({
                     "status": "error",
-                    "message": msg
+                    "error_category": category,
+                    "message": msg,
+                    "url": raw_url
                 })),
             ))
         }
