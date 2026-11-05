@@ -258,9 +258,21 @@ pub async fn execute_yt_dlp_playlist_dump(
 /// Categorizes and cleans yt-dlp stderr for user-facing error reporting.
 pub fn clean_ytdlp_error(raw_stderr: &str) -> String {
     let lower = raw_stderr.to_lowercase();
-    if lower.contains("drm protected") || lower.contains("this video is drm protected") {
-        return "This video is protected by Digital Rights Management (DRM) and cannot be downloaded.".to_string();
+
+    // Specific platform restrictions (Plex, DRM, copy protection)
+    if lower.contains("watch.plex.tv") || lower.contains("plex.tv") {
+        return "watch.plex.tv content is DRM-protected and not licensed for offline download."
+            .to_string();
     }
+    if lower.contains("drm protected")
+        || lower.contains("this video is drm protected")
+        || lower.contains("widevine")
+        || lower.contains("playready")
+    {
+        return "This media is protected by Digital Rights Management (DRM) and cannot be downloaded.".to_string();
+    }
+
+    // Access control & Authorization
     if lower.contains("private video") || lower.contains("this video is private") {
         return "This media is private and cannot be accessed without authorization.".to_string();
     }
@@ -270,11 +282,57 @@ pub fn clean_ytdlp_error(raw_stderr: &str) -> String {
     if lower.contains("members-only") || lower.contains("join this channel") {
         return "This media requires a channel membership or paid subscription.".to_string();
     }
+    if lower.contains("login required")
+        || lower.contains("sign in to facebook")
+        || lower.contains("log in to continue")
+        || lower.contains("requires authentication")
+    {
+        return "Authentication required on the host platform. This media is restricted to logged-in users.".to_string();
+    }
+    if lower.contains("http error 403")
+        || lower.contains("403: forbidden")
+        || lower.contains("access denied")
+    {
+        return "Remote server denied access (HTTP 403 Forbidden).".to_string();
+    }
+
+    // Rate limiting & Network connectivity
+    if lower.contains("http error 429")
+        || lower.contains("rate limit")
+        || lower.contains("too many requests")
+    {
+        return "Rate limited by the host platform (HTTP 429). Please wait before retrying."
+            .to_string();
+    }
+    if lower.contains("connection lost")
+        || lower.contains("connection reset")
+        || lower.contains("connection timed out")
+        || lower.contains("network is unreachable")
+        || lower.contains("econnreset")
+    {
+        return "Connection interrupted. Network or remote server closed the connection."
+            .to_string();
+    }
+
+    // Expiry & Resource availability
+    if lower.contains("signature has expired")
+        || lower.contains("url expired")
+        || lower.contains("token expired")
+        || lower.contains("expired token")
+    {
+        return "Media URL expired. Please refresh the stream to obtain a new token.".to_string();
+    }
+    if lower.contains("format not available") || lower.contains("requested format not available") {
+        return "Requested media format is unavailable on the host server.".to_string();
+    }
+    if lower.contains("video unavailable") || lower.contains("media unavailable") {
+        return "This media is unavailable or has been removed by the author.".to_string();
+    }
+    if lower.contains("no video formats") || lower.contains("no formats found") {
+        return "No downloadable media found on this page.".to_string();
+    }
     if lower.contains("unsupported url") || lower.contains("no suitable extractor") {
         return "No supported media extractor found for this webpage URL.".to_string();
-    }
-    if lower.contains("video unavailable") {
-        return "This media is unavailable or has been removed by the author.".to_string();
     }
 
     // Return the last relevant ERROR line if found

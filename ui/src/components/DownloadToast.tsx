@@ -308,13 +308,17 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
           };
         });
       } else if (payload.type === 'StateChanged') {
-        const { id, state } = payload.payload;
+        const { id, state, error } = payload.payload;
         setJobs((prev) => {
           const existing = prev[id];
           if (!existing) return prev;
           return {
             ...prev,
-            [id]: { ...existing, state },
+            [id]: {
+              ...existing,
+              state,
+              error_message: error !== undefined && error !== null ? error : existing.error_message,
+            },
           };
         });
       } else if (payload.type === 'OpenProgressWindow') {

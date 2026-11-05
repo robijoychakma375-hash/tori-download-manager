@@ -276,12 +276,59 @@ function extractFilenameFromUrl(rawUrl) {
   return 'media_file';
 }
 
+function isTransientCdnUrl(url) {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  return (
+    lower.includes('.fbcdn.net') ||
+    lower.includes('.cdninstagram.com') ||
+    lower.includes('.tiktokcdn.com') ||
+    lower.includes('.googlevideo.com') ||
+    lower.includes('video.twimg.com') ||
+    (lower.includes('oe=') && lower.includes('oh='))
+  );
+}
+
+function isManagedPlatform(urlOrHost) {
+  if (!urlOrHost) return false;
+  const lower = urlOrHost.toLowerCase();
+  return (
+    lower.includes('facebook.com') ||
+    lower.includes('fb.watch') ||
+    lower.includes('instagram.com') ||
+    lower.includes('tiktok.com') ||
+    lower.includes('youtube.com') ||
+    lower.includes('youtu.be') ||
+    lower.includes('twitter.com') ||
+    lower.includes('x.com') ||
+    lower.includes('reddit.com')
+  );
+}
+
 /**
  * Classify media item
  */
 function classifyMedia(url, mimeType) {
   const lowerUrl = url.toLowerCase();
   const lowerMime = (mimeType || '').toLowerCase();
+
+  // Check DRM and platform protection
+  if (lowerUrl.includes('watch.plex.tv') || lowerUrl.includes('plex.tv')) {
+    return {
+      type: 'protected',
+      format: 'DRM Protected',
+      supported: false,
+      notice: 'watch.plex.tv content is DRM-protected and not licensed for offline download',
+    };
+  }
+  if (lowerUrl.includes('widevine') || lowerUrl.includes('playready') || lowerUrl.includes('fairplay')) {
+    return {
+      type: 'protected',
+      format: 'DRM Protected',
+      supported: false,
+      notice: 'This stream is protected by DRM and cannot be downloaded offline',
+    };
+  }
 
   // Check magnet and torrent
   if (lowerUrl.startsWith('magnet:')) {
@@ -672,6 +719,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'START_DOWNLOAD') {
     const rawUrl = (message.url || '').trim();
     const lower = rawUrl.toLowerCase();
+
+    if (lower.includes('watch.plex.tv') || lower.includes('plex.tv')) {
+      sendResponse({
+        status: 'error',
+        message: 'watch.plex.tv content is DRM-protected and not licensed for offline download.',
+      });
+      return false;
+    }
+
+    if (isTransientCdnUrl(rawUrl)) {
+      const pageUrl = message.page_url || sender.tab?.url;
+      if (pageUrl && !pageUrl.startsWith('chrome:') && !pageUrl.startsWith('edge:') && !pageUrl.startsWith('about:')) {
+        console.log('[TORI] Rerouting transient CDN URL to managed media download for page:', pageUrl);
+        callDesktopApi('/api/v1/media/download', 'POST', {
+          url: pageUrl,
+          format_id: message.format_id || 'best',
+          filename: message.filename,
+          destination: message.destination,
+          priority: message.priority || 'normal',
+        }).then((httpRes) => {
+          if (httpRes.ok && httpRes.data) {
+            sendResponse(httpRes.data);
+          } else {
+            sendResponse({
+              status: 'error',
+              message: httpRes.data?.message || 'Managed media download failed',
+            });
+          }
+        }).catch((err) => {
+          sendResponse({ status: 'error', message: err.message || 'Download error' });
+        });
+        return true;
+      }
+    }
 
     if (!rawUrl || rawUrl.startsWith('blob:') || rawUrl.startsWith('data:') || rawUrl.startsWith('javascript:')) {
       sendResponse({

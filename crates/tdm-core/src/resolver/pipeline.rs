@@ -36,6 +36,14 @@ impl MediaResolver {
         let safe_url = validate_safe_media_url(raw_url).await?;
         let url_str = safe_url.as_str();
 
+        // 0. Protected streaming platforms (Plex, Netflix, etc.)
+        if url_str.contains("plex.tv") {
+            return Err(EngineError::Other(
+                "watch.plex.tv content is DRM-protected and not licensed for offline download."
+                    .to_string(),
+            ));
+        }
+
         // 1. Direct Media Resource Probe (.mp4, .webm, .mp3, etc.)
         if is_direct_media_extension(url_str) {
             if let Ok(direct_meta) = self.probe_direct_media(url_str).await {
@@ -474,13 +482,20 @@ impl MediaResolver {
 
         for v in sorted_videos {
             let h = v.height.unwrap_or(0);
-            let key = (h, v.container.clone());
+            let w = v.width.unwrap_or(0);
+            let key = (w, h, v.container.clone());
             if seen_heights.contains(&key) && h > 0 {
                 continue;
             }
             seen_heights.insert(key);
 
-            let res_label = if let Some(h) = v.height {
+            let res_label = if let (Some(w), Some(h)) = (v.width, v.height) {
+                if h > w && w > 0 {
+                    format!("{} × {} · Portrait", w, h)
+                } else {
+                    format!("{}p", h)
+                }
+            } else if let Some(h) = v.height {
                 format!("{}p", h)
             } else {
                 v.resolution_label.clone()
@@ -519,9 +534,26 @@ impl MediaResolver {
                 v.format_id.clone()
             };
 
+            let final_note = if chosen_audio.is_some() {
+                v.format_note
+                    .as_deref()
+                    .map(|n| {
+                        if n.to_lowercase().contains("dash") {
+                            "DASH video (merges audio)".to_string()
+                        } else {
+                            format!("{} · Merges audio", n)
+                        }
+                    })
+                    .or(Some("DASH video (merges audio)".to_string()))
+            } else if !v.has_audio {
+                Some("Video only (no audio)".to_string())
+            } else {
+                v.format_note.clone()
+            };
+
             final_formats.push(ResolvedMediaFormat {
                 format_id: format_id_spec,
-                format_note: v.format_note.clone(),
+                format_note: final_note,
                 width: v.width,
                 height: v.height,
                 resolution_label: res_label,
@@ -549,15 +581,33 @@ impl MediaResolver {
 
         // 3. Add progressive tracks (video + audio in single stream) if not redundant
         for p in progressive_tracks {
-            let res_label = if let Some(h) = p.height {
+            let res_label = if let (Some(w), Some(h)) = (p.width, p.height) {
+                if h > w && w > 0 {
+                    format!("{} × {} · Portrait", w, h)
+                } else {
+                    format!("{}p", h)
+                }
+            } else if let Some(h) = p.height {
                 format!("{}p", h)
             } else {
                 p.resolution_label.clone()
             };
 
+            let prog_note = p
+                .format_note
+                .as_deref()
+                .map(|n| {
+                    if !n.is_empty() {
+                        format!("{} (progressive)", n)
+                    } else {
+                        "Video with audio (progressive)".to_string()
+                    }
+                })
+                .or(Some("Video with audio (progressive)".to_string()));
+
             final_formats.push(ResolvedMediaFormat {
                 format_id: p.format_id.clone(),
-                format_note: p.format_note.clone(),
+                format_note: prog_note,
                 width: p.width,
                 height: p.height,
                 resolution_label: res_label,
@@ -828,24 +878,38 @@ fn parse_single_format(f: &serde_json::Value) -> Option<ParsedRawFormat> {
     let width = f.get("width").and_then(|v| v.as_u64()).map(|w| w as u32);
     let height = f.get("height").and_then(|v| v.as_u64()).map(|h| h as u32);
 
-    let resolution_label = if let Some(h) = height {
+    let resolution_label = if let (Some(w), Some(h)) = (width, height) {
+        if h > w && w > 0 {
+            format!("{} × {} · Portrait", w, h)
+        } else {
+            format!("{}p", h)
+        }
+    } else if let Some(h) = height {
         format!("{}p", h)
     } else if has_audio && !has_video {
         "Audio Only".to_string()
+    } else if let Some(res_str) = f.get("resolution").and_then(|v| v.as_str()) {
+        if let Some((w_s, h_s)) = res_str.split_once('x') {
+            if let (Ok(w), Ok(h)) = (w_s.trim().parse::<u32>(), h_s.trim().parse::<u32>()) {
+                if h > w && w > 0 {
+                    format!("{} × {} · Portrait", w, h)
+                } else {
+                    format!("{}p", h)
+                }
+            } else {
+                res_str.to_string()
+            }
+        } else {
+            res_str.to_string()
+        }
     } else if let Some(note) = format_note.as_deref() {
         if !note.is_empty() {
             note.to_uppercase()
         } else {
-            f.get("resolution")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Media")
-                .to_string()
+            "Media".to_string()
         }
     } else {
-        f.get("resolution")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Media")
-            .to_string()
+        "Media".to_string()
     };
 
     let fps = f.get("fps").and_then(|v| v.as_f64());

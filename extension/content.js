@@ -1,3 +1,33 @@
+// Platform and transient stream helpers
+function isTransientCdnUrl(url) {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  return (
+    lower.includes('.fbcdn.net') ||
+    lower.includes('.cdninstagram.com') ||
+    lower.includes('.tiktokcdn.com') ||
+    lower.includes('.googlevideo.com') ||
+    lower.includes('video.twimg.com') ||
+    (lower.includes('oe=') && lower.includes('oh='))
+  );
+}
+
+function isManagedPlatform(urlOrHost) {
+  if (!urlOrHost) return false;
+  const lower = urlOrHost.toLowerCase();
+  return (
+    lower.includes('facebook.com') ||
+    lower.includes('fb.watch') ||
+    lower.includes('instagram.com') ||
+    lower.includes('tiktok.com') ||
+    lower.includes('youtube.com') ||
+    lower.includes('youtu.be') ||
+    lower.includes('twitter.com') ||
+    lower.includes('x.com') ||
+    lower.includes('reddit.com')
+  );
+}
+
 /**
  * TORI Download Manager — Content Script
  * Implements Design Source A HTML5 Media Overlay (.pill and .pn panel)
@@ -460,9 +490,12 @@
           }
         }
 
-        const isHd = videoEl.videoHeight >= 720;
+        const isPortrait = videoEl.videoWidth && videoEl.videoHeight && videoEl.videoHeight > videoEl.videoWidth;
+        const isHd = (isPortrait ? videoEl.videoWidth : videoEl.videoHeight) >= 720;
         let qualityLabel = '';
-        if (videoEl.videoHeight) {
+        if (isPortrait) {
+          qualityLabel = `${videoEl.videoWidth} × ${videoEl.videoHeight} · Portrait`;
+        } else if (videoEl.videoHeight) {
           qualityLabel = `${videoEl.videoHeight}p`;
         } else if (isHls) {
           qualityLabel = 'Adaptive';
@@ -642,12 +675,15 @@
         lower.includes('drm') ||
         lower.includes('widevine') ||
         lower.includes('playready') ||
-        lower.includes('encrypted')
+        lower.includes('encrypted') ||
+        lower.includes('plex.tv')
       ) {
         return {
-          title: 'DRM Protected Media',
-          desc: 'This stream is encrypted by digital rights management (DRM).',
-          hint: 'TORI respects DRM boundaries and does not bypass cryptographic protection.',
+          title: 'Protected Streaming Content (DRM)',
+          desc: lower.includes('plex.tv')
+            ? 'watch.plex.tv content is DRM-protected and not licensed for offline download.'
+            : 'This stream is encrypted by digital rights management (DRM) or licensing restrictions.',
+          hint: 'TORI respects content protection boundaries and does not perform DRM circumvention.',
           color: '#8e8e93',
         };
       }
@@ -892,14 +928,19 @@
             filename: target.filename,
           });
 
-          const reqPayload = (target.format_id || target.isManaged)
+          const isSocialPlatform = isManagedPlatform(window.location.hostname);
+          const isTransientCdn = isTransientCdnUrl(target.url);
+          const shouldUseManaged = target.format_id || target.isManaged || isSocialPlatform || isTransientCdn;
+
+          const reqPayload = shouldUseManaged
             ? {
                 action: 'START_MEDIA_DOWNLOAD',
                 url: (resolvedMeta && resolvedMeta.source_url) ? resolvedMeta.source_url : window.location.href,
-                format_id: target.format_id,
+                format_id: target.format_id || 'best',
                 filename: target.filename,
                 priority: 'high',
                 correlation_id: correlationId,
+                page_url: window.location.href,
               }
             : {
                 action: 'START_DOWNLOAD',
@@ -907,6 +948,7 @@
                 filename: target.filename,
                 priority: 'high',
                 correlation_id: correlationId,
+                page_url: window.location.href,
               };
 
           chrome.runtime.sendMessage(reqPayload, (res) => {
@@ -952,14 +994,19 @@
       }
 
       const correlationId = 'tori_dir_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
-      const reqPayload = (target.format_id || target.isManaged)
+      const isSocialPlatform = isManagedPlatform(window.location.hostname);
+      const isTransientCdn = isTransientCdnUrl(target.url);
+      const shouldUseManaged = target.format_id || target.isManaged || isSocialPlatform || isTransientCdn;
+
+      const reqPayload = shouldUseManaged
         ? {
             action: 'START_MEDIA_DOWNLOAD',
             url: (resolvedMeta && resolvedMeta.source_url) ? resolvedMeta.source_url : window.location.href,
-            format_id: target.format_id,
+            format_id: target.format_id || 'best',
             filename: target.filename,
             priority: 'high',
             correlation_id: correlationId,
+            page_url: window.location.href,
           }
         : {
             action: 'START_DOWNLOAD',
@@ -967,6 +1014,7 @@
             filename: target.filename,
             priority: 'high',
             correlation_id: correlationId,
+            page_url: window.location.href,
           };
 
       chrome.runtime.sendMessage(reqPayload, (res) => {

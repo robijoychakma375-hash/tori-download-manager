@@ -37,6 +37,7 @@ pub async fn download_managed_media(
         "--no-warnings".to_string(),
         "--no-call-home".to_string(),
         "--no-color".to_string(),
+        "--no-check-certificates".to_string(),
         "--prefer-free-formats".to_string(),
         "--progress-template".to_string(),
         "download:[TORI_PROG]|%(progress._percent_str)s;%(progress.downloaded_bytes)s;%(progress.total_bytes)s;%(progress.speed)s;%(progress.eta)s".to_string(),

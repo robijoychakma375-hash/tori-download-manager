@@ -194,12 +194,34 @@ export function isMediaPageUrl(url: string): boolean {
     u.includes('youtube.com/watch') ||
     u.includes('youtu.be/') ||
     u.includes('youtube.com/shorts/') ||
+    u.includes('facebook.com/reel/') ||
+    u.includes('facebook.com/watch') ||
+    u.includes('facebook.com/') && (u.includes('/videos/') || u.includes('/reel/')) ||
+    u.includes('fb.watch/') ||
+    u.includes('instagram.com/reel/') ||
+    u.includes('instagram.com/p/') ||
     u.includes('vimeo.com/') ||
     u.includes('twitch.tv/') ||
     u.includes('soundcloud.com/') ||
     u.includes('bilibili.com/video/') ||
     u.includes('dailymotion.com/video/') ||
-    u.includes('tiktok.com/')
+    u.includes('tiktok.com/') ||
+    u.includes('twitter.com/') ||
+    u.includes('x.com/') ||
+    u.includes('reddit.com/r/')
+  );
+}
+
+export function isTransientCdnUrl(url: string): boolean {
+  if (!url) return false;
+  const u = url.trim().toLowerCase();
+  return (
+    u.includes('.fbcdn.net') ||
+    u.includes('.cdninstagram.com') ||
+    u.includes('.tiktokcdn.com') ||
+    u.includes('.googlevideo.com') ||
+    u.includes('video.twimg.com') ||
+    (u.includes('oe=') && u.includes('oh='))
   );
 }
 

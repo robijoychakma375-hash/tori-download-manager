@@ -15,6 +15,24 @@ fn silent_explorer_command() -> Command {
 
 use crate::state::AppState;
 
+fn is_media_portal_url(url: &str) -> bool {
+    let u = url.trim().to_lowercase();
+    u.contains("youtube.com/watch")
+        || u.contains("youtu.be/")
+        || u.contains("youtube.com/shorts/")
+        || u.contains("facebook.com/reel/")
+        || u.contains("facebook.com/watch")
+        || (u.contains("facebook.com/") && (u.contains("/videos/") || u.contains("/reel/")))
+        || u.contains("fb.watch/")
+        || u.contains("instagram.com/reel/")
+        || u.contains("instagram.com/p/")
+        || u.contains("vimeo.com/")
+        || u.contains("tiktok.com/")
+        || u.contains("twitter.com/")
+        || u.contains("x.com/")
+        || u.contains("reddit.com/r/")
+}
+
 #[tauri::command]
 pub async fn create_download(
     url: String,
@@ -35,11 +53,26 @@ pub async fn create_download(
         None => tdm_core::Priority::Normal,
     };
 
-    let job = state
-        .manager
-        .create_download_with_priority(&url, &dest_dir, prio)
-        .await
-        .map_err(|e| e.to_string())?;
+    let job = if is_media_portal_url(&url) {
+        state
+            .manager
+            .create_managed_media_download(
+                &url,
+                "best",
+                "media_download.mp4",
+                &dest_dir,
+                prio,
+                None,
+            )
+            .await
+            .map_err(|e| e.to_string())?
+    } else {
+        state
+            .manager
+            .create_download_with_priority(&url, &dest_dir, prio)
+            .await
+            .map_err(|e| e.to_string())?
+    };
 
     // Auto-start download upon creation
     state

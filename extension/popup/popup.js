@@ -1,3 +1,33 @@
+// Platform and transient stream helpers
+function isTransientCdnUrl(url) {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  return (
+    lower.includes('.fbcdn.net') ||
+    lower.includes('.cdninstagram.com') ||
+    lower.includes('.tiktokcdn.com') ||
+    lower.includes('.googlevideo.com') ||
+    lower.includes('video.twimg.com') ||
+    (lower.includes('oe=') && lower.includes('oh='))
+  );
+}
+
+function isManagedPlatform(urlOrHost) {
+  if (!urlOrHost) return false;
+  const lower = urlOrHost.toLowerCase();
+  return (
+    lower.includes('facebook.com') ||
+    lower.includes('fb.watch') ||
+    lower.includes('instagram.com') ||
+    lower.includes('tiktok.com') ||
+    lower.includes('youtube.com') ||
+    lower.includes('youtu.be') ||
+    lower.includes('twitter.com') ||
+    lower.includes('x.com') ||
+    lower.includes('reddit.com')
+  );
+}
+
 /**
  * TORI Download Manager — Extension Popup Controller
  * Implements Design Source A with real Native Messaging engine integration.
@@ -157,6 +187,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || !tab.id) return;
 
+      if (tab.url && tab.url.toLowerCase().includes('plex.tv')) {
+        mediaCountHeader.textContent = 'Protected Streaming Content';
+        mediaList.innerHTML = `
+          <div class="empty-state" style="padding:16px 12px;text-align:center">
+            <div style="font-weight:600;margin-bottom:4px;color:#e5484d">DRM-Protected Content</div>
+            <div style="font-size:11px;color:var(--mut);line-height:1.4">watch.plex.tv content is DRM-protected and not licensed for offline download.</div>
+            <div style="font-size:11px;color:var(--mut);margin-top:6px">TORI respects licensing boundaries and does not bypass DRM.</div>
+          </div>`;
+        return;
+      }
+
       // 1. Try querying active media info from content script
       chrome.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_MEDIA_INFO' }, (info) => {
         if (!chrome.runtime.lastError && info && info.ok) {
@@ -232,6 +273,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           sizeStr = ` · ${formatBytes(fmt.filesize)}`;
         } else if (fmt.filesize_type === 'estimated' && fmt.filesize_approx) {
           sizeStr = ` · ~${formatBytes(fmt.filesize_approx)}`;
+        } else {
+          sizeStr = ' · Size unknown';
         }
         const sub = `${(fmt.container || 'mp4').toUpperCase()}${sizeStr}`;
 
@@ -313,13 +356,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!target) return;
 
         btn.textContent = 'Sending…';
+        const isManaged = isManagedPlatform(tab.url) || isTransientCdnUrl(target.url);
+        const reqPayload = isManaged
+          ? {
+              action: 'START_MEDIA_DOWNLOAD',
+              url: tab.url,
+              format_id: 'best',
+              filename: target.filename,
+              priority: 'high',
+              page_url: tab.url,
+            }
+          : {
+              action: 'START_DOWNLOAD',
+              url: target.url,
+              filename: target.filename,
+              priority: 'high',
+              page_url: tab.url,
+            };
+
         chrome.runtime.sendMessage(
-          {
-            action: 'START_DOWNLOAD',
-            url: target.url,
-            filename: target.filename,
-            priority: 'high',
-          },
+          reqPayload,
           (dlRes) => {
             if (dlRes && dlRes.status === 'ok') {
               btn.textContent = 'Sent';
