@@ -88,6 +88,7 @@ pub struct CreateMediaDownloadReq {
     pub filename: Option<String>,
     pub destination: Option<String>,
     pub priority: Option<String>,
+    pub thumbnail_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -107,6 +108,7 @@ pub struct JobSummary {
     pub job_type: String,
     pub priority: String,
     pub created_at: String,
+    pub thumbnail_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -624,7 +626,14 @@ async fn handle_create_media_download(
 
     match state
         .manager
-        .create_managed_media_download(raw_url, format_id, &initial_filename, &dest_path, prio)
+        .create_managed_media_download(
+            raw_url,
+            format_id,
+            &initial_filename,
+            &dest_path,
+            prio,
+            payload.thumbnail_url,
+        )
         .await
     {
         Ok(job) => {
@@ -689,6 +698,7 @@ async fn handle_list_downloads(
                     job_type: format!("{:?}", j.job_type),
                     priority: format!("{:?}", j.priority).to_lowercase(),
                     created_at: j.created_at.to_rfc3339(),
+                    thumbnail_url: j.thumbnail_url,
                 })
                 .collect();
 

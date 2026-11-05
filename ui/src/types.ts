@@ -31,6 +31,7 @@ export interface DownloadJob {
   error_message: string | null;
   created_at: string;
   updated_at: string;
+  thumbnail_url?: string | null;
   // Transient UI metrics
   speed_bps?: number;
   eta_seconds?: number | null;

@@ -62,6 +62,7 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
         "ALTER TABLE downloads ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'",
         [],
     );
+    let _ = conn.execute("ALTER TABLE downloads ADD COLUMN thumbnail_url TEXT", []);
 
     Ok(())
 }

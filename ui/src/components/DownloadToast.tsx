@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { DownloadEvent, DownloadJob, ChunkRecord } from '../types';
 import { typeOfJob, fmtB, fmtSp } from '../utils';
 import './DownloadToast.css';
@@ -156,8 +157,35 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
       if (isOpen) {
         setExpanded({ 'demo-toast': true });
       }
-    } else if (initialId) {
-      fetchJob(initialId);
+    } else {
+      if (initialId) {
+        fetchJob(initialId);
+      }
+      invoke<DownloadJob[]>('list_downloads')
+        .then((allJobs) => {
+          if (allJobs && allJobs.length > 0) {
+            const active = allJobs.filter((j) =>
+              ['downloading', 'probing', 'pausing', 'paused', 'verifying', 'queued'].includes(j.state)
+            );
+            if (active.length > 0) {
+              const jobMap: Record<string, DownloadJob> = {};
+              const ids: string[] = [];
+              for (const j of active) {
+                jobMap[j.id] = j;
+                ids.push(j.id);
+              }
+              setJobs((prev) => ({ ...jobMap, ...prev }));
+              setActiveIds((prev) => {
+                const combined = [...prev];
+                for (const id of ids) {
+                  if (!combined.includes(id)) combined.push(id);
+                }
+                return combined;
+              });
+            }
+          }
+        })
+        .catch(() => {});
     }
   }, [initialId, fetchJob]);
 
@@ -167,9 +195,13 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
       const payload = event.payload;
       if (payload.type === 'Progress') {
         const prog = payload.payload;
+        setActiveIds((prev) => (prev.includes(prog.id) ? prev : [...prev, prog.id]));
         setJobs((prev) => {
           const existing = prev[prog.id];
-          if (!existing) return prev;
+          if (!existing) {
+            fetchJob(prog.id);
+            return prev;
+          }
           return {
             ...prev,
             [prog.id]: {
@@ -212,6 +244,90 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
       unlistenAdd.then((u) => u());
     };
   }, [fetchJob]);
+
+  // Active reconciliation polling while active downloads exist
+  useEffect(() => {
+    const activeRunning = activeIds.some(
+      (id) => jobs[id] && ['downloading', 'probing', 'pausing', 'verifying'].includes(jobs[id].state)
+    );
+    if (!activeRunning) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const all = await invoke<DownloadJob[]>('list_downloads');
+        if (all) {
+          setJobs((prev) => {
+            let changed = false;
+            const updated = { ...prev };
+            for (const j of all) {
+              if (prev[j.id]) {
+                updated[j.id] = { ...prev[j.id], ...j };
+                changed = true;
+              }
+            }
+            return changed ? updated : prev;
+          });
+        }
+      } catch {
+        // ignore
+      }
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [activeIds, jobs]);
+
+  // Handle native window dragging
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (
+      target.closest('button') ||
+      target.closest('a') ||
+      target.closest('input') ||
+      target.closest('.action-btn') ||
+      target.closest('.ib') ||
+      target.closest('.x') ||
+      target.closest('.chunks-popover')
+    ) {
+      return;
+    }
+    if (e.button === 0) {
+      try {
+        getCurrentWebviewWindow().startDragging();
+      } catch {
+        // ignore if not running in Tauri window
+      }
+    }
+  }, []);
+
+  // Listen to window moved event to persist position
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let timer: any = null;
+    try {
+      const win = getCurrentWebviewWindow();
+      win.onMoved(({ payload: pos }) => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(async () => {
+          try {
+            const scale = await win.scaleFactor();
+            const x = pos.x / scale;
+            const y = pos.y / scale;
+            await invoke('save_toast_position', { x, y });
+          } catch {
+            await invoke('save_toast_position', { x: pos.x, y: pos.y }).catch(() => {});
+          }
+        }, 200);
+      }).then((u) => {
+        unlisten = u;
+      }).catch(() => {});
+    } catch {
+      // ignore
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   // Auto-dismiss countdown timer for completed items
   useEffect(() => {
@@ -390,6 +506,8 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
             key={id}
             className={`toast ${isOpen ? 'open' : ''}`}
             style={{ ['--rc' as any]: ringColor }}
+            data-tauri-drag-region
+            onMouseDown={handleDragStart}
             onMouseEnter={() => {
               hoveredRef.current[id] = true;
             }}
@@ -397,7 +515,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
               hoveredRef.current[id] = false;
             }}
           >
-            <div className="row">
+            <div className="row" data-tauri-drag-region onMouseDown={handleDragStart}>
               <div className="rg">
                 <svg className="r" viewBox="0 0 52 52">
                   <circle className="rt" cx="26" cy="26" r="21" />
@@ -411,12 +529,30 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
                   />
                 </svg>
                 <span
-                  className="chip"
+                  className={`chip ${job.thumbnail_url ? 'has-thumb' : ''}`}
                   style={{
-                    background: `linear-gradient(${chip.grad[0]}, ${chip.grad[1]})`,
+                    background: job.thumbnail_url
+                      ? 'transparent'
+                      : `linear-gradient(${chip.grad[0]}, ${chip.grad[1]})`,
                   }}
                 >
-                  <svg viewBox="0 0 24 24">
+                  {job.thumbnail_url ? (
+                    <img
+                      src={job.thumbnail_url}
+                      alt=""
+                      className="toast-thumb-img"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLElement).style.display = 'none';
+                        const fallback = e.currentTarget.parentElement?.querySelector('.chip-fallback-svg');
+                        if (fallback) (fallback as HTMLElement).style.display = 'block';
+                      }}
+                    />
+                  ) : null}
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="chip-fallback-svg"
+                    style={{ display: job.thumbnail_url ? 'none' : 'block' }}
+                  >
                     <path d={chip.path} />
                   </svg>
                 </span>
@@ -436,12 +572,22 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
                 )}
               </div>
 
-              <div className="tx" onClick={() => handleToggleExpand(id)} title="Click for details">
+              <div
+                className="tx"
+                data-tauri-drag-region
+                onClick={() => handleToggleExpand(id)}
+                title="Click for details"
+              >
                 <b>{job.filename}</b>
                 <span>{subtext}</span>
               </div>
 
-              <div className="eta" onClick={() => handleToggleExpand(id)} title="Click for details">
+              <div
+                className="eta"
+                data-tauri-drag-region
+                onClick={() => handleToggleExpand(id)}
+                title="Click for details"
+              >
                 <b>{etaNum}</b>
                 <span>{etaSub}</span>
               </div>

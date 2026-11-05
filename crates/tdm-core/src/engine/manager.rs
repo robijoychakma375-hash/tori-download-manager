@@ -279,6 +279,7 @@ impl DownloadManager {
             error_message: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            thumbnail_url: extract_thumbnail_from_url(url),
         };
 
         self.db.insert_job(&job)?;
@@ -300,6 +301,7 @@ impl DownloadManager {
         filename: &str,
         destination_dir: P,
         priority: Priority,
+        thumbnail_url: Option<String>,
     ) -> Result<DownloadJob> {
         let dir = destination_dir.as_ref();
         if !dir.exists() {
@@ -331,6 +333,7 @@ impl DownloadManager {
         let temp_path = dir.join(temp_filename);
 
         let id = Uuid::new_v4().to_string();
+        let thumb = thumbnail_url.or_else(|| extract_thumbnail_from_url(url));
 
         let job = DownloadJob {
             id: id.clone(),
@@ -356,6 +359,7 @@ impl DownloadManager {
             error_message: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            thumbnail_url: thumb,
         };
 
         self.db.insert_job(&job)?;
@@ -1228,4 +1232,40 @@ impl DownloadManager {
             }
         }
     }
+}
+
+pub fn extract_thumbnail_from_url(url: &str) -> Option<String> {
+    if url.contains("youtube.com") || url.contains("youtu.be") {
+        if let Some(pos) = url.find("v=") {
+            let rest = &url[pos + 2..];
+            let id: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            if !id.is_empty() {
+                return Some(format!("https://img.youtube.com/vi/{}/hqdefault.jpg", id));
+            }
+        }
+        if let Some(pos) = url.find("youtu.be/") {
+            let rest = &url[pos + 9..];
+            let id: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            if !id.is_empty() {
+                return Some(format!("https://img.youtube.com/vi/{}/hqdefault.jpg", id));
+            }
+        }
+        if let Some(pos) = url.find("/shorts/") {
+            let rest = &url[pos + 8..];
+            let id: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            if !id.is_empty() {
+                return Some(format!("https://img.youtube.com/vi/{}/hqdefault.jpg", id));
+            }
+        }
+    }
+    None
 }

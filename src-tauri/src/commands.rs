@@ -469,21 +469,116 @@ pub async fn open_progress_window_internal(
             .resizable(false)
             .shadow(false);
 
-    if let Ok(Some(monitor)) = app.primary_monitor() {
-        let size = monitor.size();
-        let scale = monitor.scale_factor();
-        let mon_pos = monitor.position();
-        let mon_w = size.width as f64 / scale;
-        let mon_h = size.height as f64 / scale;
-        let x = mon_pos.x as f64 / scale + mon_w - 490.0 - 20.0;
-        let y = mon_pos.y as f64 / scale + mon_h - 96.0 - 58.0;
-        builder = builder.position(x, y);
-    }
+    let (saved_x, saved_y) =
+        if let Ok(Some(saved)) = manager.database().get_setting("toast_window_position") {
+            if let Ok(pos) = serde_json::from_str::<ToastPosition>(&saved) {
+                (Some(pos.x), Some(pos.y))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+    let (x, y) = get_clamped_toast_position(app, saved_x, saved_y, 490.0, 96.0);
+    builder = builder.position(x, y);
 
     let _win = builder
         .build()
         .map_err(|e| format!("Failed to create progress window: {}", e))?;
 
+    Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ToastPosition {
+    x: f64,
+    y: f64,
+}
+
+fn get_clamped_toast_position(
+    app: &tauri::AppHandle,
+    preferred_x: Option<f64>,
+    preferred_y: Option<f64>,
+    width: f64,
+    height: f64,
+) -> (f64, f64) {
+    let monitors = app.available_monitors().unwrap_or_default();
+    if monitors.is_empty() {
+        return (preferred_x.unwrap_or(100.0), preferred_y.unwrap_or(100.0));
+    }
+
+    if let (Some(px), Some(py)) = (preferred_x, preferred_y) {
+        let mut best_monitor = &monitors[0];
+        let mut min_dist_sq = f64::MAX;
+
+        for mon in &monitors {
+            let scale = mon.scale_factor();
+            let pos = mon.position();
+            let size = mon.size();
+            let left = pos.x as f64 / scale;
+            let top = pos.y as f64 / scale;
+            let right = left + (size.width as f64 / scale);
+            let bottom = top + (size.height as f64 / scale);
+
+            if px >= left && px <= right && py >= top && py <= bottom {
+                best_monitor = mon;
+                break;
+            }
+
+            let cx = (left + right) / 2.0;
+            let cy = (top + bottom) / 2.0;
+            let dist = (px - cx).powi(2) + (py - cy).powi(2);
+            if dist < min_dist_sq {
+                min_dist_sq = dist;
+                best_monitor = mon;
+            }
+        }
+
+        let scale = best_monitor.scale_factor();
+        let pos = best_monitor.position();
+        let size = best_monitor.size();
+        let left = pos.x as f64 / scale;
+        let top = pos.y as f64 / scale;
+        let mon_w = size.width as f64 / scale;
+        let mon_h = size.height as f64 / scale;
+
+        let max_x = (left + mon_w - width).max(left);
+        let max_y = (top + mon_h - height).max(top);
+
+        let clamped_x = px.clamp(left, max_x);
+        let clamped_y = py.clamp(top, max_y);
+        (clamped_x, clamped_y)
+    } else {
+        let primary = app
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| monitors.into_iter().next());
+        if let Some(mon) = primary {
+            let scale = mon.scale_factor();
+            let pos = mon.position();
+            let size = mon.size();
+            let mon_w = size.width as f64 / scale;
+            let mon_h = size.height as f64 / scale;
+            let x = pos.x as f64 / scale + mon_w - width - 20.0;
+            let y = pos.y as f64 / scale + mon_h - height - 58.0;
+            (x, y)
+        } else {
+            (100.0, 100.0)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn save_toast_position(x: f64, y: f64, state: State<'_, AppState>) -> Result<(), String> {
+    let pos = ToastPosition { x, y };
+    let json = serde_json::to_string(&pos).map_err(|e| e.to_string())?;
+    state
+        .manager
+        .database()
+        .set_setting("toast_window_position", &json)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -501,19 +596,27 @@ pub async fn update_toast_bounds(
     width: f64,
     height: f64,
     app: tauri::AppHandle,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("progress_toast") {
         let _ = win.set_size(tauri::LogicalSize::new(width, height));
-        if let Ok(Some(monitor)) = win.current_monitor() {
-            let size = monitor.size();
-            let scale = monitor.scale_factor();
-            let mon_pos = monitor.position();
-            let mon_w = size.width as f64 / scale;
-            let mon_h = size.height as f64 / scale;
-            let x = mon_pos.x as f64 / scale + mon_w - width - 20.0;
-            let y = mon_pos.y as f64 / scale + mon_h - height - 58.0;
-            let _ = win.set_position(tauri::LogicalPosition::new(x, y));
-        }
+
+        let (saved_x, saved_y) = if let Ok(Some(saved)) = state
+            .manager
+            .database()
+            .get_setting("toast_window_position")
+        {
+            if let Ok(pos) = serde_json::from_str::<ToastPosition>(&saved) {
+                (Some(pos.x), Some(pos.y))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        let (x, y) = get_clamped_toast_position(&app, saved_x, saved_y, width, height);
+        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
     }
     Ok(())
 }

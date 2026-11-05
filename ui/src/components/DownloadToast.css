@@ -43,6 +43,17 @@ html.toast-mode #root {
   gap: 12px;
   padding: 12px 12px 12px 14px;
   box-sizing: border-box;
+  cursor: grab;
+}
+
+.toast .row:active {
+  cursor: grabbing;
+}
+
+.toast .row button,
+.toast .row .ib,
+.toast .row .x {
+  cursor: pointer;
 }
 
 .toast .rg {
@@ -82,6 +93,20 @@ html.toast-mode #root {
   display: grid;
   place-items: center;
   box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.4);
+}
+
+.toast .chip.has-thumb {
+  background: transparent;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.toast-thumb-img {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  object-fit: cover;
+  display: block;
 }
 
 .toast .chip svg {
@@ -293,3 +318,4 @@ html.toast-mode #root {
   box-shadow: 0 0 0 1px var(--bline), 0 4px 10px rgba(0, 0, 0, 0.15);
   cursor: default;
 }
+

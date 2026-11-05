@@ -178,6 +178,7 @@ async fn test_live_stream_udp_transport_real_recording() {
         error_message: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
+        thumbnail_url: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -279,6 +280,7 @@ async fn test_live_stream_tcp_recording_to_mkv() {
         error_message: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
+        thumbnail_url: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -405,6 +407,7 @@ async fn test_live_stream_sliding_window_hls_recording() {
         error_message: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
+        thumbnail_url: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -650,6 +653,7 @@ async fn test_live_stream_fragmented_mp4_partial_recovery() {
         error_message: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
+        thumbnail_url: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -744,6 +748,7 @@ async fn test_live_stream_bounded_resources_and_throughput() {
         error_message: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
+        thumbnail_url: None,
     };
     db.insert_job(&job).unwrap();
 

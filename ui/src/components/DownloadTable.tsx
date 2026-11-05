@@ -42,13 +42,32 @@ const TableRow = React.memo<TableRowProps>(
         onContextMenu={(e) => onContextMenu(e, job)}
       >
         <span className="nm">
-          <img
-            src={getChipSrc(category)}
-            alt={category}
-            width={20}
-            height={20}
-            style={{ borderRadius: '6px', flexShrink: 0 }}
-          />
+          {job.thumbnail_url ? (
+            <img
+              src={job.thumbnail_url}
+              alt=""
+              width={24}
+              height={24}
+              style={{
+                width: '24px',
+                height: '24px',
+                borderRadius: '6px',
+                flexShrink: 0,
+                objectFit: 'cover',
+              }}
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = getChipSrc(category);
+              }}
+            />
+          ) : (
+            <img
+              src={getChipSrc(category)}
+              alt={category}
+              width={24}
+              height={24}
+              style={{ width: '24px', height: '24px', borderRadius: '6px', flexShrink: 0 }}
+            />
+          )}
           <em>{job.filename}</em>
         </span>
 

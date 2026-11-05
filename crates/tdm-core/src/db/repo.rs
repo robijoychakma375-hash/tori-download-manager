@@ -35,8 +35,8 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                created_at, updated_at, thumbnail_url
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 job.id,
                 job.url,
@@ -56,6 +56,7 @@ impl Database {
                 job.error_message,
                 job.created_at.to_rfc3339(),
                 job.updated_at.to_rfc3339(),
+                job.thumbnail_url,
             ],
         )?;
         Ok(())
@@ -200,7 +201,7 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at
+                created_at, updated_at, thumbnail_url
              FROM downloads WHERE id = ?1",
         )?;
 
@@ -237,6 +238,7 @@ impl Database {
                     updated_at: chrono::DateTime::parse_from_rfc3339(&updated_str)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
+                    thumbnail_url: row.get(18).ok().flatten(),
                 })
             })
             .optional()?;
@@ -251,7 +253,7 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at
+                created_at, updated_at, thumbnail_url
              FROM downloads
              WHERE state = 'queued'
              ORDER BY
@@ -298,6 +300,7 @@ impl Database {
                     updated_at: chrono::DateTime::parse_from_rfc3339(&updated_str)
                         .map(|dt| dt.with_timezone(&chrono::Utc))
                         .unwrap_or_else(|_| chrono::Utc::now()),
+                    thumbnail_url: row.get(18).ok().flatten(),
                 })
             })
             .optional()?;
@@ -312,7 +315,7 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at
+                created_at, updated_at, thumbnail_url
              FROM downloads
              ORDER BY created_at DESC",
         )?;
@@ -349,6 +352,7 @@ impl Database {
                 updated_at: chrono::DateTime::parse_from_rfc3339(&updated_str)
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now()),
+                thumbnail_url: row.get(18).ok().flatten(),
             })
         })?;
 
