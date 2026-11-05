@@ -57,7 +57,9 @@ pub async fn download_managed_media(
             let is_audio = format_arg.contains("audio")
                 || format_arg.contains("ba")
                 || is_common_audio_format(format_arg);
-            if format_arg.contains('+') || is_audio {
+            if format_arg == "best" {
+                args.push("bestvideo+bestaudio/best".to_string());
+            } else if format_arg.contains('+') || format_arg.contains('/') || is_audio {
                 args.push(format_arg.to_string());
             } else {
                 // If single video format is specified, ensure it pairs with best audio so it's not silent

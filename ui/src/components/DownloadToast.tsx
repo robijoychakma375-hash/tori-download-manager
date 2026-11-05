@@ -60,6 +60,8 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const hoveredRef = useRef<Record<string, boolean>>({});
   const containerRef = useRef<HTMLDivElement>(null);
+  const dismissedIdsRef = useRef<Set<string>>(new Set());
+  const isUserDraggingRef = useRef<boolean>(false);
 
   // Apply theme & accent from stored settings
   useEffect(() => {
@@ -195,7 +197,9 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
       const payload = event.payload;
       if (payload.type === 'Progress') {
         const prog = payload.payload;
-        setActiveIds((prev) => (prev.includes(prog.id) ? prev : [...prev, prog.id]));
+        if (!dismissedIdsRef.current.has(prog.id)) {
+          setActiveIds((prev) => (prev.includes(prog.id) ? prev : [...prev, prog.id]));
+        }
         setJobs((prev) => {
           const existing = prev[prog.id];
           if (!existing) {
@@ -226,6 +230,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
         });
       } else if (payload.type === 'OpenProgressWindow') {
         const { id } = payload.payload;
+        dismissedIdsRef.current.delete(id);
         setActiveIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
         fetchJob(id);
       }
@@ -234,6 +239,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
     const unlistenAdd = listen<string>('toast-add-download', (event) => {
       const id = event.payload;
       if (id) {
+        dismissedIdsRef.current.delete(id);
         setActiveIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
         fetchJob(id);
       }
@@ -278,6 +284,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
 
   // Handle native window dragging
   const handleDragStart = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (
       target.closest('button') ||
@@ -285,17 +292,21 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
       target.closest('input') ||
       target.closest('.action-btn') ||
       target.closest('.ib') ||
-      target.closest('.x') ||
-      target.closest('.chunks-popover')
+      target.closest('.cx') ||
+      target.closest('.chip') ||
+      target.closest('.rg') ||
+      target.closest('.dr') ||
+      target.closest('.toast-thumb-img') ||
+      target.closest('.tx') ||
+      target.closest('.eta')
     ) {
       return;
     }
-    if (e.button === 0) {
-      try {
-        getCurrentWebviewWindow().startDragging();
-      } catch {
-        // ignore if not running in Tauri window
-      }
+    try {
+      isUserDraggingRef.current = true;
+      getCurrentWebviewWindow().startDragging();
+    } catch {
+      // ignore if not running in Tauri window
     }
   }, []);
 
@@ -306,6 +317,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
     try {
       const win = getCurrentWebviewWindow();
       win.onMoved(({ payload: pos }) => {
+        if (!isUserDraggingRef.current) return;
         if (timer) clearTimeout(timer);
         timer = setTimeout(async () => {
           try {
@@ -368,6 +380,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
 
   const handleDismiss = useCallback(
     async (id: string) => {
+      dismissedIdsRef.current.add(id);
       const next = activeIds.filter((x) => x !== id);
       setActiveIds(next);
       if (next.length === 0) {
@@ -506,7 +519,6 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
             key={id}
             className={`toast ${isOpen ? 'open' : ''}`}
             style={{ ['--rc' as any]: ringColor }}
-            data-tauri-drag-region
             onMouseDown={handleDragStart}
             onMouseEnter={() => {
               hoveredRef.current[id] = true;
@@ -515,7 +527,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
               hoveredRef.current[id] = false;
             }}
           >
-            <div className="row" data-tauri-drag-region onMouseDown={handleDragStart}>
+            <div className="row" onMouseDown={handleDragStart}>
               <div className="rg">
                 <svg className="r" viewBox="0 0 52 52">
                   <circle className="rt" cx="26" cy="26" r="21" />
@@ -574,7 +586,6 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
 
               <div
                 className="tx"
-                data-tauri-drag-region
                 onClick={() => handleToggleExpand(id)}
                 title="Click for details"
               >
@@ -584,7 +595,6 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
 
               <div
                 className="eta"
-                data-tauri-drag-region
                 onClick={() => handleToggleExpand(id)}
                 title="Click for details"
               >
@@ -655,9 +665,13 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
                 <button
                   className="ib pr"
                   title="Retry"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    handleTogglePause(job);
+                    try {
+                      await invoke('retry_download', { id: job.id });
+                    } catch (err) {
+                      console.error('Failed to retry download:', err);
+                    }
                   }}
                 >
                   <svg viewBox="0 0 24 24">

@@ -10,7 +10,7 @@ export type JobState =
   | 'failed'
   | 'cancelled';
 
-export type JobType = 'http_file' | 'hls_vod' | 'dash_vod' | 'torrent' | 'live_stream';
+export type JobType = 'http_file' | 'hls_vod' | 'dash_vod' | 'torrent' | 'live_stream' | 'managed_media';
 
 export interface DownloadJob {
   id: string;
@@ -120,4 +120,38 @@ export interface PlaylistMetadata {
   channel: string | null;
   item_count: number;
   items: PlaylistItem[];
+}
+
+export interface ResolvedMediaFormat {
+  format_id: string;
+  format_note?: string | null;
+  width?: number | null;
+  height?: number | null;
+  resolution_label: string;
+  fps?: number | null;
+  vcodec?: string | null;
+  acodec?: string | null;
+  container: string;
+  protocol: string;
+  bitrate_kbps?: number | null;
+  has_video: boolean;
+  has_audio: boolean;
+  filesize?: number | null;
+  filesize_approx?: number | null;
+  filesize_type: 'exact' | 'estimated' | 'unknown';
+  requires_merge: boolean;
+  merge_audio_format_id?: string | null;
+}
+
+export interface MediaMetadata {
+  source_url: string;
+  webpage_url: string;
+  site_name: string;
+  title: string;
+  media_id: string;
+  duration_seconds?: number | null;
+  thumbnail_url?: string | null;
+  extractor: string;
+  formats: ResolvedMediaFormat[];
+  is_direct_media: boolean;
 }

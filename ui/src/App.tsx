@@ -15,7 +15,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { ContextMenu } from './components/ContextMenu';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { PlaylistModal } from './components/PlaylistModal';
-import { typeOfJob } from './utils';
+import { typeOfJob, isMediaPageUrl } from './utils';
 
 const DEFAULT_SETTINGS: AppSettings = {
   dir: 'C:\\Users\\User\\Downloads',
@@ -255,7 +255,13 @@ export function App() {
   const [isExtensionConnected, setIsExtensionConnected] = useState(false);
 
   // Modals & popups
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('modal') === 'add';
+    } catch {
+      return false;
+    }
+  });
   const [playlistModalUrl, setPlaylistModalUrl] = useState<string | null>(() => {
     try {
       if (new URLSearchParams(window.location.search).get('modal') === 'playlist') {
@@ -497,6 +503,43 @@ export function App() {
   }, [downloads, currentCategory, searchQuery]);
 
   // Actions
+  const handleAddMedia = async (args: {
+    url: string;
+    formatId: string;
+    filename: string;
+    destination: string;
+    startImmediately: boolean;
+    thumbnailUrl?: string | null;
+  }) => {
+    try {
+      const job = await invoke<DownloadJob>('create_media_download', {
+        args: {
+          url: args.url,
+          format_id: args.formatId,
+          filename: args.filename,
+          destination: args.destination || null,
+          priority: 'normal',
+          thumbnail_url: args.thumbnailUrl || null,
+          start_immediately: args.startImmediately,
+        },
+      });
+
+      if (currentCategory === 'fin') {
+        setCurrentCategory('all');
+      }
+
+      await loadDownloads();
+      showToast(
+        args.startImmediately
+          ? `Started media download: ${job.filename}`
+          : `Queued media download: ${job.filename}`
+      );
+    } catch (err: unknown) {
+      showToast(`Error adding media download: ${String(err)}`);
+      throw err;
+    }
+  };
+
   const handleAddUrls = async (
     urls: string[],
     dir: string,
@@ -506,21 +549,37 @@ export function App() {
     let createdCount = 0;
     for (const url of urls) {
       try {
-        const job = await invoke<DownloadJob>('create_download', {
-          url,
-          destination: dir || null,
-          priority: 'normal',
-        });
-        createdCount++;
-
-        if (!startImmediately) {
-          await invoke('pause_download', { id: job.id });
+        if (isMediaPageUrl(url)) {
+          await invoke<DownloadJob>('create_media_download', {
+            args: {
+              url,
+              format_id: 'best',
+              filename: null,
+              destination: dir || null,
+              priority: 'normal',
+              thumbnail_url: null,
+              start_immediately: startImmediately,
+            },
+          });
+        } else {
+          const job = await invoke<DownloadJob>('create_download', {
+            url,
+            destination: dir || null,
+            priority: 'normal',
+          });
+          if (!startImmediately) {
+            await invoke('pause_download', { id: job.id });
+          }
         }
+        createdCount++;
       } catch (err) {
         showToast(`Error adding ${url}: ${String(err)}`);
       }
     }
 
+    if (currentCategory === 'fin') {
+      setCurrentCategory('all');
+    }
     await loadDownloads();
     showToast(`Added ${createdCount} download(s)`);
   };
@@ -883,6 +942,7 @@ export function App() {
           defaultConnections={settings.con}
           onClose={() => setIsAddModalOpen(false)}
           onSubmit={handleAddUrls}
+          onSubmitMedia={handleAddMedia}
           onOpenPlaylist={(url) => {
             setIsAddModalOpen(false);
             setPlaylistModalUrl(url);

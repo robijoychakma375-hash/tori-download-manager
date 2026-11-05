@@ -31,6 +31,8 @@ html.toast-mode #root {
   background: var(--panel);
   box-shadow: 0 0 0 1px var(--bline), 0 6px 18px rgba(0, 0, 0, 0.28);
   box-sizing: border-box;
+  pointer-events: auto !important;
+  -webkit-app-region: no-drag !important;
 }
 
 .toast.open {
@@ -44,6 +46,8 @@ html.toast-mode #root {
   padding: 12px 12px 12px 14px;
   box-sizing: border-box;
   cursor: grab;
+  pointer-events: auto !important;
+  -webkit-app-region: no-drag !important;
 }
 
 .toast .row:active {
@@ -52,8 +56,10 @@ html.toast-mode #root {
 
 .toast .row button,
 .toast .row .ib,
-.toast .row .x {
+.toast .row .cx {
   cursor: pointer;
+  pointer-events: auto !important;
+  -webkit-app-region: no-drag !important;
 }
 
 .toast .rg {
@@ -61,6 +67,9 @@ html.toast-mode #root {
   width: 52px;
   height: 52px;
   flex: none;
+  cursor: default;
+  pointer-events: auto !important;
+  -webkit-app-region: no-drag !important;
 }
 
 .toast .rg svg.r {
@@ -93,6 +102,9 @@ html.toast-mode #root {
   display: grid;
   place-items: center;
   box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.4);
+  cursor: default;
+  pointer-events: auto !important;
+  -webkit-app-region: no-drag !important;
 }
 
 .toast .chip.has-thumb {
@@ -149,6 +161,8 @@ html.toast-mode #root {
   min-width: 0;
   padding: 2px 0;
   cursor: pointer;
+  pointer-events: auto !important;
+  -webkit-app-region: no-drag !important;
 }
 
 .toast .tx b {
@@ -175,6 +189,8 @@ html.toast-mode #root {
   flex: none;
   min-width: 58px;
   cursor: pointer;
+  pointer-events: auto !important;
+  -webkit-app-region: no-drag !important;
 }
 
 .toast .eta b {
@@ -259,6 +275,8 @@ html.toast-mode #root {
   display: none;
   padding: 0 18px 16px;
   margin-top: -2px;
+  pointer-events: auto !important;
+  -webkit-app-region: no-drag !important;
 }
 
 .toast.open .dr {

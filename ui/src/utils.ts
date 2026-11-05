@@ -49,6 +49,9 @@ export function typeOfJob(job: DownloadJob): string {
     return 'Video';
   }
   const ext = job.filename.split('.').pop()?.toLowerCase() || '';
+  if (job.job_type === 'managed_media' && !TY_MAP[ext]) {
+    return 'Video';
+  }
   return TY_MAP[ext] || 'Other';
 }
 
@@ -182,5 +185,27 @@ export function stateLabel(state: string): string {
     default:
       return state;
   }
+}
+
+export function isMediaPageUrl(url: string): boolean {
+  if (!url) return false;
+  const u = url.trim().toLowerCase();
+  return (
+    u.includes('youtube.com/watch') ||
+    u.includes('youtu.be/') ||
+    u.includes('youtube.com/shorts/') ||
+    u.includes('vimeo.com/') ||
+    u.includes('twitch.tv/') ||
+    u.includes('soundcloud.com/') ||
+    u.includes('bilibili.com/video/') ||
+    u.includes('dailymotion.com/video/') ||
+    u.includes('tiktok.com/')
+  );
+}
+
+export function isPlaylistUrl(url: string): boolean {
+  if (!url) return false;
+  const u = url.trim().toLowerCase();
+  return u.includes('list=') || u.includes('playlist');
 }
 

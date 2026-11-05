@@ -724,7 +724,11 @@ async fn handle_playlist_resolve(
         ));
     }
 
-    match state.resolver.resolve_playlist(raw_url, payload.limit).await {
+    match state
+        .resolver
+        .resolve_playlist(raw_url, payload.limit)
+        .await
+    {
         Ok(metadata) => Ok(Json(metadata)),
         Err(e) => {
             let (status, msg) = match e {
@@ -803,7 +807,10 @@ async fn handle_playlist_enqueue(
                 job_ids.push(id);
             }
             Err(e) => {
-                eprintln!("[TORI] Failed to enqueue playlist item '{}': {}", item.title, e);
+                eprintln!(
+                    "[TORI] Failed to enqueue playlist item '{}': {}",
+                    item.title, e
+                );
             }
         }
     }

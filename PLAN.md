@@ -1,36 +1,49 @@
-# TORI Download Manager — Gate 11 Execution Plan
+# TORI Download Manager — Gate 12.1 Execution Plan
 
 ## Milestone Objective
-Implement the exact design reproduction from `design/tori-final/` into the TORI React + Tauri 2 desktop application across two orderly stages:
-- **Stage A (Completed):** Main Window and Settings Modal exact reproduction.
-- **Stage B (Next):** Download Toast popup migration (`tori-download-toast.html`) replacing the legacy modal/window.
+Resolve critical functional regressions in TORI Download Manager v2.0:
+1. **Interactive Download Toast:** Restore real native mouse inputs (Pause, Resume, Retry, Open File, Show in Folder, Dismiss, Expand/Collapse), window dragging from safe non-interactive areas without click hijacking, and prevent instant resurrection on next progress event.
+2. **Add URL Media Downloading:** Route video webpage URLs (e.g. YouTube watch URLs) to the managed media resolver (`yt-dlp`) and backend `create_managed_media_download` pipeline rather than the direct HTTP chunk engine (which rejects HTML pages). Include format/resolution selection and support both "Start Download" and "Download Later".
+3. **Database & UI Synchronization:** Ensure download records, active filters (All, Finished, Unfinished, Categories), and sidebar badge counts stay accurately synchronized.
 
 ---
 
-## Status of Stage A (Main Window & Settings) — COMPLETED
-- [x] **Tokens & CSS Variables:** Imported exact `tokens.css` with full light, dark, and accent variables (`--a1` through `--ar` for Indigo, Ocean, Emerald, Rose).
-- [x] **Windows 11 Titlebar:** Replaced macOS dots with single flat 32px titlebar, left Tori icon badge, and caption buttons (`_`, `□`, `✕` with red hover `#c42b1c`).
-- [x] **Toolbar:** 58px height, exact SVG icons from `/icons/toolbar/`, search input with magnifying glass.
-- [x] **Sidebar:** 200px width, Library & Categories, chip SVGs from `/icons/chips/`, tinted selection with 3px vertical accent bar on left.
-- [x] **Download Table:** 34px rows, 5px radius, tinted selection with 3px vertical accent bar, inline progress bars with static gradients (no shimmer/animation).
-- [x] **Bottom Pane Removal:** Bottom details/segments pane completely removed from layout.
-- [x] **Toggle Switches:** Rebuilt using real elements (40x24 track, 18x18 knob, 16px translate, gradient `--a1 -> --a2`).
-- [x] **Settings Modal:** 4 tabs (Appearance, Download Engine, Browser Integration, About). Appearance tab features Accent Color swatches (Indigo, Ocean, Emerald, Rose) and Theme selector.
-- [x] **Strict Performance Rules:** `backdrop-filter: none`, `animation: none`, solid colors only.
-- [x] **Quality Gates:** `cargo test` (98/98 passed), `cargo clippy` (0 warnings), `cargo fmt` (clean), `npm run build` (clean), release binary verified (`target/release/tori-download-manager.exe`).
+## Order of Execution
 
----
+### Phase 1 — Download Toast Interactivity, Dragging & Dismissal Fix
+- [ ] Inspect `DownloadToast.tsx`, `DownloadToast.css`, and window creation flags.
+- [ ] Remove `data-tauri-drag-region` from `.toast`, `.row`, `.tx`, and `.eta` to prevent Windows `WM_NCHITTEST` `HTCAPTION` click-interception.
+- [ ] Apply `-webkit-app-region: no-drag !important;` and `pointer-events: auto !important;` to all interactive controls (`.ib`, `.cx`, `.chip`, `.rg`, `button`, `input`, `a`).
+- [ ] Refine `handleDragStart`: initiate `getCurrentWebviewWindow().startDragging()` exclusively on primary mouse down (`e.button === 0`) over safe neutral areas (excluding buttons, thumbnail chips, dismiss button, and drawers).
+- [ ] Prevent instant re-creation on progress events: implement `dismissedIdsRef = useRef<Set<string>>(new Set())` so dismissed downloads remain hidden until explicitly reopened.
+- [ ] Verify Dismiss (`×`) hides the toast without stopping the download or terminating the process.
 
-## Status of Stage B (Download Toast Popup) — COMPLETED
-- [x] **Toast Component:** Implemented `DownloadToast.tsx` and `DownloadToast.css` matching `tori-download-toast.html` down to the pixel.
-- [x] **Circular Progress Ring:** 52px SVG with dynamic `stroke-dashoffset` (`stroke-dasharray="131.95"`), 4.5px stroke width, radius 21.
-- [x] **Category Chip & Badge:** 30x30 chip centered inside ring with category SVGs and linear gradients; 18px badge overlay for complete (checkmark) and failed (alert).
-- [x] **Tabular Subtext & ETA:** Bold filename with ellipsis, secondary line with downloaded/total and speed, tabular numeric ETA.
-- [x] **Action Buttons & Dismissal:** 36px round buttons (`.ib`) for Pause, Resume, Open, Folder, Retry. 24px dismiss button (`.cx`) that dismisses toast without cancelling download.
-- [x] **Expandable Drawer:** Toggled on filename/ETA click, shows real connection segment meters, hostname, save-to destination, and connection count / resumable flag.
-- [x] **Auto-Dismissal & Hover Pause:** 9-second auto-dismiss on completion; paused while mouse hovers over card.
-- [x] **Window Mechanics:** Tauri 2 `WebviewWindow` (`progress_toast`), `always_on_top(true)`, `decorations(false)`, `transparent(true)`, `skip_taskbar(true)`, `focused(false)`, anchored bottom-right above taskbar, dynamically sized via `update_toast_bounds`.
-- [x] **Multi-Toast Management:** Up to 3 cards visible simultaneously, with `+N more` indicator when > 3 active downloads.
-- [x] **Settings Integration:** "Show download popup: Always / On start only / Never" added to SettingsModal and persisted in SQLite.
-- [x] **Verification & Artifacts:** All 10 screenshots captured in brain directory, verified with real byte-range server download and process safety checks. Full workspace tests (105/105 passed), cargo clippy (0 warnings), rustfmt (clean).
+### Phase 2 — Add URL Managed Media Integration (Backend & Frontend)
+- [ ] Backend: Add `resolve_media(url: String)` Tauri command in `src-tauri/src/commands.rs` wrapping `tdm_core::MediaResolver::new().resolve(&url).await`.
+- [ ] Backend: Add `create_media_download(args)` Tauri command in `src-tauri/src/commands.rs` wrapping `state.manager.create_managed_media_download(...)`, supporting `start_immediately: bool` (for Download Later vs Start Download).
+- [ ] Backend: Register commands in `src-tauri/src/lib.rs` and update `capabilities/default.json` if needed.
+- [ ] Frontend: Update `AddDownloadModal.tsx` to detect media URLs (`isMediaPageUrl`, `isPlaylistUrl`).
+- [ ] Frontend: Hide/disable direct HTTP connection slider for managed media downloads.
+- [ ] Frontend: Asynchronously fetch available formats/resolutions via `resolve_media`, displaying thumbnail preview, title, and resolution dropdown (`Best Quality`, `1080p`, `720p`, `480p`, `Audio Only`).
+- [ ] Frontend: Connect "Start Download" and "Download Later" to `create_media_download` in `App.tsx`.
 
+### Phase 3 — Download List, Category Filtering & Persistence Synchronization
+- [ ] Verify `filteredDownloads` logic in `App.tsx` for `all`, `unf`, `fin`, and category filters.
+- [ ] Confirm sidebar badge counts match actual SQLite records and in-memory download states.
+- [ ] Confirm database persistence across application restarts.
+
+### Phase 4 — Comprehensive Verification & Report
+- [ ] Run `cargo test --workspace -- --test-threads=2` (all 107+ tests passing).
+- [ ] Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [ ] Run `cargo fmt --all -- --check`.
+- [ ] Run `npm --prefix ui run build` (0 TypeScript errors).
+- [ ] Build release executable: `cargo tauri build --no-bundle`.
+- [ ] Create and execute `scripts/verify_gate12_1.js`:
+  - Native mouse input on Toast (Pause, Resume, Drag, Expand, Dismiss).
+  - YouTube video download via Add URL with FFprobe validation of playable video/audio.
+  - Direct HTTP URL download.
+  - Playlist detection & enqueue.
+  - Download list persistence & sidebar synchronization.
+- [ ] Capture real Windows screenshots for report artifacts.
+- [ ] Generate `GATE12_1_TOAST_INTERACTION_AND_ADD_URL_FIX_REPORT.md`.
+- [ ] Git commit and status report.

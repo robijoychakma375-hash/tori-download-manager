@@ -717,10 +717,107 @@ pub async fn enqueue_playlist_items(
                 created_ids.push(id);
             }
             Err(e) => {
-                eprintln!("[TORI] Failed to enqueue playlist item '{}': {}", item.title, e);
+                eprintln!(
+                    "[TORI] Failed to enqueue playlist item '{}': {}",
+                    item.title, e
+                );
             }
         }
     }
 
     Ok(created_ids)
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CreateMediaDownloadArgs {
+    pub url: String,
+    pub format_id: Option<String>,
+    pub filename: Option<String>,
+    pub destination: Option<String>,
+    pub priority: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub start_immediately: Option<bool>,
+}
+
+#[tauri::command]
+pub async fn resolve_media(url: String) -> Result<tdm_core::MediaMetadata, String> {
+    let raw_url = url.trim();
+    if raw_url.is_empty() {
+        return Err("Missing media URL to resolve".to_string());
+    }
+    let resolver = tdm_core::MediaResolver::new();
+    resolver.resolve(raw_url).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_media_download(
+    args: CreateMediaDownloadArgs,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<DownloadJob, String> {
+    let raw_url = args.url.trim();
+    if raw_url.is_empty() {
+        return Err("Missing media URL".to_string());
+    }
+
+    let format_id = args.format_id.unwrap_or_else(|| "best".to_string());
+
+    let dest_path = if let Some(ref d) = args.destination {
+        let clean = d.trim();
+        if clean.contains("..") {
+            return Err("Invalid destination path: directory traversal rejected.".to_string());
+        }
+        if !clean.is_empty() {
+            PathBuf::from(clean)
+        } else {
+            get_default_download_path()
+        }
+    } else if let Some(def) = state.manager.default_download_dir() {
+        PathBuf::from(def)
+    } else {
+        get_default_download_path()
+    };
+
+    let prio = match args.priority.as_deref() {
+        Some("high") => tdm_core::Priority::High,
+        Some("low") => tdm_core::Priority::Low,
+        _ => tdm_core::Priority::Normal,
+    };
+
+    let initial_filename = args
+        .filename
+        .map(|f| tdm_core::sanitize_filename(&f))
+        .filter(|f| !f.is_empty())
+        .unwrap_or_else(|| "media_download.mp4".to_string());
+
+    let filename_with_ext = if !initial_filename.contains('.') {
+        format!("{}.mp4", initial_filename)
+    } else {
+        initial_filename
+    };
+
+    let job = state
+        .manager
+        .create_managed_media_download(
+            raw_url,
+            &format_id,
+            &filename_with_ext,
+            &dest_path,
+            prio,
+            args.thumbnail_url,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let start_now = args.start_immediately.unwrap_or(true);
+    if start_now {
+        state
+            .manager
+            .start_download(&job.id)
+            .map_err(|e| e.to_string())?;
+
+        let _ = open_progress_window_internal(&app, &state.manager, &job.id, false).await;
+    }
+
+    Ok(job)
 }

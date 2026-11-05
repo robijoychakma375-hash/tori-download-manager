@@ -16,7 +16,7 @@ pub use engine::{
 pub use error::{EngineError, Result};
 pub use live::{detect_live_protocol, LiveProtocol, LiveRecordingOptions};
 pub use resolver::{
-    DownloadCapability, FilesizeType, MediaMetadata, MediaResolver, PlaylistItem,
-    PlaylistMetadata, ResolveRequest, ResolvedMediaFormat, ResolverStatus,
+    DownloadCapability, FilesizeType, MediaMetadata, MediaResolver, PlaylistItem, PlaylistMetadata,
+    ResolveRequest, ResolvedMediaFormat, ResolverStatus,
 };
 pub use types::{ChunkRecord, DownloadJob, DownloadProgress, JobState, JobType, Priority};
