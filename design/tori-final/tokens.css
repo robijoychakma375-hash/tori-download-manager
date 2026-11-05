@@ -1,0 +1,62 @@
+/* Tori design tokens. Light = :root, Dark = [data-theme="dark"] */
+:root{
+  --win:#f5f5f8;
+  --panel:#fff;
+  --pline:rgba(0,0,0,.08);
+  --tb1:rgba(252,252,254,.94);
+  --tb2:rgba(243,243,247,.94);
+  --tbl:rgba(0,0,0,.13);
+  --txt:#1d1d1f;
+  --mut:#86868b;
+  --ttl:#3a3a3c;
+  --blue:#4f46e5;
+  --link:#4f46e5;
+  --green:#1faa59;
+  --bar:#6366f1;
+  --seg:#6366f1;
+  --field:#fff;
+  --fline:rgba(0,0,0,.16);
+  --b1:#fff;
+  --b2:#f7f7f9;
+  --bline:rgba(0,0,0,.14);
+  --sel:#5b5ef0;
+  --alt:rgba(0,0,0,.022);
+  --row:#fff;
+  --side:rgba(236,236,243,.88);
+  --bad:#e5484d;
+  --desk:#c9c7f2
+}
+[data-theme="dark"]{
+  --win:#232326;
+  --panel:#2b2b30;
+  --pline:rgba(255,255,255,.08);
+  --tb1:rgba(54,54,60,.96);
+  --tb2:rgba(45,45,50,.96);
+  --tbl:rgba(0,0,0,.5);
+  --txt:#f2f2f4;
+  --mut:#98989f;
+  --ttl:#e5e5e7;
+  --blue:#a5a8ff;
+  --link:#a5a8ff;
+  --green:#32d74b;
+  --bar:#818cf8;
+  --seg:#818cf8;
+  --field:#1c1c1f;
+  --fline:rgba(255,255,255,.15);
+  --b1:#4a4a50;
+  --b2:#3e3e43;
+  --bline:rgba(255,255,255,.13);
+  --sel:#6366f1;
+  --alt:rgba(255,255,255,.03);
+  --row:#1e1e21;
+  --side:rgba(37,37,42,.92);
+  --bad:#ff6b6b;
+  --desk:#0d0d14
+}
+:root{--accent:#6366f1;--accent-2:#4f46e5;--accent-grad:linear-gradient(#7679ff,#4f46e5);--radius-window:13px;--radius-ctl:8px;--radius-row:7px;--font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Segoe UI",Roboto,sans-serif}
+
+/* Accent themes: set <html data-accent="ocean|emerald|rose">. Default = indigo. */
+:root{--a1:#7679ff;--a2:#4f46e5;--a3:#6366f1;--a4:#5b5ef0;--a5:#a78bfa;--a7:#4338ca;--ab:#818cf8;--at:#a5a8ff;--ar:99 102 241}
+[data-accent="ocean"]{--a1:#4fb3ff;--a2:#0a6fd8;--a3:#0a84ff;--a4:#2f8cf5;--a5:#67e8f9;--a7:#075bb5;--ab:#4fb3ff;--at:#8fcbff;--ar:10 132 255}
+[data-accent="emerald"]{--a1:#34d399;--a2:#059669;--a3:#10b981;--a4:#22b57e;--a5:#86efac;--a7:#047857;--ab:#34d399;--at:#6ee7b7;--ar:16 185 129}
+[data-accent="rose"]{--a1:#ff7ab0;--a2:#e11d63;--a3:#f43f78;--a4:#ee4f86;--a5:#fdba74;--a7:#be123c;--ab:#ff7ab0;--at:#ffa3c2;--ar:244 63 120}

@@ -146,3 +146,4 @@ GATE 10.6 VERIFICATION SUMMARY
 - [x] **`npm --prefix ui run build`**: Client production build passed in 341ms with 0 errors.
 - [x] **Release Binaries**: Compiled `target\release\tori-download-manager.exe` and `target\release\tdm-native-host.exe`.
 - [x] **Zero Regressions**: Microsoft Edge CDP integration verified 14/14 steps (`scripts/verify_gate10_5_3_2.js`).
+

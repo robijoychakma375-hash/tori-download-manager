@@ -97,7 +97,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateSettings,
   onClose,
 }) => {
-  const [currentTab, setCurrentTab] = useState<TabKey>('engine');
+  const [currentTab, setCurrentTab] = useState<TabKey>(() => {
+    try {
+      const paramTab = new URLSearchParams(window.location.search).get('tab');
+      if (paramTab && ['appearance', 'engine', 'integration', 'about'].includes(paramTab)) {
+        return paramTab as TabKey;
+      }
+    } catch {
+      // ignore
+    }
+    return 'engine';
+  });
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
   const [hostStatus, setHostStatus] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
@@ -211,6 +221,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* ================= APPEARANCE ================= */}
           {currentTab === 'appearance' && (
             <div className="scard">
+              <div className="sr">
+                <div>
+                  <b>Accent Color</b>
+                  <span className="sub">
+                    {settings.accent === 'ocean'
+                      ? 'Ocean'
+                      : settings.accent === 'emerald'
+                      ? 'Emerald'
+                      : settings.accent === 'rose'
+                      ? 'Rose'
+                      : 'Indigo'}
+                  </span>
+                </div>
+                <div className="sc">
+                  <button
+                    type="button"
+                    className={`acs ${(!settings.accent || settings.accent === 'indigo') ? 'on' : ''}`}
+                    style={{ background: 'linear-gradient(#7679ff, #4f46e5)' }}
+                    title="Indigo"
+                    onClick={() => update('accent', 'indigo')}
+                  />
+                  <button
+                    type="button"
+                    className={`acs ${settings.accent === 'ocean' ? 'on' : ''}`}
+                    style={{ background: 'linear-gradient(#4fb3ff, #0a6fd8)' }}
+                    title="Ocean"
+                    onClick={() => update('accent', 'ocean')}
+                  />
+                  <button
+                    type="button"
+                    className={`acs ${settings.accent === 'emerald' ? 'on' : ''}`}
+                    style={{ background: 'linear-gradient(#34d399, #059669)' }}
+                    title="Emerald"
+                    onClick={() => update('accent', 'emerald')}
+                  />
+                  <button
+                    type="button"
+                    className={`acs ${settings.accent === 'rose' ? 'on' : ''}`}
+                    style={{ background: 'linear-gradient(#ff7ab0, #e11d63)' }}
+                    title="Rose"
+                    onClick={() => update('accent', 'rose')}
+                  />
+                </div>
+              </div>
+
               <div className="sr">
                 <div>
                   <b>Theme</b>

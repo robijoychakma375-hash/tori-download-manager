@@ -114,8 +114,23 @@ export function fmtT(seconds: number | null | undefined): string {
 }
 
 export function formatAdded(isoDate: string): string {
+  if (!isoDate) return '';
+  if (
+    isoDate.startsWith('Today') ||
+    isoDate.startsWith('Yesterday') ||
+    isoDate.startsWith('Mon') ||
+    isoDate.startsWith('Tue') ||
+    isoDate.startsWith('Wed') ||
+    isoDate.startsWith('Thu') ||
+    isoDate.startsWith('Fri') ||
+    isoDate.startsWith('Sat') ||
+    isoDate.startsWith('Sun')
+  ) {
+    return isoDate;
+  }
   try {
     const d = new Date(isoDate);
+    if (isNaN(d.getTime())) return isoDate;
     const now = new Date();
     const isToday =
       d.getDate() === now.getDate() &&

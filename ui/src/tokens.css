@@ -9,17 +9,17 @@
   --txt: #1d1d1f;
   --mut: #86868b;
   --ttl: #3a3a3c;
-  --blue: #4f46e5;
-  --link: #4f46e5;
+  --blue: var(--a2);
+  --link: var(--a2);
   --green: #1faa59;
-  --bar: #6366f1;
-  --seg: #6366f1;
+  --bar: var(--a3);
+  --seg: var(--a3);
   --field: #fff;
   --fline: rgba(0, 0, 0, 0.16);
   --b1: #fff;
   --b2: #f7f7f9;
   --bline: rgba(0, 0, 0, 0.14);
-  --sel: #5b5ef0;
+  --sel: var(--a4);
   --alt: rgba(0, 0, 0, 0.022);
   --row: #fff;
   --side: rgba(236, 236, 243, 0.88);
@@ -37,17 +37,17 @@
   --txt: #f2f2f4;
   --mut: #98989f;
   --ttl: #e5e5e7;
-  --blue: #a5a8ff;
-  --link: #a5a8ff;
+  --blue: var(--at);
+  --link: var(--at);
   --green: #32d74b;
-  --bar: #818cf8;
-  --seg: #818cf8;
+  --bar: var(--ab);
+  --seg: var(--ab);
   --field: #1c1c1f;
   --fline: rgba(255, 255, 255, 0.15);
   --b1: #4a4a50;
   --b2: #3e3e43;
   --bline: rgba(255, 255, 255, 0.13);
-  --sel: #6366f1;
+  --sel: var(--a3);
   --alt: rgba(255, 255, 255, 0.03);
   --row: #1e1e21;
   --side: rgba(37, 37, 42, 0.92);
@@ -59,9 +59,73 @@
   --accent: #6366f1;
   --accent-2: #4f46e5;
   --accent-grad: linear-gradient(#7679ff, #4f46e5);
-  --radius-window: 13px;
-  --radius-ctl: 8px;
-  --radius-row: 7px;
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
+  --radius-window: 8px;
+  --radius-ctl: 5px;
+  --radius-row: 5px;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
 }
 
+/* Accent themes: set <html data-accent="ocean|emerald|rose">. Default = indigo. */
+:root {
+  --a1: #7679ff;
+  --a2: #4f46e5;
+  --a3: #6366f1;
+  --a4: #5b5ef0;
+  --a5: #a78bfa;
+  --a7: #4338ca;
+  --ab: #818cf8;
+  --at: #a5a8ff;
+  --ar: 99 102 241;
+  --w1: #8b8cff;
+  --wb: #6d6ee8;
+  --w1d: #2c2a72;
+  --wbd: #0b0b12;
+}
+
+[data-accent="ocean"] {
+  --a1: #4fb3ff;
+  --a2: #0a6fd8;
+  --a3: #0a84ff;
+  --a4: #2f8cf5;
+  --a5: #67e8f9;
+  --a7: #075bb5;
+  --ab: #4fb3ff;
+  --at: #8fcbff;
+  --ar: 10 132 255;
+  --w1: #6fc3ff;
+  --wb: #3a7bd5;
+  --w1d: #0f3b6e;
+  --wbd: #050d1a;
+}
+
+[data-accent="emerald"] {
+  --a1: #34d399;
+  --a2: #059669;
+  --a3: #10b981;
+  --a4: #22b57e;
+  --a5: #86efac;
+  --a7: #047857;
+  --ab: #34d399;
+  --at: #6ee7b7;
+  --ar: 16 185 129;
+  --w1: #6ee7b7;
+  --wb: #2fa37a;
+  --w1d: #0c4a3a;
+  --wbd: #04120d;
+}
+
+[data-accent="rose"] {
+  --a1: #ff7ab0;
+  --a2: #e11d63;
+  --a3: #f43f78;
+  --a4: #ee4f86;
+  --a5: #fdba74;
+  --a7: #be123c;
+  --ab: #ff7ab0;
+  --at: #ffa3c2;
+  --ar: 244 63 120;
+  --w1: #ff9ac0;
+  --wb: #e8618c;
+  --w1d: #5a1233;
+  --wbd: #14050b;
+}

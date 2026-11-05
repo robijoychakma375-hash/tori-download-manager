@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   key: 'tori_live_api_key_v2',
   cap: true,
   theme: 'system',
+  accent: 'indigo',
   motion: false,
   details: false,
 };
@@ -54,6 +55,175 @@ function loadStoredSettings(): AppSettings {
   return DEFAULT_SETTINGS;
 }
 
+const DEMO_DOWNLOADS: DownloadJob[] = [
+  {
+    id: 'demo-1',
+    filename: 'Firefox 61.0.2.dmg',
+    url: 'https://download-installer.cdn.mozilla.net/pub/firefox/releases/61.0.2/mac/en-US/Firefox%2061.0.2.dmg',
+    resolved_url: null,
+    target_path: 'C:\\Users\\User\\Downloads\\Firefox 61.0.2.dmg',
+    temp_path: 'C:\\Users\\User\\Downloads\\Firefox 61.0.2.dmg.tdm-part',
+    total_bytes: 55283000,
+    downloaded_bytes: 48860000,
+    state: 'downloading',
+    job_type: 'http_file',
+    etag: null,
+    last_modified: null,
+    is_resumable: true,
+    chunk_count: 11,
+    priority: 'normal',
+    error_message: null,
+    created_at: 'Today 10:42',
+    updated_at: 'Today 10:42',
+    speed_bps: 1850000,
+    eta_seconds: 3,
+  },
+  {
+    id: 'demo-2',
+    filename: 'ubuntu-24.04-desktop-amd64.iso',
+    url: 'https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso',
+    resolved_url: null,
+    target_path: 'C:\\Users\\User\\Downloads\\ubuntu-24.04-desktop-amd64.iso',
+    temp_path: 'C:\\Users\\User\\Downloads\\ubuntu-24.04-desktop-amd64.iso.tdm-part',
+    total_bytes: 5900000000,
+    downloaded_bytes: 1829000000,
+    state: 'downloading',
+    job_type: 'http_file',
+    etag: null,
+    last_modified: null,
+    is_resumable: true,
+    chunk_count: 16,
+    priority: 'normal',
+    error_message: null,
+    created_at: 'Today 10:40',
+    updated_at: 'Today 10:40',
+    speed_bps: 4200000,
+    eta_seconds: 969,
+  },
+  {
+    id: 'demo-3',
+    filename: 'Big Buck Bunny 1080p.mp4',
+    url: 'https://cdn.example.com/files/Big Buck Bunny 1080p.mp4',
+    resolved_url: null,
+    target_path: 'C:\\Users\\User\\Downloads\\Big Buck Bunny 1080p.mp4',
+    temp_path: 'C:\\Users\\User\\Downloads\\Big Buck Bunny 1080p.mp4.tdm-part',
+    total_bytes: 420000000,
+    downloaded_bytes: 268800000,
+    state: 'downloading',
+    job_type: 'http_file',
+    etag: null,
+    last_modified: null,
+    is_resumable: true,
+    chunk_count: 11,
+    priority: 'normal',
+    error_message: null,
+    created_at: 'Today 10:31',
+    updated_at: 'Today 10:31',
+    speed_bps: 890000,
+    eta_seconds: 170,
+  },
+  {
+    id: 'demo-4',
+    filename: 'setup-vscode-x64.exe',
+    url: 'https://cdn.example.com/files/setup-vscode-x64.exe',
+    resolved_url: null,
+    target_path: 'C:\\Users\\User\\Downloads\\setup-vscode-x64.exe',
+    temp_path: 'C:\\Users\\User\\Downloads\\setup-vscode-x64.exe.tdm-part',
+    total_bytes: 96000000,
+    downloaded_bytes: 0,
+    state: 'queued',
+    job_type: 'http_file',
+    etag: null,
+    last_modified: null,
+    is_resumable: true,
+    chunk_count: 16,
+    priority: 'normal',
+    error_message: null,
+    created_at: 'Today 10:20',
+    updated_at: 'Today 10:20',
+  },
+  {
+    id: 'demo-5',
+    filename: 'photos-2026.zip',
+    url: 'https://cdn.example.com/files/photos-2026.zip',
+    resolved_url: null,
+    target_path: 'C:\\Users\\User\\Downloads\\photos-2026.zip',
+    temp_path: 'C:\\Users\\User\\Downloads\\photos-2026.zip.tdm-part',
+    total_bytes: 820000000,
+    downloaded_bytes: 336200000,
+    state: 'paused',
+    job_type: 'http_file',
+    etag: null,
+    last_modified: null,
+    is_resumable: true,
+    chunk_count: 16,
+    priority: 'normal',
+    error_message: null,
+    created_at: 'Yesterday',
+    updated_at: 'Yesterday',
+  },
+  {
+    id: 'demo-6',
+    filename: 'project-assets.zip',
+    url: 'https://cdn.example.com/files/project-assets.zip',
+    resolved_url: null,
+    target_path: 'C:\\Users\\User\\Downloads\\project-assets.zip',
+    temp_path: 'C:\\Users\\User\\Downloads\\project-assets.zip.tdm-part',
+    total_bytes: 820000000,
+    downloaded_bytes: 820000000,
+    state: 'completed',
+    job_type: 'http_file',
+    etag: null,
+    last_modified: null,
+    is_resumable: true,
+    chunk_count: 16,
+    priority: 'normal',
+    error_message: null,
+    created_at: 'Yesterday',
+    updated_at: 'Yesterday',
+  },
+  {
+    id: 'demo-7',
+    filename: 'lecture-recording.mp3',
+    url: 'https://cdn.example.com/files/lecture-recording.mp3',
+    resolved_url: null,
+    target_path: 'C:\\Users\\User\\Downloads\\lecture-recording.mp3',
+    temp_path: 'C:\\Users\\User\\Downloads\\lecture-recording.mp3.tdm-part',
+    total_bytes: 48000000,
+    downloaded_bytes: 48000000,
+    state: 'completed',
+    job_type: 'http_file',
+    etag: null,
+    last_modified: null,
+    is_resumable: true,
+    chunk_count: 8,
+    priority: 'normal',
+    error_message: null,
+    created_at: 'Mon 09:12',
+    updated_at: 'Mon 09:12',
+  },
+  {
+    id: 'demo-8',
+    filename: 'annual-report.pdf',
+    url: 'https://cdn.example.com/files/annual-report.pdf',
+    resolved_url: null,
+    target_path: 'C:\\Users\\User\\Downloads\\annual-report.pdf',
+    temp_path: 'C:\\Users\\User\\Downloads\\annual-report.pdf.tdm-part',
+    total_bytes: 12400000,
+    downloaded_bytes: 12400000,
+    state: 'completed',
+    job_type: 'http_file',
+    etag: null,
+    last_modified: null,
+    is_resumable: true,
+    chunk_count: 4,
+    priority: 'normal',
+    error_message: null,
+    created_at: 'Mon 08:50',
+    updated_at: 'Mon 08:50',
+  },
+];
+
 export function App() {
   const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const windowMode = urlParams.get('window');
@@ -67,7 +237,18 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [currentCategory, setCurrentCategory] = useState<CategoryKey>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [settings, setSettings] = useState<AppSettings>(loadStoredSettings);
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    const s = loadStoredSettings();
+    const urlAccent = urlParams.get('accent');
+    if (urlAccent && ['indigo', 'ocean', 'emerald', 'rose'].includes(urlAccent)) {
+      s.accent = urlAccent as AppSettings['accent'];
+    }
+    const urlTheme = urlParams.get('theme');
+    if (urlTheme && ['light', 'dark', 'system'].includes(urlTheme)) {
+      s.theme = urlTheme as AppSettings['theme'];
+    }
+    return s;
+  });
   const [isExtensionConnected, setIsExtensionConnected] = useState(false);
 
   // Modals & popups
@@ -95,7 +276,7 @@ export function App() {
     }, 2400);
   }, []);
 
-  // Sync theme with document element
+  // Sync theme and accent with document element
   useEffect(() => {
     const applyTheme = () => {
       const isDark =
@@ -103,6 +284,7 @@ export function App() {
         (settings.theme === 'system' &&
           window.matchMedia('(prefers-color-scheme: dark)').matches);
       document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+      document.documentElement.dataset.accent = settings.accent || 'indigo';
     };
 
     applyTheme();
@@ -112,7 +294,7 @@ export function App() {
     };
     mql.addEventListener('change', listener);
     return () => mql.removeEventListener('change', listener);
-  }, [settings.theme]);
+  }, [settings.theme, settings.accent]);
 
   // Persist settings to localStorage and push to Rust backend engine
   const handleUpdateSettings = (newSettings: AppSettings) => {
@@ -152,16 +334,22 @@ export function App() {
     syncSettings();
   }, []);
 
-  // Load downloads from SQLite backend
+  // Load downloads from SQLite backend (strictly real data; demo items only if explicitly ?demo=1)
   const loadDownloads = useCallback(async () => {
+    if (urlParams.get('demo') === '1') {
+      setDownloads(DEMO_DOWNLOADS);
+      setSelectedId((prev) => (prev ? prev : DEMO_DOWNLOADS[0].id));
+      return;
+    }
     try {
       const list = await invoke<DownloadJob[]>('list_downloads');
       setDownloads(list || []);
       setSelectedId((prev) => (prev ? prev : list && list.length > 0 ? list[0].id : null));
     } catch (err) {
-      console.error('Failed to load downloads:', err);
+      console.error('Failed to load downloads from SQLite:', err);
+      setDownloads([]);
     }
-  }, []);
+  }, [urlParams]);
 
   // Initial setup: downloads, default download folder, extension check
   useEffect(() => {

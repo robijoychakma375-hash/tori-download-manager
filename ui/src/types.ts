@@ -94,6 +94,7 @@ export interface AppSettings {
   key?: string;
   cap?: boolean;
   theme: 'light' | 'dark' | 'system';
+  accent?: 'indigo' | 'ocean' | 'emerald' | 'rose';
   motion: boolean;
   details?: boolean;
 }

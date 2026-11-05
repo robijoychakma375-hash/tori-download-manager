@@ -16,7 +16,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onMaximize,
   isModal = false,
 }) => {
-  const handleClose = async () => {
+  const handleClose = async (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (onClose) {
       onClose();
     } else {
@@ -28,7 +29,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     }
   };
 
-  const handleMinimize = async () => {
+  const handleMinimize = async (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (onMinimize) {
       onMinimize();
     } else {
@@ -40,7 +42,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     }
   };
 
-  const handleMaximize = async () => {
+  const handleMaximize = async (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (onMaximize) {
       onMaximize();
     } else {
@@ -54,16 +57,31 @@ export const TitleBar: React.FC<TitleBarProps> = ({
 
   return (
     <div className="wbar" data-tauri-drag-region>
-      <span className="dot d1" onClick={handleClose} title="Close" />
-      <span className="dot d2" onClick={handleMinimize} title="Minimize" />
-      {!isModal && <span className="dot d3" onClick={handleMaximize} title="Maximize" />}
       {title}
-      {isModal && (
+      {isModal ? (
         <button className="xb" onClick={handleClose} title="Close">
           ×
         </button>
+      ) : (
+        <span className="wc">
+          <b onClick={handleMinimize} title="Minimize">
+            <svg viewBox="0 0 10 10">
+              <path d="M0 5h10" />
+            </svg>
+          </b>
+          <b onClick={handleMaximize} title="Maximize">
+            <svg viewBox="0 0 10 10">
+              <rect x="0.5" y="0.5" width="9" height="9" rx="1" />
+            </svg>
+          </b>
+          <b onClick={handleClose} title="Close">
+            <svg viewBox="0 0 10 10">
+              <path d="M0 0l10 10M10 0L0 10" />
+            </svg>
+          </b>
+        </span>
       )}
     </div>
   );
 };
-
+export default TitleBar;
