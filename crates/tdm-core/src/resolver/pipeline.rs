@@ -65,9 +65,12 @@ impl MediaResolver {
             }
         }
 
-        // 4. Universal Platform Extraction via yt-dlp
-        let json_val = execute_yt_dlp_dump(url_str, None).await?;
-        self.parse_ytdlp_metadata(url_str, &json_val)
+        // 4. Normalize platform media URLs for universal extractor (e.g. Facebook /reels/<id> -> /reel/<id>)
+        let target_url = normalize_platform_media_url(url_str)?;
+
+        // 5. Universal Platform Extraction via yt-dlp
+        let json_val = execute_yt_dlp_dump(&target_url, None).await?;
+        self.parse_ytdlp_metadata(&target_url, &json_val)
     }
 
     /// Resolves metadata and item list for a media playlist (e.g. YouTube playlist, channel).
@@ -1202,4 +1205,88 @@ pub fn parse_ytdlp_playlist_metadata(
         item_count,
         items,
     })
+}
+
+/// Normalizes media URLs for external extractors (e.g. converting Facebook `/reels/<id>` to `/reel/<id>`,
+/// preserving query params on watch URLs, and rejecting generic homepage/feed URLs missing an item ID).
+pub fn normalize_platform_media_url(raw_url: &str) -> Result<String> {
+    let parsed = url::Url::parse(raw_url).map_err(|e| EngineError::InvalidUrl(e.to_string()))?;
+    let host = parsed.host_str().unwrap_or("").to_lowercase();
+
+    if host.contains("facebook.com") || host.contains("fb.watch") {
+        let path = parsed.path();
+
+        // 1. Check for watch URL with query param ?v=<id>
+        if let Some((_, v_val)) = parsed.query_pairs().find(|(k, _)| k == "v") {
+            if !v_val.is_empty() {
+                return Ok(format!("https://www.facebook.com/watch/?v={}", v_val));
+            }
+        }
+
+        // 2. Reject generic Facebook home or feed URLs without a specific video or reel ID
+        if path == "/"
+            || path.is_empty()
+            || path == "/reel"
+            || path == "/reel/"
+            || path == "/reels"
+            || path == "/reels/"
+            || path == "/watch"
+            || path == "/watch/"
+        {
+            return Err(EngineError::InvalidUrl(
+                "Facebook feed or homepage does not contain a specific Reel ID. Please provide a direct Reel or Video URL (e.g. facebook.com/reel/<id>).".to_string(),
+            ));
+        }
+
+        // 3. Match /reel/<id> or /reels/<id> (plural reels -> canonical reel)
+        // e.g. /reel/10153231379946729 or /reels/10153231379946729
+        let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
+        for (idx, seg) in segments.iter().enumerate() {
+            if (*seg == "reel" || *seg == "reels") && idx + 1 < segments.len() {
+                let id = segments[idx + 1];
+                if id != "audio" && !id.is_empty() {
+                    return Ok(format!("https://www.facebook.com/reel/{}", id));
+                }
+            }
+            if *seg == "r" && idx > 0 && segments[idx - 1] == "share" && idx + 1 < segments.len() {
+                let id = segments[idx + 1];
+                if !id.is_empty() {
+                    return Ok(format!("https://www.facebook.com/reel/{}", id));
+                }
+            }
+            if *seg == "v" && idx > 0 && segments[idx - 1] == "share" && idx + 1 < segments.len() {
+                let id = segments[idx + 1];
+                if !id.is_empty() {
+                    return Ok(format!("https://www.facebook.com/watch/?v={}", id));
+                }
+            }
+            if (*seg == "videos" || *seg == "watch" || *seg == "p") && idx + 1 < segments.len() {
+                let id = segments[idx + 1];
+                if !id.is_empty() {
+                    return Ok(format!("https://www.facebook.com/watch/?v={}", id));
+                }
+            }
+        }
+
+        // Handle fb.watch/<id>
+        if host.contains("fb.watch") && !segments.is_empty() {
+            let id = segments[0];
+            if !id.is_empty() {
+                return Ok(format!("https://fb.watch/{}", id));
+            }
+        }
+    } else if host.contains("instagram.com") {
+        let path = parsed.path();
+        let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
+        for (idx, seg) in segments.iter().enumerate() {
+            if *seg == "reels" && idx + 1 < segments.len() {
+                let id = segments[idx + 1];
+                if !id.is_empty() {
+                    return Ok(format!("https://www.instagram.com/reel/{}/", id));
+                }
+            }
+        }
+    }
+
+    Ok(raw_url.to_string())
 }

@@ -28,6 +28,144 @@ function isManagedPlatform(urlOrHost) {
   );
 }
 
+function normalizePlatformUrl(rawUrl) {
+  if (!rawUrl) return { url: '', videoId: '', isSpecific: false, platform: 'unknown' };
+  try {
+    const u = new URL(rawUrl);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname;
+
+    if (host.includes('facebook.com') || host.includes('fb.watch')) {
+      // 1. Check for watch URL with query param ?v=<id>
+      const v = u.searchParams.get('v');
+      if (v && /^\d+$/.test(v)) {
+        return {
+          url: `https://www.facebook.com/watch/?v=${v}`,
+          videoId: v,
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      // 2. Generic home or feed URLs without a specific item ID
+      if (
+        path === '/' ||
+        path === '' ||
+        path === '/reel' ||
+        path === '/reel/' ||
+        path === '/reels' ||
+        path === '/reels/' ||
+        path === '/watch' ||
+        path === '/watch/'
+      ) {
+        return {
+          url: `https://www.facebook.com${path}`,
+          videoId: '',
+          isSpecific: false,
+          platform: 'facebook',
+        };
+      }
+
+      // 3. /reel/<id> or /reels/<id> (plural reels -> canonical /reel/<id>)
+      const reelMatch = path.match(/\/(?:reel|reels)\/([^/?#]+)/i);
+      if (reelMatch && reelMatch[1] && reelMatch[1] !== 'audio') {
+        return {
+          url: `https://www.facebook.com/reel/${reelMatch[1]}`,
+          videoId: reelMatch[1],
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      // 4. /share/r/<id> or /share/v/<id>
+      const shareMatch = path.match(/\/share\/([rv])\/([^/?#]+)/i);
+      if (shareMatch && shareMatch[2]) {
+        const isReel = shareMatch[1].toLowerCase() === 'r';
+        return {
+          url: isReel
+            ? `https://www.facebook.com/reel/${shareMatch[2]}`
+            : `https://www.facebook.com/watch/?v=${shareMatch[2]}`,
+          videoId: shareMatch[2],
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      // 5. /<user>/videos/<id> or /<user>/reels/<id> or /videos/<id>
+      const videoMatch = path.match(/\/(?:videos|watch|p)\/([^/?#]+)/i);
+      if (videoMatch && videoMatch[1]) {
+        return {
+          url: `https://www.facebook.com/watch/?v=${videoMatch[1]}`,
+          videoId: videoMatch[1],
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      // 6. fb.watch/<id>
+      if (host.includes('fb.watch')) {
+        const watchId = path.replace(/^\//, '').split('/')[0];
+        if (watchId) {
+          return {
+            url: `https://fb.watch/${watchId}`,
+            videoId: watchId,
+            isSpecific: true,
+            platform: 'facebook',
+          };
+        }
+      }
+
+      return {
+        url: `${u.origin}${path}`,
+        videoId: '',
+        isSpecific: false,
+        platform: 'facebook',
+      };
+    }
+
+    if (host.includes('youtube.com')) {
+      const v = u.searchParams.get('v');
+      if (v) {
+        return {
+          url: `https://${u.hostname}/watch?v=${v}`,
+          videoId: v,
+          isSpecific: true,
+          platform: 'youtube',
+        };
+      }
+    } else if (host.includes('youtu.be')) {
+      const v = path.replace(/^\//, '').split('/')[0];
+      if (v) {
+        return {
+          url: `https://youtu.be/${v}`,
+          videoId: v,
+          isSpecific: true,
+          platform: 'youtube',
+        };
+      }
+    } else if (host.includes('instagram.com')) {
+      const match = path.match(/\/(?:reel|reels|p)\/([^/?#]+)/i);
+      if (match && match[1]) {
+        return {
+          url: `https://www.instagram.com/reel/${match[1]}/`,
+          videoId: match[1],
+          isSpecific: true,
+          platform: 'instagram',
+        };
+      }
+    }
+
+    return {
+      url: rawUrl,
+      videoId: rawUrl,
+      isSpecific: true,
+      platform: 'generic',
+    };
+  } catch (_) {
+    return { url: rawUrl, videoId: rawUrl, isSpecific: false, platform: 'unknown' };
+  }
+}
+
 /**
  * TORI Download Manager — Content Script
  * Implements Design Source A HTML5 Media Overlay (.pill and .pn panel)
@@ -102,14 +240,46 @@ function isManagedPlatform(urlOrHost) {
     }
   });
 
-  // Extract clean title for media
-  function getMediaTitle(videoEl) {
-    if (videoEl.title) return videoEl.title;
-    if (videoEl.getAttribute('aria-label')) return videoEl.getAttribute('aria-label');
+  // Extract clean title for media, eliminating notification counters like (1) Facebook
+  function getMediaTitle(videoEl, fallbackId = '') {
+    if (videoEl && videoEl.title) return cleanMediaTitle(videoEl.title, fallbackId);
+    if (videoEl && videoEl.getAttribute('aria-label')) return cleanMediaTitle(videoEl.getAttribute('aria-label'), fallbackId);
+
+    // Look for caption in enclosing article or reel container
+    const container = videoEl?.closest?.('[role="article"], [data-pagelet*="Reel"], [data-pagelet*="FeedUnit"], .html5-video-player');
+    if (container) {
+      const heading = container.querySelector('h1, h2, span[dir="auto"]');
+      if (heading && heading.textContent.trim()) {
+        const text = heading.textContent.trim();
+        if (text.length > 3 && !/^Facebook\b/i.test(text)) {
+          return cleanMediaTitle(text, fallbackId);
+        }
+      }
+    }
+
     const h1 = document.querySelector('h1');
-    if (h1 && h1.textContent.trim()) return h1.textContent.trim();
-    if (document.title) return document.title.replace(/ - YouTube$| - Vimeo$/i, '').trim();
-    return 'Video Media';
+    if (h1 && h1.textContent.trim() && !/^Facebook\b/i.test(h1.textContent.trim())) {
+      return cleanMediaTitle(h1.textContent.trim(), fallbackId);
+    }
+
+    if (document.title) {
+      return cleanMediaTitle(document.title, fallbackId);
+    }
+    return fallbackId ? `Facebook Reel · ${fallbackId}` : 'Video Media';
+  }
+
+  function cleanMediaTitle(rawTitle, fallbackId = '') {
+    if (!rawTitle) return fallbackId ? `Facebook Reel · ${fallbackId}` : 'Video Media';
+    let t = rawTitle.trim();
+    // Remove notification badges: (1) Facebook, (9+) Facebook, etc.
+    t = t.replace(/^\(\d+\+?\)\s*/, '');
+    // If title is generic "Facebook", "Facebook - Log In or Sign Up", etc.
+    if (/^Facebook\s*([·\-|]|$)/i.test(t) || t.toLowerCase() === 'facebook') {
+      return fallbackId ? `Facebook Reel · ${fallbackId}` : 'Facebook Reel';
+    }
+    // Remove video platform suffixes
+    t = t.replace(/ - YouTube$| - Vimeo$| \| Facebook$/i, '').trim();
+    return t || (fallbackId ? `Facebook Reel · ${fallbackId}` : 'Video Media');
   }
 
   // Extract clean filename from URL or title
@@ -139,40 +309,36 @@ function isManagedPlatform(urlOrHost) {
   }
 
   // Extract platform media identity to detect client-side SPA navigation
-  function extractMediaIdentity(url) {
+  function extractMediaIdentity(url, videoEl = null) {
     const rawUrl = url || window.location.href;
-    let videoId = '';
-    let canonicalUrl = rawUrl;
-    try {
-      const u = new URL(rawUrl);
-      if (u.hostname.includes('youtube.com')) {
-        videoId = u.searchParams.get('v') || '';
-        if (videoId) {
-          canonicalUrl = `https://${u.hostname}/watch?v=${videoId}`;
+    const normalized = normalizePlatformUrl(rawUrl);
+
+    // If on Facebook/Instagram and current page URL is generic feed/home, check video element container
+    if (videoEl && !normalized.isSpecific && (window.location.hostname.includes('facebook.com') || window.location.hostname.includes('fb.watch'))) {
+      const container = videoEl.closest?.('[data-pagelet*="Reel"], [role="article"], [data-pagelet*="FeedUnit"], div[data-video-id], .x1lliihq, [role="main"]');
+      if (container) {
+        const anchor = container.querySelector('a[href*="/reel/"], a[href*="/reels/"], a[href*="/watch"], a[href*="/videos/"]');
+        if (anchor && anchor.href) {
+          const domNormalized = normalizePlatformUrl(anchor.href);
+          if (domNormalized.isSpecific) {
+            return {
+              rawUrl,
+              canonicalUrl: domNormalized.url,
+              videoId: domNormalized.videoId,
+              isSpecific: true,
+              platform: domNormalized.platform,
+            };
+          }
         }
-      } else if (u.hostname.includes('youtu.be')) {
-        videoId = u.pathname.replace(/^\//, '').split('/')[0] || '';
-        if (videoId) {
-          canonicalUrl = `https://youtu.be/${videoId}`;
-        }
-      } else if (u.hostname.includes('facebook.com') || u.hostname.includes('instagram.com')) {
-        const match = u.pathname.match(/\/(?:reel|videos|watch|p)\/([^/?#]+)/i);
-        videoId = match ? match[1] : u.pathname;
-        if (videoId) {
-          canonicalUrl = `${u.origin}${u.pathname}`;
-        }
-      } else {
-        u.hash = '';
-        ['t', 'start', 'time_continue', 'feature', 'ab_channel', 'themeRefresh', 'si', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign'].forEach((p) => u.searchParams.delete(p));
-        canonicalUrl = u.href;
-        videoId = canonicalUrl;
       }
-    } catch (_) {}
+    }
 
     return {
       rawUrl,
-      canonicalUrl,
-      videoId: videoId || canonicalUrl,
+      canonicalUrl: normalized.url,
+      videoId: normalized.videoId || normalized.url,
+      isSpecific: normalized.isSpecific,
+      platform: normalized.platform,
     };
   }
 
@@ -295,11 +461,25 @@ function isManagedPlatform(urlOrHost) {
     let resolvedMeta = null;
     let isResolving = false;
     let resolveError = null;
-    let currentMediaIdentity = extractMediaIdentity();
+    let currentMediaIdentity = extractMediaIdentity(null, videoEl);
     let currentGeneration = 0;
+    let resolveTimeoutTimer = null;
 
     function triggerResolution(force = false) {
       if (isResolving && !force) return;
+
+      // Re-evaluate identity with current DOM context
+      currentMediaIdentity = extractMediaIdentity(null, videoEl);
+
+      // If on Facebook/Instagram and no specific Reel/Video was identified, notify user immediately
+      if (!currentMediaIdentity.isSpecific && isManagedPlatform(window.location.hostname)) {
+        isResolving = false;
+        resolveError = 'Feed / stream not isolated. Please open the specific Reel directly in its own tab.';
+        updatePillTag();
+        renderPanel();
+        return;
+      }
+
       isResolving = true;
       resolveError = null;
       renderPanel();
@@ -307,6 +487,19 @@ function isManagedPlatform(urlOrHost) {
 
       const thisGen = currentGeneration;
       const targetUrl = currentMediaIdentity?.canonicalUrl || currentMediaIdentity?.rawUrl || window.location.href;
+      const reqId = 'req_res_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+
+      if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
+      // Hard bounded 20s timeout ensures UI ALWAYS transitions to a terminal state
+      resolveTimeoutTimer = setTimeout(() => {
+        if (isResolving && thisGen === currentGeneration) {
+          console.warn(`[TORI Content] Resolution timed out for ${targetUrl} (gen ${thisGen})`);
+          isResolving = false;
+          resolveError = 'Media resolution timed out. Remote platform took longer than 20s to respond.';
+          updatePillTag();
+          renderPanel();
+        }
+      }, 20000);
 
       chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA' }, (mRes) => {
         if (thisGen !== currentGeneration) return;
@@ -314,8 +507,9 @@ function isManagedPlatform(urlOrHost) {
       });
 
       chrome.runtime.sendMessage(
-        { action: 'RESOLVE_MEDIA', url: targetUrl, generation: thisGen },
+        { action: 'RESOLVE_MEDIA', url: targetUrl, generation: thisGen, correlation_id: reqId },
         (rRes) => {
+          if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
           if (thisGen !== currentGeneration) {
             console.log(`[TORI] Dropping stale resolution response for gen ${thisGen}, current is ${currentGeneration}`);
             return;
@@ -325,7 +519,7 @@ function isManagedPlatform(urlOrHost) {
             resolvedMeta = rRes.metadata;
             resolveError = null;
           } else {
-            resolveError = rRes?.message || 'Protected or unsupported stream';
+            resolveError = rRes?.message || 'Protected, restricted, or unsupported stream.';
           }
           updatePillTag();
           renderPanel();
@@ -334,7 +528,7 @@ function isManagedPlatform(urlOrHost) {
     }
 
     function handleVideoNavigation(reason) {
-      const newIdentity = extractMediaIdentity();
+      const newIdentity = extractMediaIdentity(null, videoEl);
       // If videoId is identical, this is just buffering, seek, or URL parameter jitter. IGNORE IT!
       if (currentMediaIdentity && currentMediaIdentity.videoId && newIdentity.videoId) {
         if (currentMediaIdentity.videoId === newIdentity.videoId) {
@@ -344,6 +538,7 @@ function isManagedPlatform(urlOrHost) {
 
       console.log(`[TORI Content] Video navigation detected (${reason}):`, currentMediaIdentity?.canonicalUrl, '->', newIdentity.canonicalUrl);
       currentMediaIdentity = newIdentity;
+      if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
       currentGeneration++;
 
       // Immediately invalidate old media state
@@ -365,11 +560,13 @@ function isManagedPlatform(urlOrHost) {
     }
 
     mp.__toriHandleNav = handleVideoNavigation;
+    mp.__toriTriggerResolution = triggerResolution;
     mp.__toriGetMediaInfo = () => ({
       url: window.location.href,
       identity: currentMediaIdentity,
-      title: (resolvedMeta && resolvedMeta.title) ? resolvedMeta.title : getMediaTitle(videoEl),
+      title: (resolvedMeta && resolvedMeta.title) ? resolvedMeta.title : getMediaTitle(videoEl, currentMediaIdentity?.videoId),
       isResolving,
+      resolveError,
       resolvedMeta,
       hasAnyCandidates: getAvailableFormats().hasAnyCandidates,
       videoFormats: getAvailableFormats().videoFormats,
@@ -379,7 +576,7 @@ function isManagedPlatform(urlOrHost) {
     // Collect genuine detected media candidates (never hardcoded, never webpage URL)
     function getAvailableFormats() {
       if (resolvedMeta && Array.isArray(resolvedMeta.formats) && resolvedMeta.formats.length > 0) {
-        const title = resolvedMeta.title || getMediaTitle(videoEl);
+        const title = resolvedMeta.title || getMediaTitle(videoEl, currentMediaIdentity?.videoId);
         const durStr = formatDuration(resolvedMeta.duration_seconds || videoEl.duration);
         const subInfo = durStr ? `${durStr} · ${resolvedMeta.site_name}` : resolvedMeta.site_name;
 
@@ -443,7 +640,7 @@ function isManagedPlatform(urlOrHost) {
         };
       }
 
-      const title = getMediaTitle(videoEl);
+      const title = getMediaTitle(videoEl, currentMediaIdentity?.videoId);
       const host = window.location.hostname;
       const durationStr = formatDuration(videoEl.duration);
       const subInfo = durationStr ? `${durationStr} · ${host}` : host;
@@ -1106,18 +1303,31 @@ function isManagedPlatform(urlOrHost) {
       return true;
     }
 
+    if (msg.action === 'TRIGGER_RESOLVE_MEDIA') {
+      const activeMp = document.querySelector('.tori-mp');
+      if (activeMp && typeof activeMp.__toriTriggerResolution === 'function') {
+        activeMp.__toriTriggerResolution(true);
+        sendResponse({ ok: true });
+      } else {
+        sendResponse({ ok: false, error: 'No active overlay' });
+      }
+      return true;
+    }
+
     if (msg.action === 'GET_ACTIVE_MEDIA_INFO') {
       const activeMp = document.querySelector('.tori-mp');
       if (activeMp && typeof activeMp.__toriGetMediaInfo === 'function') {
         sendResponse({ ok: true, ...activeMp.__toriGetMediaInfo() });
       } else {
         const vid = document.querySelector('video');
+        const ident = extractMediaIdentity(null, vid);
         sendResponse({
           ok: true,
-          url: window.location.href,
-          identity: extractMediaIdentity(),
-          title: vid ? getMediaTitle(vid) : document.title,
+          url: ident.canonicalUrl || window.location.href,
+          identity: ident,
+          title: vid ? getMediaTitle(vid, ident.videoId) : cleanMediaTitle(document.title, ident.videoId),
           isResolving: false,
+          resolveError: null,
           resolvedMeta: null,
           hasAnyCandidates: false,
         });

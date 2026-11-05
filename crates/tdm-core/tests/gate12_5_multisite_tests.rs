@@ -6,7 +6,9 @@ use tdm_core::engine::EventBus;
 use tdm_core::resolver::discovery::{find_ffmpeg, find_ffprobe, find_yt_dlp};
 use tdm_core::resolver::downloader::download_managed_media;
 use tdm_core::resolver::extractor::clean_ytdlp_error;
-use tdm_core::resolver::pipeline::select_compatible_audio_and_container;
+use tdm_core::resolver::pipeline::{
+    normalize_platform_media_url, select_compatible_audio_and_container,
+};
 use tdm_core::resolver::{FilesizeType, ParsedRawFormat};
 use tdm_core::types::{DownloadJob, JobState, JobType, Priority};
 use tdm_core::MediaResolver;
@@ -378,4 +380,57 @@ async fn test_gate12_5_real_public_facebook_video_extraction_download_and_ffprob
     let _ = fs::remove_file(&target_path);
     let _ = fs::remove_file(&temp_path);
     let _ = fs::remove_file(&db_path);
+}
+
+#[test]
+fn test_gate12_5_1_facebook_reel_url_normalization_and_validation() {
+    // 1. Plural /reels/<id> must normalize to singular /reel/<id>
+    let u1 = normalize_platform_media_url("https://www.facebook.com/reels/10153231379946729/")
+        .expect("Should normalize plural reels");
+    assert_eq!(u1, "https://www.facebook.com/reel/10153231379946729");
+
+    // 2. Singular /reel/<id> preserved
+    let u2 = normalize_platform_media_url("https://www.facebook.com/reel/10153231379946729")
+        .expect("Should preserve reel");
+    assert_eq!(u2, "https://www.facebook.com/reel/10153231379946729");
+
+    // 3. User reel path: /username/reels/<id>/
+    let u3 =
+        normalize_platform_media_url("https://www.facebook.com/john.doe/reels/10153231379946729/")
+            .expect("Should normalize user reels");
+    assert_eq!(u3, "https://www.facebook.com/reel/10153231379946729");
+
+    // 4. Share link: /share/r/<id>/
+    let u4 = normalize_platform_media_url("https://www.facebook.com/share/r/10153231379946729/")
+        .expect("Should normalize share reel");
+    assert_eq!(u4, "https://www.facebook.com/reel/10153231379946729");
+
+    // 5. Watch URL with ?v=<id> preserved
+    let u5 = normalize_platform_media_url("https://www.facebook.com/watch/?v=10153231379946729")
+        .expect("Should preserve watch URL");
+    assert_eq!(u5, "https://www.facebook.com/watch/?v=10153231379946729");
+
+    // 6. Generic Facebook home or feed URLs missing video ID must be rejected early
+    let err_home = normalize_platform_media_url("https://www.facebook.com/");
+    assert!(err_home.is_err(), "Generic homepage must be rejected");
+    assert!(err_home
+        .unwrap_err()
+        .to_string()
+        .contains("does not contain a specific Reel ID"));
+
+    let err_reels = normalize_platform_media_url("https://www.facebook.com/reels/");
+    assert!(err_reels.is_err(), "Generic reels feed must be rejected");
+
+    let err_reel = normalize_platform_media_url("https://www.facebook.com/reel");
+    assert!(
+        err_reel.is_err(),
+        "Generic reel without ID must be rejected"
+    );
+
+    // 7. Error message classifier handles Facebook login redirect
+    let err_login = clean_ytdlp_error("ERROR: Unsupported URL: https://www.facebook.com/login.php?next=https%3A%2F%2Fwww.facebook.com%2Freel");
+    assert!(
+        err_login.contains("Authentication required on the host platform"),
+        "login.php must be classified as authentication required"
+    );
 }

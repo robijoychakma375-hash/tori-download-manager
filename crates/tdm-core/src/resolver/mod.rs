@@ -13,7 +13,7 @@ pub use models::{
     ResolveRequest, ResolvedMediaFormat, ResolverStatus,
 };
 pub use pipeline::{
-    parse_ytdlp_playlist_metadata, select_compatible_audio_and_container, MediaResolver,
-    ParsedRawFormat,
+    normalize_platform_media_url, parse_ytdlp_playlist_metadata,
+    select_compatible_audio_and_container, MediaResolver, ParsedRawFormat,
 };
 pub use ssrf::validate_safe_media_url;

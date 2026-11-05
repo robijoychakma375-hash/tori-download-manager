@@ -286,6 +286,7 @@ pub fn clean_ytdlp_error(raw_stderr: &str) -> String {
         || lower.contains("sign in to facebook")
         || lower.contains("log in to continue")
         || lower.contains("requires authentication")
+        || lower.contains("login.php")
     {
         return "Authentication required on the host platform. This media is restricted to logged-in users.".to_string();
     }

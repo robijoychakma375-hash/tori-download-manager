@@ -396,3 +396,19 @@ svg {
   opacity: 1;
   transform: translate(-50%, 0);
 }
+
+.tori-spin {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--pline);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  margin: 0 auto 10px;
+  animation: tori-spin 0.8s linear infinite;
+}
+
+@keyframes tori-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

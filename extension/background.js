@@ -84,6 +84,144 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
+function normalizePlatformUrl(rawUrl) {
+  if (!rawUrl) return { url: '', videoId: '', isSpecific: false, platform: 'unknown' };
+  try {
+    const u = new URL(rawUrl);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname;
+
+    if (host.includes('facebook.com') || host.includes('fb.watch')) {
+      // 1. Check for watch URL with query param ?v=<id>
+      const v = u.searchParams.get('v');
+      if (v && /^\d+$/.test(v)) {
+        return {
+          url: `https://www.facebook.com/watch/?v=${v}`,
+          videoId: v,
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      // 2. Generic home or feed URLs without a specific item ID
+      if (
+        path === '/' ||
+        path === '' ||
+        path === '/reel' ||
+        path === '/reel/' ||
+        path === '/reels' ||
+        path === '/reels/' ||
+        path === '/watch' ||
+        path === '/watch/'
+      ) {
+        return {
+          url: `https://www.facebook.com${path}`,
+          videoId: '',
+          isSpecific: false,
+          platform: 'facebook',
+        };
+      }
+
+      // 3. /reel/<id> or /reels/<id> (plural reels -> canonical /reel/<id>)
+      const reelMatch = path.match(/\/(?:reel|reels)\/([^/?#]+)/i);
+      if (reelMatch && reelMatch[1] && reelMatch[1] !== 'audio') {
+        return {
+          url: `https://www.facebook.com/reel/${reelMatch[1]}`,
+          videoId: reelMatch[1],
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      // 4. /share/r/<id> or /share/v/<id>
+      const shareMatch = path.match(/\/share\/([rv])\/([^/?#]+)/i);
+      if (shareMatch && shareMatch[2]) {
+        const isReel = shareMatch[1].toLowerCase() === 'r';
+        return {
+          url: isReel
+            ? `https://www.facebook.com/reel/${shareMatch[2]}`
+            : `https://www.facebook.com/watch/?v=${shareMatch[2]}`,
+          videoId: shareMatch[2],
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      // 5. /<user>/videos/<id> or /<user>/reels/<id> or /videos/<id>
+      const videoMatch = path.match(/\/(?:videos|watch|p)\/([^/?#]+)/i);
+      if (videoMatch && videoMatch[1]) {
+        return {
+          url: `https://www.facebook.com/watch/?v=${videoMatch[1]}`,
+          videoId: videoMatch[1],
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      // 6. fb.watch/<id>
+      if (host.includes('fb.watch')) {
+        const watchId = path.replace(/^\//, '').split('/')[0];
+        if (watchId) {
+          return {
+            url: `https://fb.watch/${watchId}`,
+            videoId: watchId,
+            isSpecific: true,
+            platform: 'facebook',
+          };
+        }
+      }
+
+      return {
+        url: `${u.origin}${path}`,
+        videoId: '',
+        isSpecific: false,
+        platform: 'facebook',
+      };
+    }
+
+    if (host.includes('youtube.com')) {
+      const v = u.searchParams.get('v');
+      if (v) {
+        return {
+          url: `https://${u.hostname}/watch?v=${v}`,
+          videoId: v,
+          isSpecific: true,
+          platform: 'youtube',
+        };
+      }
+    } else if (host.includes('youtu.be')) {
+      const v = path.replace(/^\//, '').split('/')[0];
+      if (v) {
+        return {
+          url: `https://youtu.be/${v}`,
+          videoId: v,
+          isSpecific: true,
+          platform: 'youtube',
+        };
+      }
+    } else if (host.includes('instagram.com')) {
+      const match = path.match(/\/(?:reel|reels|p)\/([^/?#]+)/i);
+      if (match && match[1]) {
+        return {
+          url: `https://www.instagram.com/reel/${match[1]}/`,
+          videoId: match[1],
+          isSpecific: true,
+          platform: 'instagram',
+        };
+      }
+    }
+
+    return {
+      url: rawUrl,
+      videoId: rawUrl,
+      isSpecific: true,
+      platform: 'generic',
+    };
+  } catch (_) {
+    return { url: rawUrl, videoId: rawUrl, isSpecific: false, platform: 'unknown' };
+  }
+}
+
 /**
  * Determine endpoint-specific timeout deadline
  */
@@ -850,10 +988,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
+    const norm = normalizePlatformUrl(rawUrl);
+    if (norm.platform === 'facebook' && !norm.isSpecific) {
+      sendResponse({
+        status: 'error',
+        code: 'SPECIFIC_MEDIA_REQUIRED',
+        message: 'Facebook feed or homepage does not contain a specific Reel ID. Please provide a direct Reel or Video URL (e.g. facebook.com/reel/<id>).',
+        generation,
+      });
+      return false;
+    }
+
+    const targetUrl = norm.url || rawUrl;
+    const correlationId = message.correlation_id || ('req_res_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
+    console.log(`[TORI Background] Resolving media: ${targetUrl} (corr: ${correlationId}, gen: ${generation})`);
+
     // Deduplicate in-flight resolution requests for the same URL
-    if (activeResolutions.has(rawUrl)) {
+    if (activeResolutions.has(targetUrl)) {
       activeResolutions
-        .get(rawUrl)
+        .get(targetUrl)
         .then((res) => sendResponse({ ...res, generation }))
         .catch((err) =>
           sendResponse({ status: 'error', code: 'ERROR', message: err.message || 'Resolution error', generation })
@@ -862,8 +1015,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     const resolutionPromise = (async () => {
-      const httpRes = await callDesktopApi('/api/v1/media/resolve', 'POST', { url: rawUrl });
+      const httpRes = await callDesktopApi('/api/v1/media/resolve', 'POST', { url: targetUrl });
       if (httpRes.ok && httpRes.data) {
+        chrome.runtime.sendMessage({
+          action: 'MEDIA_RESOLVED',
+          url: targetUrl,
+          rawUrl,
+          status: 'ok',
+          metadata: httpRes.data,
+          generation,
+        }).catch(() => {});
         return { status: 'ok', metadata: httpRes.data };
       }
 
@@ -878,12 +1039,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } else if (httpRes.status === 400) {
         code = 'INVALID_REQUEST';
       }
+
+      chrome.runtime.sendMessage({
+        action: 'MEDIA_RESOLUTION_FAILED',
+        url: targetUrl,
+        rawUrl,
+        status: 'error',
+        code,
+        message,
+        generation,
+      }).catch(() => {});
+
       return { status: 'error', code, message };
     })();
 
-    activeResolutions.set(rawUrl, resolutionPromise);
+    activeResolutions.set(targetUrl, resolutionPromise);
     resolutionPromise.finally(() => {
-      activeResolutions.delete(rawUrl);
+      activeResolutions.delete(targetUrl);
     });
 
     resolutionPromise
@@ -902,8 +1074,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
+    const norm = normalizePlatformUrl(rawUrl);
+    const targetUrl = norm.url || rawUrl;
+
     callDesktopApi('/api/v1/media/download', 'POST', {
-      url: rawUrl,
+      url: targetUrl,
       format_id: formatId,
       filename: message.filename,
       destination: message.destination,

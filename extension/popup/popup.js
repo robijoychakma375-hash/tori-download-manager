@@ -28,6 +28,149 @@ function isManagedPlatform(urlOrHost) {
   );
 }
 
+function normalizePlatformUrl(rawUrl) {
+  if (!rawUrl) return { url: '', videoId: '', isSpecific: false, platform: 'unknown' };
+  try {
+    const u = new URL(rawUrl);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname;
+
+    if (host.includes('facebook.com') || host.includes('fb.watch')) {
+      const v = u.searchParams.get('v');
+      if (v && /^\d+$/.test(v)) {
+        return {
+          url: `https://www.facebook.com/watch/?v=${v}`,
+          videoId: v,
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      if (
+        path === '/' ||
+        path === '' ||
+        path === '/reel' ||
+        path === '/reel/' ||
+        path === '/reels' ||
+        path === '/reels/' ||
+        path === '/watch' ||
+        path === '/watch/'
+      ) {
+        return {
+          url: `https://www.facebook.com${path}`,
+          videoId: '',
+          isSpecific: false,
+          platform: 'facebook',
+        };
+      }
+
+      const reelMatch = path.match(/\/(?:reel|reels)\/([^/?#]+)/i);
+      if (reelMatch && reelMatch[1] && reelMatch[1] !== 'audio') {
+        return {
+          url: `https://www.facebook.com/reel/${reelMatch[1]}`,
+          videoId: reelMatch[1],
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      const shareMatch = path.match(/\/share\/([rv])\/([^/?#]+)/i);
+      if (shareMatch && shareMatch[2]) {
+        const isReel = shareMatch[1].toLowerCase() === 'r';
+        return {
+          url: isReel
+            ? `https://www.facebook.com/reel/${shareMatch[2]}`
+            : `https://www.facebook.com/watch/?v=${shareMatch[2]}`,
+          videoId: shareMatch[2],
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      const videoMatch = path.match(/\/(?:videos|watch|p)\/([^/?#]+)/i);
+      if (videoMatch && videoMatch[1]) {
+        return {
+          url: `https://www.facebook.com/watch/?v=${videoMatch[1]}`,
+          videoId: videoMatch[1],
+          isSpecific: true,
+          platform: 'facebook',
+        };
+      }
+
+      if (host.includes('fb.watch')) {
+        const watchId = path.replace(/^\//, '').split('/')[0];
+        if (watchId) {
+          return {
+            url: `https://fb.watch/${watchId}`,
+            videoId: watchId,
+            isSpecific: true,
+            platform: 'facebook',
+          };
+        }
+      }
+
+      return {
+        url: `${u.origin}${path}`,
+        videoId: '',
+        isSpecific: false,
+        platform: 'facebook',
+      };
+    }
+
+    if (host.includes('youtube.com')) {
+      const v = u.searchParams.get('v');
+      if (v) {
+        return {
+          url: `https://${u.hostname}/watch?v=${v}`,
+          videoId: v,
+          isSpecific: true,
+          platform: 'youtube',
+        };
+      }
+    } else if (host.includes('youtu.be')) {
+      const v = path.replace(/^\//, '').split('/')[0];
+      if (v) {
+        return {
+          url: `https://youtu.be/${v}`,
+          videoId: v,
+          isSpecific: true,
+          platform: 'youtube',
+        };
+      }
+    } else if (host.includes('instagram.com')) {
+      const match = path.match(/\/(?:reel|reels|p)\/([^/?#]+)/i);
+      if (match && match[1]) {
+        return {
+          url: `https://www.instagram.com/reel/${match[1]}/`,
+          videoId: match[1],
+          isSpecific: true,
+          platform: 'instagram',
+        };
+      }
+    }
+
+    return {
+      url: rawUrl,
+      videoId: rawUrl,
+      isSpecific: true,
+      platform: 'generic',
+    };
+  } catch (_) {
+    return { url: rawUrl, videoId: rawUrl, isSpecific: false, platform: 'unknown' };
+  }
+}
+
+function cleanMediaTitle(rawTitle, fallbackId = 'media') {
+  if (!rawTitle) return fallbackId;
+  let t = String(rawTitle).trim();
+  t = t.replace(/^\(\d+\)\s*/, '');
+  t = t.replace(/\s*[-—|•]\s*(?:YouTube|Vimeo|Facebook|Instagram|TikTok)$/i, '');
+  if (!t || t.toLowerCase() === 'facebook' || t.toLowerCase() === 'home') {
+    return fallbackId ? `Facebook Reel · ${fallbackId}` : 'Facebook Video';
+  }
+  return t;
+}
+
 /**
  * TORI Download Manager — Extension Popup Controller
  * Implements Design Source A with real Native Messaging engine integration.
@@ -182,6 +325,100 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // 6. Query media on current tab with dynamic per-tab identity support
+  let resolutionPollTimer = null;
+  let resolutionPollCount = 0;
+
+  function stopResolutionPolling() {
+    if (resolutionPollTimer) {
+      clearInterval(resolutionPollTimer);
+      resolutionPollTimer = null;
+    }
+  }
+
+  function startResolutionPolling(tab) {
+    if (resolutionPollTimer) return;
+    resolutionPollCount = 0;
+    resolutionPollTimer = setInterval(() => {
+      resolutionPollCount++;
+      if (resolutionPollCount > 20) {
+        stopResolutionPolling();
+        renderResolutionError('Resolution timed out after 20 seconds. Platform took too long to respond.', tab);
+        return;
+      }
+      chrome.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_MEDIA_INFO' }, (info) => {
+        if (!chrome.runtime.lastError && info && info.ok) {
+          if (!info.isResolving) {
+            stopResolutionPolling();
+            if (info.resolvedMeta && Array.isArray(info.resolvedMeta.formats) && info.resolvedMeta.formats.length > 0) {
+              renderResolvedFormats(info.resolvedMeta, tab);
+            } else if (info.resolveError) {
+              renderResolutionError(info.resolveError, tab);
+            } else {
+              loadActiveTabMedia();
+            }
+          }
+        }
+      });
+    }, 1000);
+  }
+
+  function renderResolutionError(errMsg, tab) {
+    stopResolutionPolling();
+    mediaCountHeader.textContent = 'Media Unavailable';
+    mediaList.innerHTML = `
+      <div class="empty-state" style="padding:16px 12px;text-align:center">
+        <div style="font-weight:600;margin-bottom:4px;color:#e5484d">Resolution Failed</div>
+        <div style="font-size:11px;color:var(--mut);line-height:1.4;margin-bottom:12px">${escapeHtml(errMsg)}</div>
+        <button class="btn mb def" id="btnRetryResolution" style="padding:6px 16px">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px;margin-right:6px"><path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+          Retry Resolution
+        </button>
+      </div>`;
+    const btnRetry = document.getElementById('btnRetryResolution');
+    if (btnRetry) {
+      btnRetry.addEventListener('click', () => {
+        triggerManualResolve(tab);
+      });
+    }
+  }
+
+  function triggerManualResolve(tab) {
+    stopResolutionPolling();
+    mediaCountHeader.textContent = 'Resolving media on page…';
+    mediaList.innerHTML = `
+      <div class="empty-state" style="padding:20px 12px;text-align:center">
+        <div class="tori-spin"></div>
+        <div style="font-weight:600;margin-bottom:4px">Resolving media formats…</div>
+        <div style="font-size:11px;color:var(--mut);line-height:1.4">Extracting genuine quality streams and formats</div>
+      </div>`;
+
+    // Attempt to notify content script
+    chrome.tabs.sendMessage(tab.id, { action: 'TRIGGER_RESOLVE_MEDIA' }, () => {
+      if (chrome.runtime.lastError) {}
+    });
+
+    // Hard safety timeout for popup manual resolve
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      renderResolutionError('Media resolution timed out. Remote platform took longer than 25s to respond.', tab);
+    }, 25000);
+
+    const norm = normalizePlatformUrl(tab.url);
+    const targetUrl = norm.url || tab.url;
+
+    chrome.runtime.sendMessage({ action: 'RESOLVE_MEDIA', url: targetUrl }, (rRes) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+      if (rRes && rRes.status === 'ok' && rRes.metadata && Array.isArray(rRes.metadata.formats) && rRes.metadata.formats.length > 0) {
+        renderResolvedFormats(rRes.metadata, tab);
+      } else {
+        const errMsg = rRes?.message || 'Media resolution failed. Remote stream unavailable or restricted.';
+        renderResolutionError(errMsg, tab);
+      }
+    });
+  }
+
   async function loadActiveTabMedia() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -205,13 +442,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             mediaCountHeader.textContent = 'Resolving media on page…';
             mediaList.innerHTML = `
               <div class="empty-state" style="padding:20px 12px;text-align:center">
+                <div class="tori-spin"></div>
                 <div style="font-weight:600;margin-bottom:4px">Resolving media on page…</div>
                 <div style="font-size:11px;color:var(--mut);line-height:1.4">Extracting genuine quality streams and formats</div>
               </div>`;
+            startResolutionPolling(tab);
+            return;
+          }
+
+          if (info.resolveError) {
+            renderResolutionError(info.resolveError, tab);
             return;
           }
 
           if (info.resolvedMeta && Array.isArray(info.resolvedMeta.formats) && info.resolvedMeta.formats.length > 0) {
+            stopResolutionPolling();
             renderResolvedFormats(info.resolvedMeta, tab);
             return;
           }
@@ -223,10 +468,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           mediaCountHeader.textContent = `Media on this page · ${items.length}`;
 
           if (items.length === 0) {
+            const isPlatform = isManagedPlatform(tab.url);
             mediaList.innerHTML = `
               <div class="empty-state" style="padding:16px 12px;text-align:center">
-                <div style="font-weight:600;margin-bottom:4px">No direct media stream detected</div>
-                <div style="font-size:11px;color:var(--mut);line-height:1.4">Streaming platforms (YouTube, Vimeo, Facebook, etc.) require media resolution.</div>
+                <div style="font-weight:600;margin-bottom:4px">${isPlatform ? 'Streaming Media Detected' : 'No direct media stream detected'}</div>
+                <div style="font-size:11px;color:var(--mut);line-height:1.4">${isPlatform ? 'Click below to extract high-definition formats using TORI Universal Resolver.' : 'Streaming platforms (YouTube, Vimeo, Facebook, etc.) require media resolution.'}</div>
                 <button class="btn mb def" id="btnResolveTabMedia" style="margin-top:12px;padding:6px 16px">
                   <svg viewBox="0 0 24 24" style="width:14px;height:14px;margin-right:6px"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg>
                   Resolve Media on Page
@@ -236,22 +482,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             const btnResolve = document.getElementById('btnResolveTabMedia');
             if (btnResolve) {
               btnResolve.addEventListener('click', () => {
-                btnResolve.textContent = 'Resolving media…';
-                btnResolve.disabled = true;
-
-                chrome.runtime.sendMessage({ action: 'RESOLVE_MEDIA', url: tab.url }, (rRes) => {
-                  if (rRes && rRes.status === 'ok' && rRes.metadata && rRes.metadata.formats) {
-                    renderResolvedFormats(rRes.metadata, tab);
-                  } else {
-                    btnResolve.textContent = 'Resolve Media on Page';
-                    btnResolve.disabled = false;
-                    showToast(rRes?.message || 'Media resolution failed', true);
-                  }
-                });
+                triggerManualResolve(tab);
               });
             }
           } else {
-            renderDirectItems(items);
+            renderDirectItems(items, tab);
           }
         });
       });
@@ -261,6 +496,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function renderResolvedFormats(meta, tab) {
+    const rawTitle = meta.title || '';
+    const fallbackId = meta.id || (tab.url.match(/\/(?:reel|reels)\/([^/?#]+)/i) || [])[1] || 'Facebook Reel';
+    const displayTitle = cleanMediaTitle(rawTitle, fallbackId);
+
     mediaCountHeader.textContent = `Resolved Formats · ${meta.formats.length}`;
     showToast(`Found ${meta.formats.length} formats`);
 
@@ -283,7 +522,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           ${chip(cat)}
           <div class="t">
             <b>${escapeHtml(fmt.resolution_label || 'Media')}</b>
-            <span class="s">${escapeHtml(meta.title.substring(0, 36))} · ${escapeHtml(sub)}</span>
+            <span class="s">${escapeHtml(displayTitle.substring(0, 36))} · ${escapeHtml(sub)}</span>
           </div>
           <button class="btn mb def" data-fidx="${idx}">Download</button>
         </div>`;
@@ -299,13 +538,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         b.textContent = 'Sending…';
         b.disabled = true;
         const correlationId = 'tori_pop_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+        const safeFilename = `${displayTitle.replace(/[\\/:*?"<>|]/g, '') || 'media'}.${selected.container || 'mp4'}`;
+        const sourceUrl = meta.source_url || tab.url;
 
         chrome.runtime.sendMessage(
           {
             action: 'START_MEDIA_DOWNLOAD',
-            url: meta.source_url || tab.url,
+            url: sourceUrl,
             format_id: selected.format_id,
-            filename: `${meta.title.replace(/[\\/:*?"<>|]/g, '') || 'media'}.${selected.container || 'mp4'}`,
+            filename: safeFilename,
             priority: 'high',
             correlation_id: correlationId,
           },
@@ -326,7 +567,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  function renderDirectItems(items) {
+  function renderDirectItems(items, tab) {
     mediaList.innerHTML = items
       .map((item, idx) => {
         const isAudio =
@@ -356,22 +597,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!target) return;
 
         btn.textContent = 'Sending…';
-        const isManaged = isManagedPlatform(tab.url) || isTransientCdnUrl(target.url);
+        const currentUrl = (tab && tab.url) || window.location.href;
+        const isManaged = isManagedPlatform(currentUrl) || isTransientCdnUrl(target.url);
         const reqPayload = isManaged
           ? {
               action: 'START_MEDIA_DOWNLOAD',
-              url: tab.url,
+              url: currentUrl,
               format_id: 'best',
               filename: target.filename,
               priority: 'high',
-              page_url: tab.url,
+              page_url: currentUrl,
             }
           : {
               action: 'START_DOWNLOAD',
               url: target.url,
               filename: target.filename,
               priority: 'high',
-              page_url: tab.url,
+              page_url: currentUrl,
             };
 
         chrome.runtime.sendMessage(
@@ -400,7 +642,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Listen for navigation or media updates on active tab while popup remains open
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'MEDIA_NAVIGATED' || msg.action === 'TAB_MEDIA_UPDATED') {
+      stopResolutionPolling();
       loadActiveTabMedia();
+    } else if (msg.action === 'MEDIA_RESOLVED') {
+      stopResolutionPolling();
+      if (msg.metadata) {
+        chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+          if (tab) renderResolvedFormats(msg.metadata, tab);
+        });
+      }
+    } else if (msg.action === 'MEDIA_RESOLUTION_FAILED') {
+      stopResolutionPolling();
+      chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+        if (tab) renderResolutionError(msg.message || 'Media resolution failed', tab);
+      });
     }
   });
 
@@ -463,7 +718,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadRecentDownloads();
   // Refresh recent downloads periodically while popup is open
   const pollTimer = setInterval(loadRecentDownloads, 2000);
-  window.addEventListener('unload', () => clearInterval(pollTimer));
+  window.addEventListener('unload', () => {
+    clearInterval(pollTimer);
+    stopResolutionPolling();
+  });
 });
 
 function escapeHtml(str) {
