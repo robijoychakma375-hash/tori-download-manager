@@ -62,6 +62,7 @@ pub struct CreateDownloadReq {
     pub destination: Option<String>,
     pub priority: Option<String>,
     pub user_agent: Option<String>,
+    pub thumbnail_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -502,6 +503,9 @@ async fn handle_create_download(
         Ok(job) => {
             let job_id = job.id.clone();
             let fname = job.filename.clone();
+            if let Some(ref thumb) = payload.thumbnail_url {
+                let _ = state.db.update_thumbnail_url(&job_id, thumb);
+            }
             let _ = state.manager.start_download(&job_id);
             state
                 .manager
@@ -1180,11 +1184,35 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
             "/api/v1/media/playlist/enqueue",
             post(handle_playlist_enqueue),
         )
+        .route("/api/v1/thumbnails/{id}", get(handle_get_thumbnail))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             security_middleware,
         ))
         .with_state(state)
+}
+
+async fn handle_get_thumbnail(
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, &'static str)> {
+    let clean_id = id
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-')
+        .collect::<String>();
+    let cache_dir = tdm_core::engine::get_thumbnail_cache_dir();
+    let file_path = cache_dir.join(format!("{}.jpg", clean_id));
+    if file_path.exists() {
+        if let Ok(bytes) = tokio::fs::read(&file_path).await {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=86400"),
+            );
+            return Ok((headers, bytes));
+        }
+    }
+    Err((StatusCode::NOT_FOUND, "Thumbnail not found"))
 }
 
 pub async fn start_server(

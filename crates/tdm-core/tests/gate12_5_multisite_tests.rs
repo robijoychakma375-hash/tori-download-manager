@@ -599,3 +599,137 @@ fn test_gate12_5_2_media_filesize_reporting_priority_and_accuracy() {
     assert_eq!(fmt_unknown.filesize_approx, None);
     assert_eq!(fmt_unknown.filesize_type, FilesizeType::Unknown);
 }
+
+#[tokio::test]
+async fn test_gate12_5_2_thumbnail_caching_and_ffmpeg_backfill() {
+    use tdm_core::engine::thumbnail::{
+        backfill_missing_thumbnails, base64_encode, enforce_thumbnail_cache_limits,
+        extract_thumbnail_from_video,
+    };
+    use tdm_core::hls::muxer::silent_command;
+
+    // 1. Test pure RFC 4648 base64 encoding vectors
+    assert_eq!(base64_encode(b""), "");
+    assert_eq!(base64_encode(b"f"), "Zg==");
+    assert_eq!(base64_encode(b"fo"), "Zm8=");
+    assert_eq!(base64_encode(b"foo"), "Zm9v");
+    assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+    assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+    assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+
+    // 2. Test cache bounding with LRU eviction
+    let temp_cache =
+        std::env::temp_dir().join(format!("tori_thumb_cache_{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&temp_cache).unwrap();
+
+    let f1 = temp_cache.join("t1.jpg");
+    let f2 = temp_cache.join("t2.jpg");
+    let f3 = temp_cache.join("t3.jpg");
+
+    fs::write(&f1, vec![0u8; 1000]).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(&f2, vec![0u8; 1000]).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(&f3, vec![0u8; 1000]).unwrap();
+
+    // Enforce bound of max 2 files (f1 should be deleted)
+    enforce_thumbnail_cache_limits(&temp_cache, 100_000, 2);
+    assert!(!f1.exists(), "Oldest file f1 should have been evicted");
+    assert!(f2.exists(), "f2 should be preserved");
+    assert!(f3.exists(), "f3 should be preserved");
+
+    // Enforce bound of max 1500 bytes (f2 should be evicted, leaving f3)
+    enforce_thumbnail_cache_limits(&temp_cache, 1500, 10);
+    assert!(!f2.exists(), "f2 should be evicted to satisfy byte limit");
+    assert!(f3.exists(), "f3 should be preserved");
+
+    let _ = fs::remove_dir_all(&temp_cache);
+
+    // 3. Test genuine video frame extraction and SQLite backfill
+    if let Some(ffmpeg_bin) = find_ffmpeg() {
+        let temp_dir = std::env::temp_dir();
+        let sample_video = temp_dir.join(format!("tori_test_video_{}.mp4", uuid::Uuid::new_v4()));
+
+        // Generate a 1-second test MP4 via FFmpeg
+        let gen_status = silent_command(&ffmpeg_bin)
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=1:size=320x240:rate=10",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                sample_video.to_str().unwrap(),
+            ])
+            .status();
+
+        if let Ok(st) = gen_status {
+            if st.success() && sample_video.exists() {
+                let out_thumb = temp_dir.join(format!("tori_thumb_{}.jpg", uuid::Uuid::new_v4()));
+
+                // Direct frame extraction
+                let data_uri = extract_thumbnail_from_video(&sample_video, &out_thumb)
+                    .expect("Should extract thumbnail frame");
+                assert!(data_uri.starts_with("data:image/jpeg;base64,"));
+                assert!(data_uri.len() > 100, "Data URI must be non-empty");
+
+                // Test SQLite backfill
+                let db_path = temp_dir.join(format!("tori_thumb_db_{}.db", uuid::Uuid::new_v4()));
+                let db = Database::open(&db_path).expect("Should open temp db");
+
+                let test_job_id = uuid::Uuid::new_v4().to_string();
+                let job = DownloadJob {
+                    id: test_job_id.clone(),
+                    url: "https://www.facebook.com/reel/1040431192387040".to_string(),
+                    resolved_url: Some("hd".to_string()),
+                    filename: "test_reel.mp4".to_string(),
+                    target_path: sample_video.to_str().unwrap().to_string(),
+                    temp_path: sample_video.to_str().unwrap().to_string(),
+                    total_bytes: Some(100_000),
+                    downloaded_bytes: 100_000,
+                    state: JobState::Completed,
+                    job_type: JobType::ManagedMedia,
+                    priority: Priority::High,
+                    etag: None,
+                    last_modified: None,
+                    is_resumable: true,
+                    chunk_count: 1,
+                    thumbnail_url: None, // Missing thumbnail
+                    error_message: None,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                };
+
+                db.insert_job(&job).expect("Insert job");
+
+                // Verify initially None
+                let stored_before = db.get_job(&test_job_id).unwrap().unwrap();
+                assert_eq!(stored_before.thumbnail_url, None);
+
+                // Run backfill
+                let count = backfill_missing_thumbnails(&db).await;
+                assert_eq!(count, 1, "Exactly 1 job should be backfilled");
+
+                // Verify updated in SQLite
+                let stored_after = db.get_job(&test_job_id).unwrap().unwrap();
+                assert!(stored_after.thumbnail_url.is_some());
+                let backfilled_uri = stored_after.thumbnail_url.unwrap();
+                assert!(backfilled_uri.starts_with("data:image/jpeg;base64,"));
+
+                // Verify persistence across restart (re-open database)
+                drop(db);
+                let db_reopened = Database::open(&db_path).expect("Reopen db");
+                let stored_reopened = db_reopened.get_job(&test_job_id).unwrap().unwrap();
+                assert_eq!(stored_reopened.thumbnail_url, Some(backfilled_uri));
+
+                // Clean up
+                let _ = fs::remove_file(&sample_video);
+                let _ = fs::remove_file(&out_thumb);
+                let _ = fs::remove_file(&db_path);
+            }
+        }
+    }
+}

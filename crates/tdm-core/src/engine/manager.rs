@@ -59,6 +59,25 @@ impl DownloadManager {
         let client = build_http_client()?;
         let _ = db.reconcile_on_startup();
 
+        // Safe metadata and thumbnail backfill on startup for existing completed downloads
+        let db_backfill = db.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = crate::engine::backfill_missing_thumbnails(&db_backfill).await;
+            });
+        } else {
+            std::thread::spawn(move || {
+                if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    rt.block_on(async move {
+                        let _ = crate::engine::backfill_missing_thumbnails(&db_backfill).await;
+                    });
+                }
+            });
+        }
+
         Ok(Self {
             client,
             db,
@@ -640,6 +659,9 @@ impl DownloadManager {
                 let _ = fs::remove_file(&job.target_path);
                 crate::resolver::downloader::cleanup_partial_files(&job.target_path);
             }
+            // Remove cached thumbnail if present
+            let cache_file = crate::engine::get_thumbnail_cache_dir().join(format!("{}.jpg", id));
+            let _ = fs::remove_file(cache_file);
         }
 
         self.db.delete_job(id)?;

@@ -69,7 +69,9 @@ function fmtProgressBytes(downloaded: number, total: number): string {
   return `${fmtB(downloaded)} of ${fmtB(total)}`;
 }
 
-export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
+export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId }) => {
+  const queryId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('id') : null;
+  const initialId = propId || queryId || undefined;
   const [activeIds, setActiveIds] = useState<string[]>(() => (initialId ? [initialId] : []));
   const [jobs, setJobs] = useState<Record<string, DownloadJob>>({});
   const [chunks, setChunks] = useState<Record<string, ChunkRecord[]>>({});
@@ -250,6 +252,8 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
       }
     } else {
       if (initialId) {
+        dismissedIdsRef.current.delete(initialId);
+        setActiveIds((prev) => (prev.includes(initialId) ? prev : [initialId, ...prev]));
         fetchJob(initialId);
       }
       invoke<DownloadJob[]>('list_downloads')
@@ -488,6 +492,22 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
     };
   }, []);
 
+  const handleDismiss = useCallback(
+    async (id: string) => {
+      dismissedIdsRef.current.add(id);
+      setActiveIds((prev) => {
+        const next = prev.filter((x) => x !== id);
+        if (next.length === 0) {
+          invoke('hide_toast_window').catch(() => {});
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const completedTimersRef = useRef<Record<string, number>>({});
+
   // Auto-dismiss countdown timer for completed items
   useEffect(() => {
     const timer = setInterval(() => {
@@ -495,18 +515,23 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
         const job = jobs[id];
         if (!job) return;
 
-        // Auto-dismiss completed jobs after 9 seconds if not hovered
+        // Auto-dismiss completed jobs after 9 seconds of display if not hovered
         if (job.state === 'completed' && !hoveredRef.current[id]) {
-          const elapsed = (Date.now() - new Date(job.updated_at).getTime()) / 1000;
+          if (!completedTimersRef.current[id]) {
+            completedTimersRef.current[id] = Date.now();
+          }
+          const elapsed = (Date.now() - completedTimersRef.current[id]) / 1000;
           if (elapsed >= 9) {
             handleDismiss(id);
           }
+        } else if (job.state !== 'completed') {
+          delete completedTimersRef.current[id];
         }
       });
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [activeIds, jobs]);
+  }, [activeIds, jobs, handleDismiss]);
 
   // Listen to window resized event to persist size
   useEffect(() => {
@@ -671,21 +696,6 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
     };
   }, [expanded, activeIds, toastWidth]);
 
-  const handleDismiss = useCallback(
-    async (id: string) => {
-      dismissedIdsRef.current.add(id);
-      const next = activeIds.filter((x) => x !== id);
-      setActiveIds(next);
-      if (next.length === 0) {
-        try {
-          await invoke('hide_toast_window');
-        } catch {
-          // ignore
-        }
-      }
-    },
-    [activeIds]
-  );
 
   const handleTogglePause = async (job: DownloadJob) => {
     try {

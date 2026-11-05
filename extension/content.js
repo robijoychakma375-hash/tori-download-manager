@@ -338,10 +338,47 @@ function normalizePlatformUrl(rawUrl) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   }
 
+  // Extract genuine thumbnail image from video element or host page DOM
+  function extractPageThumbnail(videoEl = null) {
+    try {
+      if (videoEl) {
+        const poster = videoEl.getAttribute('poster') || videoEl.poster;
+        if (poster && typeof poster === 'string' && poster.startsWith('http') && !poster.includes('blank.gif')) {
+          return poster;
+        }
+        const container = videoEl.closest?.(
+          '[data-pagelet*="Reel"], [role="article"], [data-pagelet*="FeedUnit"], div[data-video-id], .x1lliihq, [role="main"]'
+        ) || videoEl.parentElement;
+        if (container) {
+          const imgs = container.querySelectorAll('img[src*="fbcdn.net"], img[src*="cdninstagram.com"], img[src*="scontent"]');
+          for (const img of imgs) {
+            const src = img.currentSrc || img.src || img.getAttribute('src');
+            if (src && src.startsWith('http') && !src.includes('rsrc.php') && !src.includes('/static/')) {
+              const rect = img.getBoundingClientRect();
+              if (rect.width > 50 || rect.height > 50 || !rect.width) {
+                return src;
+              }
+            }
+          }
+        }
+      }
+
+      const ogImg = document.querySelector('meta[property="og:image"]')?.getAttribute('content') ||
+                    document.querySelector('meta[property="og:image:secure_url"]')?.getAttribute('content') ||
+                    document.querySelector('meta[name="twitter:image"]')?.getAttribute('content') ||
+                    document.querySelector('link[rel="image_src"]')?.getAttribute('href');
+      if (ogImg && ogImg.startsWith('http') && !ogImg.includes('rsrc.php')) {
+        return ogImg;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   // Extract platform media identity to detect client-side SPA navigation
   function extractMediaIdentity(url, videoEl = null) {
     const rawUrl = url || window.location.href;
     const normalized = normalizePlatformUrl(rawUrl);
+    const thumbUrl = extractPageThumbnail(videoEl);
 
     // If on Facebook/Instagram and current page URL is generic feed/home, check video element container
     if (videoEl && !normalized.isSpecific && (window.location.hostname.includes('facebook.com') || window.location.hostname.includes('fb.watch'))) {
@@ -357,6 +394,7 @@ function normalizePlatformUrl(rawUrl) {
               videoId: domNormalized.videoId,
               isSpecific: true,
               platform: domNormalized.platform,
+              thumbnailUrl: thumbUrl,
             };
           }
         }
@@ -369,6 +407,7 @@ function normalizePlatformUrl(rawUrl) {
       videoId: normalized.videoId || normalized.url,
       isSpecific: normalized.isSpecific,
       platform: normalized.platform,
+      thumbnailUrl: thumbUrl,
     };
   }
 
@@ -595,6 +634,7 @@ function normalizePlatformUrl(rawUrl) {
       url: window.location.href,
       identity: currentMediaIdentity,
       title: (resolvedMeta && resolvedMeta.title) ? resolvedMeta.title : getMediaTitle(videoEl, currentMediaIdentity?.videoId),
+      thumbnailUrl: (resolvedMeta && resolvedMeta.thumbnail_url) || currentMediaIdentity?.thumbnailUrl || extractPageThumbnail(videoEl) || null,
       isResolving,
       resolveError,
       resolvedMeta,
@@ -645,6 +685,7 @@ function normalizePlatformUrl(rawUrl) {
             filename: sanitizeFilename(title, (f.container || (isAudio ? 'mp3' : 'mp4')).toLowerCase()),
             isAudio,
             isManaged: f.download_capability === 'managed_extractor' || !!f.format_id,
+            thumbnail_url: (resolvedMeta && resolvedMeta.thumbnail_url) || currentMediaIdentity?.thumbnailUrl || extractPageThumbnail(videoEl) || null,
           };
 
           if (isAudio) {
@@ -1152,6 +1193,7 @@ function normalizePlatformUrl(rawUrl) {
           const isTransientCdn = isTransientCdnUrl(target.url);
           const shouldUseManaged = target.format_id || target.isManaged || isSocialPlatform || isTransientCdn;
 
+          const pageThumb = target.thumbnail_url || (resolvedMeta && resolvedMeta.thumbnail_url) || currentMediaIdentity?.thumbnailUrl || extractPageThumbnail(videoEl) || null;
           const reqPayload = shouldUseManaged
             ? {
                 action: 'START_MEDIA_DOWNLOAD',
@@ -1161,6 +1203,7 @@ function normalizePlatformUrl(rawUrl) {
                 priority: 'high',
                 correlation_id: correlationId,
                 page_url: window.location.href,
+                thumbnail_url: pageThumb,
               }
             : {
                 action: 'START_DOWNLOAD',
@@ -1169,6 +1212,7 @@ function normalizePlatformUrl(rawUrl) {
                 priority: 'high',
                 correlation_id: correlationId,
                 page_url: window.location.href,
+                thumbnail_url: pageThumb,
               };
 
           chrome.runtime.sendMessage(reqPayload, (res) => {
@@ -1218,6 +1262,7 @@ function normalizePlatformUrl(rawUrl) {
       const isTransientCdn = isTransientCdnUrl(target.url);
       const shouldUseManaged = target.format_id || target.isManaged || isSocialPlatform || isTransientCdn;
 
+      const pageThumb = target.thumbnail_url || (resolvedMeta && resolvedMeta.thumbnail_url) || currentMediaIdentity?.thumbnailUrl || extractPageThumbnail(videoEl) || null;
       const reqPayload = shouldUseManaged
         ? {
             action: 'START_MEDIA_DOWNLOAD',
@@ -1227,6 +1272,7 @@ function normalizePlatformUrl(rawUrl) {
             priority: 'high',
             correlation_id: correlationId,
             page_url: window.location.href,
+            thumbnail_url: pageThumb,
           }
         : {
             action: 'START_DOWNLOAD',
@@ -1235,6 +1281,7 @@ function normalizePlatformUrl(rawUrl) {
             priority: 'high',
             correlation_id: correlationId,
             page_url: window.location.href,
+            thumbnail_url: pageThumb,
           };
 
       chrome.runtime.sendMessage(reqPayload, (res) => {

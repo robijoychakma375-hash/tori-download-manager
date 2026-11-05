@@ -194,6 +194,16 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_thumbnail_url(&self, id: &str, thumbnail_url: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE downloads SET thumbnail_url = ?1, updated_at = ?2 WHERE id = ?3",
+            params![thumbnail_url, now, id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_job(&self, id: &str) -> Result<Option<DownloadJob>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

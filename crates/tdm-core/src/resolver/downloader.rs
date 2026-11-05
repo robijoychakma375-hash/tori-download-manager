@@ -262,6 +262,15 @@ pub async fn download_managed_media(
         let _ = db.update_downloaded_bytes(&job.id, final_size);
         db.update_job_state(&job.id, JobState::Completed, None)?;
 
+        // Ensure local thumbnail is extracted and cached for video output
+        let _ = crate::engine::ensure_cached_thumbnail(
+            &job.id,
+            job.thumbnail_url.as_deref(),
+            Some(found_path.to_str().unwrap_or_default()),
+            db,
+        )
+        .await;
+
         event_bus.emit(DownloadEvent::Progress(DownloadProgress {
             id: job.id.clone(),
             downloaded_bytes: final_size,

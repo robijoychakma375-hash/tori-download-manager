@@ -918,6 +918,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       filename: message.filename,
       destination: message.destination,
       priority: message.priority || 'normal',
+      thumbnail_url: message.thumbnail_url || null,
     }).then(async (httpRes) => {
       if (httpRes.ok && httpRes.data) {
         sendResponse(httpRes.data);
@@ -1083,6 +1084,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       filename: message.filename,
       destination: message.destination,
       priority: message.priority || 'normal',
+      thumbnail_url: message.thumbnail_url || null,
     }).then((httpRes) => {
       if (httpRes.ok && httpRes.data) {
         sendResponse(httpRes.data);
