@@ -4,16 +4,17 @@ import { typeOfJob, getChipSrc, fmtB, fmtSp, fmtT, formatAdded, stateLabel } fro
 
 interface DownloadTableProps {
   downloads: DownloadJob[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  selectedIds: Set<string>;
+  onSelect: (e: React.MouseEvent, id: string) => void;
   onOpenProgress: (job: DownloadJob) => void;
   onContextMenu: (e: React.MouseEvent, job: DownloadJob) => void;
+  onBackgroundClick?: (e: React.MouseEvent) => void;
 }
 
 interface TableRowProps {
   job: DownloadJob;
   isSelected: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (e: React.MouseEvent, id: string) => void;
   onOpenProgress: (job: DownloadJob) => void;
   onContextMenu: (e: React.MouseEvent, job: DownloadJob) => void;
 }
@@ -37,7 +38,7 @@ const TableRow = React.memo<TableRowProps>(
     return (
       <div
         className={`tr ${isSelected ? 'sel' : ''}`}
-        onClick={() => onSelect(job.id)}
+        onClick={(e) => onSelect(e, job.id)}
         onDoubleClick={() => onOpenProgress(job)}
         onContextMenu={(e) => onContextMenu(e, job)}
       >
@@ -77,7 +78,7 @@ const TableRow = React.memo<TableRowProps>(
           className="pb"
           onClick={(e) => {
             e.stopPropagation();
-            onSelect(job.id);
+            onSelect(e, job.id);
             onOpenProgress(job);
           }}
           title="Click to view details"
@@ -110,13 +111,14 @@ TableRow.displayName = 'TableRow';
 
 export const DownloadTable: React.FC<DownloadTableProps> = ({
   downloads,
-  selectedId,
+  selectedIds,
   onSelect,
   onOpenProgress,
   onContextMenu,
+  onBackgroundClick,
 }) => {
   return (
-    <div id="right">
+    <div id="right" onClick={onBackgroundClick}>
       <div className="th">
         <span>File name</span>
         <span>Size</span>
@@ -126,7 +128,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({
         <span>Added</span>
       </div>
 
-      <div id="rows">
+      <div id="rows" onClick={onBackgroundClick}>
         {downloads.length === 0 ? (
           <div id="empty">
             <b>No downloads here</b>
@@ -138,7 +140,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({
             <TableRow
               key={job.id}
               job={job}
-              isSelected={selectedId === job.id}
+              isSelected={selectedIds.has(job.id)}
               onSelect={onSelect}
               onOpenProgress={onOpenProgress}
               onContextMenu={onContextMenu}

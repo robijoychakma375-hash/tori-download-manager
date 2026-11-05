@@ -10,8 +10,9 @@ interface ToolBarProps {
   onOpenSettings: () => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
-  hasSelection: boolean;
-  selectedState?: string;
+  selectedCount: number;
+  canResume: boolean;
+  canPause: boolean;
 }
 
 export const ToolBar: React.FC<ToolBarProps> = ({
@@ -24,16 +25,10 @@ export const ToolBar: React.FC<ToolBarProps> = ({
   onOpenSettings,
   searchQuery,
   onSearchChange,
-  hasSelection,
-  selectedState,
+  selectedCount,
+  canResume,
+  canPause,
 }) => {
-  const isSelectedActive = selectedState === 'downloading' || selectedState === 'probing';
-  const isSelectedResumable =
-    selectedState === 'paused' ||
-    selectedState === 'queued' ||
-    selectedState === 'failed' ||
-    selectedState === 'cancelled';
-
   return (
     <div id="tool">
       <button className="tb" data-a="add" onClick={onAdd} title="Add URL">
@@ -45,8 +40,8 @@ export const ToolBar: React.FC<ToolBarProps> = ({
         className="tb"
         data-a="resume"
         onClick={onResume}
-        disabled={!hasSelection || !isSelectedResumable}
-        title="Resume"
+        disabled={selectedCount === 0 || !canResume}
+        title={selectedCount > 1 ? `Resume ${selectedCount} Downloads` : 'Resume'}
       >
         <img src="/icons/toolbar/resume.svg" alt="Resume" width={24} height={24} />
         Resume
@@ -56,8 +51,8 @@ export const ToolBar: React.FC<ToolBarProps> = ({
         className="tb"
         data-a="pause"
         onClick={onPause}
-        disabled={!hasSelection || !isSelectedActive}
-        title="Pause"
+        disabled={selectedCount === 0 || !canPause}
+        title={selectedCount > 1 ? `Pause ${selectedCount} Downloads` : 'Pause'}
       >
         <img src="/icons/toolbar/pause.svg" alt="Pause" width={24} height={24} />
         Pause
@@ -72,11 +67,11 @@ export const ToolBar: React.FC<ToolBarProps> = ({
         className="tb"
         data-a="del"
         onClick={onDelete}
-        disabled={!hasSelection}
-        title="Delete"
+        disabled={selectedCount === 0}
+        title={selectedCount > 1 ? `Delete ${selectedCount} Downloads` : 'Delete'}
       >
         <img src="/icons/toolbar/delete.svg" alt="Delete" width={24} height={24} />
-        Delete
+        {selectedCount > 1 ? `Delete (${selectedCount})` : 'Delete'}
       </button>
 
       <span className="vs" />

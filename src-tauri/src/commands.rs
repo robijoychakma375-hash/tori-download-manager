@@ -116,6 +116,21 @@ pub async fn delete_download(
 }
 
 #[tauri::command]
+pub async fn delete_downloads(
+    ids: Vec<String>,
+    delete_files: bool,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let mut deleted = Vec::new();
+    for id in ids {
+        if state.manager.delete_download(&id, delete_files).is_ok() {
+            deleted.push(id);
+        }
+    }
+    Ok(deleted)
+}
+
+#[tauri::command]
 pub async fn open_folder(path: String) -> Result<(), String> {
     let p = Path::new(&path);
     if p.exists() {

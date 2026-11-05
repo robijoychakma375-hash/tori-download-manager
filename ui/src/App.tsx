@@ -235,7 +235,8 @@ export function App() {
   }
 
   const [downloads, setDownloads] = useState<DownloadJob[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastFocusedId, setLastFocusedId] = useState<string | null>(null);
   const [currentCategory, setCurrentCategory] = useState<CategoryKey>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -262,7 +263,14 @@ export function App() {
       return false;
     }
   });
-  const [deleteConfirmJob, setDeleteConfirmJob] = useState<DownloadJob | null>(null);
+  const [deleteConfirmJobs, setDeleteConfirmJobs] = useState<DownloadJob[] | null>(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('modal') === 'delete') {
+        return DEMO_DOWNLOADS.slice(0, 3);
+      }
+    } catch {}
+    return null;
+  });
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -339,13 +347,16 @@ export function App() {
   const loadDownloads = useCallback(async () => {
     if (urlParams.get('demo') === '1') {
       setDownloads(DEMO_DOWNLOADS);
-      setSelectedId((prev) => (prev ? prev : DEMO_DOWNLOADS[0].id));
+      const sel = urlParams.get('sel') === 'multi'
+        ? new Set(DEMO_DOWNLOADS.slice(0, 3).map((d) => d.id))
+        : new Set(DEMO_DOWNLOADS.length > 0 ? [DEMO_DOWNLOADS[0].id] : []);
+      setSelectedIds(sel);
       return;
     }
     try {
       const list = await invoke<DownloadJob[]>('list_downloads');
       setDownloads(list || []);
-      setSelectedId((prev) => (prev ? prev : list && list.length > 0 ? list[0].id : null));
+      setSelectedIds((prev) => (prev.size > 0 ? prev : new Set(list && list.length > 0 ? [list[0].id] : [])));
     } catch (err) {
       console.error('Failed to load downloads from SQLite:', err);
       setDownloads([]);
@@ -435,10 +446,20 @@ export function App() {
     };
   }, [loadDownloads]);
 
-  // Selected download reference
-  const selectedJob = useMemo(() => {
-    return downloads.find((d) => d.id === selectedId) || null;
-  }, [downloads, selectedId]);
+  // Selected downloads reference
+  const selectedJobs = useMemo(() => {
+    return downloads.filter((d) => selectedIds.has(d.id));
+  }, [downloads, selectedIds]);
+
+  const canResume = useMemo(() => {
+    return selectedJobs.some((j) =>
+      ['paused', 'queued', 'failed', 'cancelled'].includes(j.state)
+    );
+  }, [selectedJobs]);
+
+  const canPause = useMemo(() => {
+    return selectedJobs.some((j) => j.state === 'downloading' || j.state === 'probing');
+  }, [selectedJobs]);
 
   // Filtered downloads for current category & search
   const filteredDownloads = useMemo(() => {
@@ -509,6 +530,33 @@ export function App() {
     }
   };
 
+  const handleBulkTogglePause = async (jobsToToggle: DownloadJob[]) => {
+    if (jobsToToggle.length === 0) return;
+    const isAnyDownloading = jobsToToggle.some(
+      (j) => j.state === 'downloading' || j.state === 'probing'
+    );
+    for (const job of jobsToToggle) {
+      try {
+        if (isAnyDownloading) {
+          if (job.state === 'downloading' || job.state === 'probing') {
+            await invoke('pause_download', { id: job.id });
+          }
+        } else {
+          if (['paused', 'queued', 'failed', 'cancelled'].includes(job.state)) {
+            await invoke('resume_download', { id: job.id });
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    showToast(
+      isAnyDownloading
+        ? `Paused ${jobsToToggle.length} download(s)`
+        : `Resumed ${jobsToToggle.length} download(s)`
+    );
+  };
+
   const handleCancel = async (job: DownloadJob) => {
     try {
       await invoke('cancel_download', { id: job.id });
@@ -554,14 +602,23 @@ export function App() {
     showToast(`Started download queue`);
   };
 
-  const handleDelete = async (job: DownloadJob, deleteFiles: boolean) => {
+  const handleBulkDelete = async (jobsToDelete: DownloadJob[], deleteFiles: boolean) => {
+    const ids = jobsToDelete.map((j) => j.id);
+    if (ids.length === 0) return;
     try {
-      await invoke('delete_download', { id: job.id, deleteFiles });
-      setDownloads((prev) => prev.filter((d) => d.id !== job.id));
-      if (selectedId === job.id) {
-        setSelectedId(null);
+      if (ids.length === 1) {
+        await invoke('delete_download', { id: ids[0], deleteFiles });
+      } else {
+        await invoke('delete_downloads', { ids, deleteFiles });
       }
-      showToast(`Deleted ${job.filename}`);
+      const idSet = new Set(ids);
+      setDownloads((prev) => prev.filter((d) => !idSet.has(d.id)));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      showToast(`Deleted ${ids.length} download(s)`);
     } catch (err) {
       showToast(`Delete failed: ${String(err)}`);
     }
@@ -611,6 +668,83 @@ export function App() {
     }
   };
 
+  const handleRowSelect = useCallback(
+    (e: React.MouseEvent, id: string) => {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+
+        // 1. Shift + (Ctrl/Cmd) -> Range addition
+        if (e.shiftKey && (e.ctrlKey || e.metaKey)) {
+          if (!lastFocusedId || !filteredDownloads.some((d) => d.id === lastFocusedId)) {
+            next.add(id);
+          } else {
+            const fromIdx = filteredDownloads.findIndex((d) => d.id === lastFocusedId);
+            const toIdx = filteredDownloads.findIndex((d) => d.id === id);
+            const start = Math.min(fromIdx, toIdx);
+            const end = Math.max(fromIdx, toIdx);
+            for (let i = start; i <= end; i++) {
+              next.add(filteredDownloads[i].id);
+            }
+          }
+          return next;
+        }
+
+        // 2. Shift alone -> Continuous range selection (replacing selection)
+        if (e.shiftKey) {
+          const rangeSet = new Set<string>();
+          if (!lastFocusedId || !filteredDownloads.some((d) => d.id === lastFocusedId)) {
+            rangeSet.add(id);
+          } else {
+            const fromIdx = filteredDownloads.findIndex((d) => d.id === lastFocusedId);
+            const toIdx = filteredDownloads.findIndex((d) => d.id === id);
+            const start = Math.min(fromIdx, toIdx);
+            const end = Math.max(fromIdx, toIdx);
+            for (let i = start; i <= end; i++) {
+              rangeSet.add(filteredDownloads[i].id);
+            }
+          }
+          return rangeSet;
+        }
+
+        // 3. Ctrl / Cmd alone -> Toggle individual selection
+        if (e.ctrlKey || e.metaKey) {
+          if (next.has(id)) {
+            next.delete(id);
+          } else {
+            next.add(id);
+          }
+          return next;
+        }
+
+        // 4. Normal click -> Select single item exclusively
+        return new Set([id]);
+      });
+
+      setLastFocusedId(id);
+    },
+    [lastFocusedId, filteredDownloads]
+  );
+
+  const handleRowContextMenu = useCallback((e: React.MouseEvent, job: DownloadJob) => {
+    e.preventDefault();
+    setSelectedIds((prev) => {
+      if (prev.has(job.id)) {
+        return prev;
+      }
+      setLastFocusedId(job.id);
+      return new Set([job.id]);
+    });
+    setContextMenu({ x: e.clientX, y: e.clientY, job });
+  }, []);
+
+  const handleTableBackgroundClick = useCallback((e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.tr')) {
+      return;
+    }
+    setSelectedIds(new Set());
+    setLastFocusedId(null);
+  }, []);
+
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -618,8 +752,9 @@ export function App() {
         setIsAddModalOpen(false);
         setProgressJobId(null);
         setIsSettingsModalOpen(false);
-        setDeleteConfirmJob(null);
+        setDeleteConfirmJobs(null);
         setContextMenu(null);
+        setSelectedIds(new Set());
         return;
       }
 
@@ -627,31 +762,63 @@ export function App() {
         return;
       }
 
+      // Ctrl + A -> Select all visible downloads
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        const allIds = new Set(filteredDownloads.map((d) => d.id));
+        setSelectedIds(allIds);
+        return;
+      }
+
       const list = filteredDownloads;
-      const currentIndex = list.findIndex((x) => x.id === selectedId);
+      const currentIndex = lastFocusedId
+        ? list.findIndex((x) => x.id === lastFocusedId)
+        : -1;
 
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        if (currentIndex < list.length - 1) {
-          setSelectedId(list[currentIndex + 1].id);
+        const nextIdx = Math.min(list.length - 1, currentIndex + 1);
+        if (nextIdx >= 0 && nextIdx < list.length) {
+          const nextId = list[nextIdx].id;
+          if (e.shiftKey) {
+            setSelectedIds((prev) => {
+              const next = new Set(prev);
+              next.add(nextId);
+              return next;
+            });
+          } else {
+            setSelectedIds(new Set([nextId]));
+            setLastFocusedId(nextId);
+          }
         }
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        if (currentIndex > 0) {
-          setSelectedId(list[currentIndex - 1].id);
+        const prevIdx = Math.max(0, currentIndex - 1);
+        if (prevIdx >= 0 && prevIdx < list.length) {
+          const prevId = list[prevIdx].id;
+          if (e.shiftKey) {
+            setSelectedIds((prev) => {
+              const next = new Set(prev);
+              next.add(prevId);
+              return next;
+            });
+          } else {
+            setSelectedIds(new Set([prevId]));
+            setLastFocusedId(prevId);
+          }
         }
-      } else if (e.key === ' ' && selectedJob) {
+      } else if (e.key === ' ' && selectedJobs.length > 0) {
         e.preventDefault();
-        handleTogglePause(selectedJob);
-      } else if (e.key === 'Delete' && selectedJob) {
+        handleBulkTogglePause(selectedJobs);
+      } else if (e.key === 'Delete' && selectedJobs.length > 0) {
         e.preventDefault();
-        setDeleteConfirmJob(selectedJob);
+        setDeleteConfirmJobs(selectedJobs);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [filteredDownloads, selectedId, selectedJob]);
+  }, [filteredDownloads, lastFocusedId, selectedJobs]);
 
   const progressJob = useMemo(() => {
     return downloads.find((d) => d.id === progressJobId) || null;
@@ -663,16 +830,17 @@ export function App() {
 
       <ToolBar
         onAdd={() => setIsAddModalOpen(true)}
-        onResume={() => selectedJob && handleTogglePause(selectedJob)}
-        onPause={() => selectedJob && handleTogglePause(selectedJob)}
+        onResume={() => handleBulkTogglePause(selectedJobs)}
+        onPause={() => handleBulkTogglePause(selectedJobs)}
         onStopAll={handleStopAll}
-        onDelete={() => selectedJob && setDeleteConfirmJob(selectedJob)}
+        onDelete={() => selectedJobs.length > 0 && setDeleteConfirmJobs(selectedJobs)}
         onStartQueue={handleStartQueue}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        hasSelection={!!selectedJob}
-        selectedState={selectedJob?.state}
+        selectedCount={selectedJobs.length}
+        canResume={canResume}
+        canPause={canPause}
       />
 
       <div id="body">
@@ -684,14 +852,11 @@ export function App() {
 
         <DownloadTable
           downloads={filteredDownloads}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
+          selectedIds={selectedIds}
+          onSelect={handleRowSelect}
           onOpenProgress={handleOpenProgress}
-          onContextMenu={(e, job) => {
-            e.preventDefault();
-            setSelectedId(job.id);
-            setContextMenu({ x: e.clientX, y: e.clientY, job });
-          }}
+          onContextMenu={handleRowContextMenu}
+          onBackgroundClick={handleTableBackgroundClick}
         />
       </div>
 
@@ -729,11 +894,11 @@ export function App() {
         />
       )}
 
-      {deleteConfirmJob && (
+      {deleteConfirmJobs && (
         <DeleteConfirmModal
-          job={deleteConfirmJob}
-          onConfirm={handleDelete}
-          onClose={() => setDeleteConfirmJob(null)}
+          jobs={deleteConfirmJobs}
+          onConfirm={handleBulkDelete}
+          onClose={() => setDeleteConfirmJobs(null)}
         />
       )}
 
@@ -742,15 +907,17 @@ export function App() {
           x={contextMenu.x}
           y={contextMenu.y}
           job={contextMenu.job}
+          selectedJobs={selectedJobs}
           onClose={() => setContextMenu(null)}
           onOpenProgress={handleOpenProgress}
           onTogglePause={handleTogglePause}
+          onBulkTogglePause={handleBulkTogglePause}
           onOpenFolder={handleOpenFolder}
           onOpenFile={handleOpenFile}
           onCopyUrl={handleCopyUrl}
           onRetry={handleRetry}
           onVerifyChecksum={handleVerifyChecksum}
-          onDelete={(job) => setDeleteConfirmJob(job)}
+          onDelete={(jobs) => setDeleteConfirmJobs(jobs)}
         />
       )}
 

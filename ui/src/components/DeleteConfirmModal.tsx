@@ -3,23 +3,30 @@ import { TitleBar } from './TitleBar';
 import type { DownloadJob } from '../types';
 
 interface DeleteConfirmModalProps {
-  job: DownloadJob;
-  onConfirm: (job: DownloadJob, deleteFiles: boolean) => Promise<void>;
+  job?: DownloadJob | null;
+  jobs?: DownloadJob[];
+  onConfirm: (jobs: DownloadJob[], deleteFiles: boolean) => Promise<void>;
   onClose: () => void;
 }
 
 export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   job,
+  jobs = [],
   onConfirm,
   onClose,
 }) => {
+  const targetJobs = jobs.length > 0 ? jobs : job ? [job] : [];
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const count = targetJobs.length;
+  const isMultiple = count > 1;
+  const title = isMultiple ? `Delete ${count} Downloads` : 'Delete Download';
 
   const handleDelete = async () => {
     setIsDeleting(true);
     try {
-      await onConfirm(job, deleteFiles);
+      await onConfirm(targetJobs, deleteFiles);
       onClose();
     } catch (err) {
       console.error(err);
@@ -32,11 +39,19 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
     <>
       <div id="dim" onClick={onClose} />
       <div className="win pop" style={{ width: 480, height: 230 }}>
-        <TitleBar title="Delete Download" onClose={onClose} isModal />
+        <TitleBar title={title} onClose={onClose} isModal />
 
         <div className="f" style={{ top: 52 }}>
           <p style={{ margin: '0 0 14px', fontSize: 13, lineHeight: '18px' }}>
-            Are you sure you want to remove <b>"{job.filename}"</b> from your download list?
+            {isMultiple ? (
+              <>
+                Are you sure you want to remove <b>{count} downloads</b> from your download list?
+              </>
+            ) : (
+              <>
+                Are you sure you want to remove <b>"{targetJobs[0]?.filename || 'download'}"</b> from your download list?
+              </>
+            )}
           </p>
 
           <label className="cb" style={{ margin: '14px 0' }}>
@@ -57,9 +72,9 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
             className="btn def"
             style={{ background: 'linear-gradient(#f87171, #dc2626)', borderColor: '#b91c1c' }}
             onClick={handleDelete}
-            disabled={isDeleting}
+            disabled={isDeleting || count === 0}
           >
-            {isDeleting ? 'Deleting...' : 'Delete'}
+            {isDeleting ? 'Deleting...' : isMultiple ? `Delete ${count} Downloads` : 'Delete'}
           </button>
         </div>
       </div>

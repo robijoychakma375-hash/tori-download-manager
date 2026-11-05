@@ -141,6 +141,7 @@ pub fn run() {
             retry_download,
             list_downloads,
             delete_download,
+            delete_downloads,
             set_download_priority,
             open_folder,
             get_default_download_dir,
