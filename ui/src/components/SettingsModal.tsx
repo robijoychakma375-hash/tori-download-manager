@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { TitleBar } from './TitleBar';
 import { ToggleSwitch } from './ToggleSwitch';
 import type { AppSettings } from '../types';
@@ -322,10 +323,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       style={{ minWidth: 0 }}
                       onClick={async () => {
                         try {
-                          const dir = await invoke<string>('get_default_download_dir');
-                          if (dir) update('dir', dir);
+                          const selected = await open({
+                            directory: true,
+                            multiple: false,
+                            defaultPath: settings.dir && settings.dir.trim() !== '' ? settings.dir : undefined,
+                          });
+                          if (selected && typeof selected === 'string') {
+                            update('dir', selected);
+                          }
                         } catch (err) {
-                          console.error(err);
+                          console.error('Failed to select directory via native dialog:', err);
                         }
                       }}
                     >

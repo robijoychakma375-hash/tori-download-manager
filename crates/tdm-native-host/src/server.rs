@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -471,7 +470,7 @@ async fn handle_create_download(
     }
 
     // Sanitize destination path if provided
-    let dest_path = if let Some(ref d) = payload.destination {
+    if let Some(ref d) = payload.destination {
         let clean = d.trim();
         if clean.contains("..") {
             return Err((
@@ -482,12 +481,11 @@ async fn handle_create_download(
                 })),
             ));
         }
-        PathBuf::from(clean)
-    } else if let Ok(profile) = std::env::var("USERPROFILE") {
-        PathBuf::from(profile).join("Downloads")
-    } else {
-        PathBuf::from(".")
-    };
+    }
+
+    let dest_path = state
+        .manager
+        .resolve_destination_folder(raw_url, payload.destination.as_deref());
 
     let prio = match payload.priority.as_deref() {
         Some("high") => Priority::High,
@@ -628,7 +626,7 @@ async fn handle_create_media_download(
     }
 
     // Sanitize destination path if provided
-    let dest_path = if let Some(ref d) = payload.destination {
+    if let Some(ref d) = payload.destination {
         let clean = d.trim();
         if clean.contains("..") {
             return Err((
@@ -639,22 +637,21 @@ async fn handle_create_media_download(
                 })),
             ));
         }
-        PathBuf::from(clean)
-    } else if let Ok(profile) = std::env::var("USERPROFILE") {
-        PathBuf::from(profile).join("Downloads")
-    } else {
-        PathBuf::from(".")
-    };
+    }
+
+    let initial_filename = payload
+        .filename
+        .unwrap_or_else(|| "media_download.mp4".to_string());
+
+    let dest_path = state
+        .manager
+        .resolve_destination_folder(&initial_filename, payload.destination.as_deref());
 
     let prio = match payload.priority.as_deref() {
         Some("high") => Priority::High,
         Some("low") => Priority::Low,
         _ => Priority::Normal,
     };
-
-    let initial_filename = payload
-        .filename
-        .unwrap_or_else(|| "media_download.mp4".to_string());
 
     match state
         .manager
@@ -767,7 +764,7 @@ async fn handle_playlist_enqueue(
         ));
     }
 
-    let dest_path = if let Some(ref d) = payload.destination {
+    if let Some(ref d) = payload.destination {
         let clean = d.trim();
         if clean.contains("..") {
             return Err((
@@ -778,12 +775,11 @@ async fn handle_playlist_enqueue(
                 })),
             ));
         }
-        std::path::PathBuf::from(clean)
-    } else if let Ok(profile) = std::env::var("USERPROFILE") {
-        std::path::PathBuf::from(profile).join("Downloads")
-    } else {
-        std::path::PathBuf::from(".")
-    };
+    }
+
+    let dest_path = state
+        .manager
+        .resolve_destination_folder("playlist_video.mp4", payload.destination.as_deref());
 
     let format = payload.format_id.as_deref().unwrap_or("best");
     let mut job_ids = Vec::new();

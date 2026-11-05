@@ -1,63 +1,64 @@
-# TORI Download Manager — Gate 12.4 Execution Plan
+# TORI Download Manager — Gate 12.7 Execution Plan
+## Fix Download Folder Selection & Restore Official TORI Branding
 
-## Milestone Objective
-Implement Gate 12.4 in two strictly separated, verified phases:
-- **Phase A**: User-Resizable Download Toast (native edge/corner resize, preset modes: Compact / Normal / Large / Custom, separate size persistence, safe control regions, DPI invariance).
-- **Phase B**: Download Speed Accuracy and Performance Audit (diagnostic audit of speed calculations, multi-connection HTTP benchmarks, managed media vs yt-dlp comparison, bottleneck analysis, and optimization roadmap).
-
----
-
-## Phase A Plan — User-Resizable Download Toast
-
-### Requirements Breakdown
-1. **Preserve Visual Design & Reference Proportions:**
-   - Normal reference size remains 470px card (494px window with 12px transparent padding).
-   - Bottom-right positioning, transparent window, circular progress ring, category chips/thumbnails, drawer, and action buttons remain pixel-faithful to `design/tori-final/`.
-2. **Native Resizing Capabilities & Window Configuration:**
-   - Add `"core:window:allow-start-resize-dragging"` capability in `src-tauri/capabilities/default.json`.
-   - Update `open_progress_window_internal` in `src-tauri/src/commands.rs`:
-     - Set `.resizable(true)` on `progress_toast` window builder.
-     - Set `.min_inner_size(384.0, 76.0)` and `.max_inner_size(744.0, 800.0)`.
-     - Load preferred width from database setting (`toast_preferred_width`), defaulting to 494.0.
-   - Add Tauri commands:
-     - `save_toast_size(width: f64)`
-     - `get_toast_size() -> Result<Option<f64>, String>`
-3. **Safe Edge / Corner Resize Zones:**
-   - Add non-intrusive edge resize handle on the West (left) edge and NorthWest (top-left) corner of `.toast-host-container`.
-   - On `mousedown` on West handle, trigger `startResizeDragging('West')`.
-   - On `mousedown` on NorthWest handle, trigger `startResizeDragging('NorthWest')`.
-   - Ensure interactive elements (Pause, Resume, Dismiss, Expand, Drawer) remain 100% clickable with `pointer-events: auto !important;` and `-webkit-app-region: no-drag !important;`.
-   - Native dragging via `startDragging()` on row/neutral areas remains intact.
-4. **Size Presets & Custom Scaling:**
-   - Preset options:
-     - **Compact**: 380px card / 404px window
-     - **Normal**: 470px card / 494px window (exact reference design)
-     - **Large**: 580px card / 604px window
-     - **Custom**: mouse-resized width between 384px and 744px
-   - Right-click context menu on toast card allowing user to switch presets or reset to Normal.
-   - Double-click on left resize border cycles Compact $\to$ Normal $\to$ Large.
-   - Dynamic height accommodation: `ResizeObserver` measures rendered content height; height continues to accommodate collapsed/expanded states and stacked cards dynamically.
-   - Height never overwrites user's preferred width.
-5. **Separate Persistence & Position Independence:**
-   - Width is persisted to `toast_preferred_width`.
-   - Position is persisted to `toast_window_position` (`{ x, y, is_manual }`).
-   - Restoring or changing size does not reset manual position.
-   - In default bottom-right mode, $X = \text{workArea.right} - \text{width} - 8.0$, keeping the 20px right margin exact.
-6. **Testing & Verification:**
-   - Create `scripts/verify_gate12_4_phase_a.js`:
-     - Test Compact (404px), Normal (494px), Large (604px), and custom widths.
-     - Test window boundaries across 100%, 125%, 150%, 200% scale factors.
-     - Test separate persistence of position and size.
-     - Verify no clipping of buttons or progress ring.
-     - Capture screenshots: `actual_toast_gate12_4_compact.png`, `actual_toast_gate12_4_normal.png`, `actual_toast_gate12_4_large.png`, `actual_toast_gate12_4_expanded_large.png`.
-   - Generate `GATE12_4_TOAST_RESIZING_REPORT.md` and commit to Git.
+### Milestone Objective
+Deliver a verified, production-quality fix for Gate 12.7:
+1. Enable native folder selection in Settings → Download Engine → Default Download Folder via Tauri 2 native dialog.
+2. Persist chosen folder across sessions, restore on startup without clobbering, and honor it across all download pipelines (Direct HTTP, Managed Media, Browser Extension, Playlists).
+3. Support "Use Category By Default" (`settings.sort`): dynamically route downloads into category subfolders (`Programs`, `Video`, `Music`, `Compressed`, `Documents`, `Other`) beneath the base directory without duplicating category names, while preserving explicit "Save To" overrides.
+4. Replace default Tauri starter icons with the official TORI Download Manager branding across the Windows executable (`icon.ico`), taskbar, browser extension, and Web UI.
 
 ---
 
-## Phase B Plan — Download Speed Accuracy & Audit (COMPLETED & VERIFIED)
-- [x] Task 1: Audit speed calculation (monotonic clock backed by QPC, byte aggregation, unit verification).
-- [x] Task 2: Controlled direct HTTP benchmarks across 1, 4, 8, 16, 32 connections on 80 MB payload.
-- [x] Task 3: Managed media benchmarking against direct yt-dlp baseline on Big Buck Bunny `160+139`.
-- [x] Task 4: Independent throughput validation and resumed download byte exclusion test.
-- [x] Task 5: Bottleneck analysis and diagnostic recommendations.
-- [x] Task 6: Comprehensive verification runner `scripts/audit_speed_and_performance.js` and report `GATE12_4_DOWNLOAD_SPEED_AUDIT_REPORT.md`.
+### Phase 1: Folder Selection & Destination Routing Engine
+
+#### 1.1 Tauri 2 Dialog Integration
+- Add `tauri-plugin-dialog = "2"` to `src-tauri/Cargo.toml`.
+- Register `.plugin(tauri_plugin_dialog::init())` in `src-tauri/src/lib.rs`.
+- Grant `"dialog:allow-open"` in `src-tauri/capabilities/default.json`.
+- Add `@tauri-apps/plugin-dialog` to `ui/package.json`.
+- Wire `open({ directory: true, multiple: false, defaultPath: settings.dir })` to the "Choose…" button in `SettingsModal.tsx`.
+- Handle path cancellation safely without mutating existing state.
+
+#### 1.2 Settings Persistence & Clashing Fix
+- In `src-tauri/src/commands.rs`: update `get_default_download_dir` to return `manager.default_download_dir()`, falling back to `get_default_download_path()`.
+- In `ui/src/App.tsx`: remove the clobbering call in `useEffect` that reset `settings.dir` to system default; ensure `syncSettings()` loads and preserves saved directory from SQLite `get_engine_settings`.
+- In `apply_settings_to_manager`: sync both `dir` and `sort` into `DownloadManager`.
+
+#### 1.3 Destination Folder & Category Routing
+- In `crates/tdm-core/src/engine/manager.rs`:
+  - Add `use_category_by_default: Arc<Mutex<bool>>` and getters/setters.
+  - Implement `resolve_destination_folder(&self, filename: &str, explicit_dest: Option<&str>) -> PathBuf`.
+  - Handle category classification matching `ui/src/utils.ts` (Video, Music, Compressed, Programs, Documents, Other).
+  - Prevent duplicate category folder names (e.g. if base dir already ends with `Video`, do not append `Video\Video`).
+  - Auto-create destination folder if needed via `std::fs::create_dir_all`.
+- In `src-tauri/src/commands.rs` and `crates/tdm-native-host/src/server.rs`:
+  - Route all download creation endpoints (`create_download`, `create_media_download`, `enqueue_playlist_items`, `handle_create_download`, `handle_create_media_download`, `handle_playlist_enqueue`) through `resolve_destination_folder`.
+
+---
+
+### Phase 2: Official TORI Branding Restoration
+
+#### 2.1 Master Vector Logo
+- Source official TORI logo from `design/tori-final/tori-app-ndm-win.html` (Torii gate + download arrow, `#696cf6` -> `#3e34be` rounded rectangle).
+- Save clean master SVG: `design/tori-final/tori-logo.svg` and `ui/public/favicon.svg`.
+
+#### 2.2 Native Application Icons
+- Generate Windows multi-resolution `src-tauri/icons/icon.ico` and PNG assets via `cargo tauri icon`.
+- Update extension icons (`extension/icons/icon-16.png`, `icon-32.png`, `icon-48.png`, `icon-128.png`).
+- Set `<title>Tori Download Manager</title>` in `ui/index.html`.
+
+---
+
+### Phase 3: Verification & Acceptance
+- Run `cargo fmt --all -- --check`.
+- Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- Run `cargo test --workspace`.
+- Run `npm --prefix ui run build`.
+- Create and execute `scripts/verify_gate12_7.js`:
+  - Choose and save a custom directory.
+  - Relaunch application and verify persistence.
+  - Test download destination with category sorting enabled vs disabled.
+  - Verify explicit per-download Save To override.
+  - Verify executable and taskbar icon branding.
+- Generate `GATE12_7_FOLDER_SELECTION_AND_BRANDING_REPORT.md`.

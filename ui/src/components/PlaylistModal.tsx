@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { TitleBar } from './TitleBar';
 import type { PlaylistMetadata } from '../types';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 
 interface PlaylistModalProps {
   initialUrl?: string;
@@ -518,6 +519,27 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                   value={saveDir}
                   onChange={(e) => setSaveDir(e.target.value)}
                 />
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ minWidth: 0, height: 28, padding: '0 10px', fontSize: 12 }}
+                  onClick={async () => {
+                    try {
+                      const selected = await open({
+                        directory: true,
+                        multiple: false,
+                        defaultPath: saveDir && saveDir.trim() !== '' ? saveDir : undefined,
+                      });
+                      if (selected && typeof selected === 'string') {
+                        setSaveDir(selected);
+                      }
+                    } catch (err) {
+                      console.error('Failed to select directory via native dialog:', err);
+                    }
+                  }}
+                >
+                  Choose…
+                </button>
               </div>
             </>
           )}

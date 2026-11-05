@@ -246,13 +246,8 @@ pub async fn handle_message(
                 }
             }
 
-            let dest_dir = if let Some(d) = msg.destination {
-                PathBuf::from(d)
-            } else if let Ok(profile) = std::env::var("USERPROFILE") {
-                PathBuf::from(profile).join("Downloads")
-            } else {
-                PathBuf::from(".")
-            };
+            let dest_dir = manager
+                .resolve_destination_folder(trimmed_url, msg.destination.as_deref());
 
             let priority = match msg.priority.as_deref() {
                 Some("high") => Priority::High,

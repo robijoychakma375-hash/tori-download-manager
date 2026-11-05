@@ -75,6 +75,7 @@ pub fn run() {
     let srv_shutdown = shutdown_token.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             manager: manager.clone(),
         })

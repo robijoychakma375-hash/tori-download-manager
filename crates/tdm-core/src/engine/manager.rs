@@ -38,6 +38,7 @@ pub struct DownloadManager {
     max_retries: Arc<AtomicUsize>,
     dynamic_segmentation: Arc<std::sync::atomic::AtomicBool>,
     default_download_dir: Arc<Mutex<Option<String>>>,
+    use_category_by_default: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl DownloadManager {
@@ -93,6 +94,7 @@ impl DownloadManager {
             max_retries: Arc::new(AtomicUsize::new(3)),
             dynamic_segmentation: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             default_download_dir: Arc::new(Mutex::new(None)),
+            use_category_by_default: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         })
     }
 
@@ -149,6 +151,134 @@ impl DownloadManager {
 
     pub fn default_download_dir(&self) -> Option<String> {
         self.default_download_dir.lock().unwrap().clone()
+    }
+
+    pub fn set_use_category_by_default(&self, enabled: bool) {
+        self.use_category_by_default
+            .store(enabled, Ordering::SeqCst);
+    }
+
+    pub fn is_use_category_by_default(&self) -> bool {
+        self.use_category_by_default.load(Ordering::Relaxed)
+    }
+
+    pub fn get_system_download_dir() -> PathBuf {
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            let downloads = PathBuf::from(profile).join("Downloads");
+            if downloads.exists() {
+                return downloads;
+            }
+            return downloads;
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            let downloads = PathBuf::from(home).join("Downloads");
+            return downloads;
+        }
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    }
+
+    pub fn classify_category(hint: &str) -> &'static str {
+        let clean = hint.split('?').next().unwrap_or(hint);
+        let clean = clean.split('#').next().unwrap_or(clean);
+        let path = Path::new(clean);
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        match ext.as_str() {
+            "exe" | "msi" | "dmg" | "bat" | "cmd" | "sh" | "apk" => "Programs",
+            "iso" | "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" => "Compressed",
+            "mp4" | "mkv" | "webm" | "mov" | "avi" | "flv" | "wmv" | "m4v" | "ts" => "Video",
+            "mp3" | "m4a" | "aac" | "flac" | "ogg" | "opus" | "wav" => "Music",
+            "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "csv" | "md" => {
+                "Documents"
+            }
+            _ => "Other",
+        }
+    }
+
+    pub fn resolve_destination_folder(
+        &self,
+        hint_filename_or_url: &str,
+        explicit_dest: Option<&str>,
+    ) -> PathBuf {
+        let default_dir = self.default_download_dir();
+        let is_explicit_override = match explicit_dest {
+            Some(d) => {
+                let clean = d.trim();
+                if clean.is_empty() {
+                    false
+                } else if let Some(ref def) = default_dir {
+                    let pa = Path::new(clean);
+                    let pb = Path::new(def.trim());
+                    if pa == pb {
+                        false
+                    } else {
+                        let ca: Vec<_> = pa
+                            .components()
+                            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                            .collect();
+                        let cb: Vec<_> = pb
+                            .components()
+                            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                            .collect();
+                        ca != cb
+                    }
+                } else {
+                    let pa = Path::new(clean);
+                    let pb = Self::get_system_download_dir();
+                    let ca: Vec<_> = pa
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                        .collect();
+                    let cb: Vec<_> = pb
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                        .collect();
+                    ca != cb
+                }
+            }
+            None => false,
+        };
+
+        if is_explicit_override {
+            let p = PathBuf::from(explicit_dest.unwrap().trim());
+            let _ = fs::create_dir_all(&p);
+            return p;
+        }
+
+        let base_dir = if let Some(ref def) = default_dir {
+            let clean = def.trim();
+            if !clean.is_empty() {
+                PathBuf::from(clean)
+            } else {
+                Self::get_system_download_dir()
+            }
+        } else {
+            Self::get_system_download_dir()
+        };
+
+        if self.is_use_category_by_default() {
+            let category = Self::classify_category(hint_filename_or_url);
+            let already_in_category = base_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.eq_ignore_ascii_case(category))
+                .unwrap_or(false);
+
+            let final_dir = if already_in_category {
+                base_dir
+            } else {
+                base_dir.join(category)
+            };
+            let _ = fs::create_dir_all(&final_dir);
+            final_dir
+        } else {
+            let _ = fs::create_dir_all(&base_dir);
+            base_dir
+        }
     }
 
     pub fn max_active_jobs(&self) -> usize {

@@ -40,13 +40,9 @@ pub async fn create_download(
     priority: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<DownloadJob, String> {
-    let dest_dir = if let Some(d) = destination {
-        PathBuf::from(d)
-    } else if let Some(def) = state.manager.default_download_dir() {
-        PathBuf::from(def)
-    } else {
-        get_default_download_path()
-    };
+    let dest_dir = state
+        .manager
+        .resolve_destination_folder(&url, destination.as_deref());
 
     let prio = match priority.as_deref() {
         Some(p) => p.parse::<tdm_core::Priority>().unwrap_or_default(),
@@ -197,7 +193,12 @@ pub async fn open_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn get_default_download_dir() -> Result<String, String> {
+pub async fn get_default_download_dir(state: State<'_, AppState>) -> Result<String, String> {
+    if let Some(dir) = state.manager.default_download_dir() {
+        if !dir.trim().is_empty() {
+            return Ok(dir);
+        }
+    }
     Ok(get_default_download_path().to_string_lossy().to_string())
 }
 
@@ -327,6 +328,9 @@ pub fn apply_settings_to_manager(
         if !dir.trim().is_empty() {
             manager.set_default_download_dir(Some(dir.to_string()));
         }
+    }
+    if let Some(sort) = settings.get("sort").and_then(|v| v.as_bool()) {
+        manager.set_use_category_by_default(sort);
     }
 
     // Bandwidth limiter
@@ -897,16 +901,9 @@ pub async fn enqueue_playlist_items(
     format_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    let dest_path = if let Some(ref d) = destination {
-        let clean = d.trim();
-        if !clean.is_empty() {
-            PathBuf::from(clean)
-        } else {
-            get_default_download_path()
-        }
-    } else {
-        get_default_download_path()
-    };
+    let dest_path = state
+        .manager
+        .resolve_destination_folder("playlist.mp4", destination.as_deref());
 
     let format = format_id.as_deref().unwrap_or("best");
     let mut created_ids = Vec::new();
@@ -979,27 +976,12 @@ pub async fn create_media_download(
 
     let format_id = args.format_id.unwrap_or_else(|| "best".to_string());
 
-    let dest_path = if let Some(ref d) = args.destination {
+    if let Some(ref d) = args.destination {
         let clean = d.trim();
         if clean.contains("..") {
             return Err("Invalid destination path: directory traversal rejected.".to_string());
         }
-        if !clean.is_empty() {
-            PathBuf::from(clean)
-        } else {
-            get_default_download_path()
-        }
-    } else if let Some(def) = state.manager.default_download_dir() {
-        PathBuf::from(def)
-    } else {
-        get_default_download_path()
-    };
-
-    let prio = match args.priority.as_deref() {
-        Some("high") => tdm_core::Priority::High,
-        Some("low") => tdm_core::Priority::Low,
-        _ => tdm_core::Priority::Normal,
-    };
+    }
 
     let initial_filename = args
         .filename
@@ -1011,6 +993,16 @@ pub async fn create_media_download(
         format!("{}.mp4", initial_filename)
     } else {
         initial_filename
+    };
+
+    let dest_path = state
+        .manager
+        .resolve_destination_folder(&filename_with_ext, args.destination.as_deref());
+
+    let prio = match args.priority.as_deref() {
+        Some("high") => tdm_core::Priority::High,
+        Some("low") => tdm_core::Priority::Low,
+        _ => tdm_core::Priority::Normal,
     };
 
     let job = state

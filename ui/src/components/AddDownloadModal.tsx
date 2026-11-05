@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { TitleBar } from './TitleBar';
 import type { MediaMetadata } from '../types';
 import { isMediaPageUrl, isPlaylistUrl, fmtB, fmtT } from '../utils';
@@ -394,6 +395,27 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
                 value={saveDir}
                 onChange={(e) => setSaveDir(e.target.value)}
               />
+              <button
+                type="button"
+                className="btn"
+                style={{ minWidth: 0 }}
+                onClick={async () => {
+                  try {
+                    const selected = await open({
+                      directory: true,
+                      multiple: false,
+                      defaultPath: saveDir && saveDir.trim() !== '' ? saveDir : undefined,
+                    });
+                    if (selected && typeof selected === 'string') {
+                      setSaveDir(selected);
+                    }
+                  } catch (err) {
+                    console.error('Failed to select directory via native dialog:', err);
+                  }
+                }}
+              >
+                Choose…
+              </button>
             </div>
           </div>
 

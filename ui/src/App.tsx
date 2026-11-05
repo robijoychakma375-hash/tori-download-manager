@@ -386,7 +386,7 @@ export function App() {
     invoke<string>('get_default_download_dir')
       .then((dir) => {
         if (dir) {
-          setSettings((prev) => ({ ...prev, dir }));
+          setSettings((prev) => (prev.dir && prev.dir.trim() !== '' ? prev : { ...prev, dir }));
         }
       })
       .catch((err) => console.error('Failed to get default dir:', err));
