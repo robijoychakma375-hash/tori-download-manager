@@ -65,7 +65,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEQzIzRDhDQzhEQTUzOTcKUldTWFU5cklqRDNDelRBOVAzOSs1L0RXN0FFLy9YWGFJc2NnUStaNktxSkNOQ1ZCeG01MjFTZzQK",
       "endpoints": [
-        "https://github.com/tori-download-manager/tori-download-manager/releases/latest/download/latest.json"
+        "https://github.com/robijoychakma375-hash/tori-download-manager/releases/latest/download/latest.json"
       ]
     }
   }

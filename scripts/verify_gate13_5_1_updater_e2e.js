@@ -94,15 +94,15 @@ async function runAudit() {
     'SettingsModal conditionally renders website link only when OFFICIAL_WEBSITE_URL is truthy'
   );
   assert(
-    settingsModal.includes('https://github.com/tori-download-manager/tori-download-manager'),
+    settingsModal.includes('https://github.com/robijoychakma375-hash/tori-download-manager'),
     'SettingsModal references official GitHub repository homepage'
   );
   assert(
-    settingsModal.includes('https://github.com/tori-download-manager/tori-download-manager/releases'),
+    settingsModal.includes('https://github.com/robijoychakma375-hash/tori-download-manager/releases'),
     'SettingsModal references official GitHub Releases for downloads and notes'
   );
   assert(
-    settingsModal.includes('https://github.com/tori-download-manager/tori-download-manager/issues'),
+    settingsModal.includes('https://github.com/robijoychakma375-hash/tori-download-manager/issues'),
     'SettingsModal references official GitHub Issues for bug reports and feedback'
   );
 
@@ -161,7 +161,7 @@ async function runAudit() {
   assert(latestJson.platforms && latestJson.platforms['windows-x86_64'], 'latest.json defines windows-x86_64 target platform');
   assert(latestJson.platforms['windows-x86_64'].signature === sigContent, 'latest.json windows-x86_64 signature matches .sig file byte-for-byte');
   assert(
-    latestJson.platforms['windows-x86_64'].url === 'https://github.com/tori-download-manager/tori-download-manager/releases/download/v1.0.0/TORI Download Manager_1.0.0_x64-setup.exe',
+    latestJson.platforms['windows-x86_64'].url === 'https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.0/TORI Download Manager_1.0.0_x64-setup.exe',
     'latest.json download URL points to verified GitHub Releases asset'
   );
 

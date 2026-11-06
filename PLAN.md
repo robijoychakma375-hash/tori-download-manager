@@ -432,6 +432,53 @@ Perform the final, exhaustive release-readiness verification before publishing T
 - [x] Record exact files, hashes, repository status, updater acceptance, limitations, and Git commit.
 - [x] Issue an explicit NOT READY recommendation for public publication (blocked on GitHub repository creation).
 
+---
+
+# TORI Download Manager v1.0.0 — Milestone Plan: Gate 13.7
+## Official GitHub Repository Integration & Final v1.0.0 Packaging
+
+### Objective
+Integrate TORI Download Manager with the confirmed GitHub repository (`https://github.com/robijoychakma375-hash/tori-download-manager`), configure the `origin` Git remote, replace all production references to `tori-download-manager/tori-download-manager` with `robijoychakma375-hash/tori-download-manager`, rebuild the production application and self-contained NSIS installer, re-sign release artifacts with the existing Ed25519 Minisign key, verify the suite, and produce the integration report without pushing to GitHub.
+
+### Specific Measurable Next Milestones
+
+#### Milestone 1: Git Remote & Repository Security Audit
+- [x] Inspect local Git repository, branch `master`, commit history.
+- [x] Configure `origin` remote: `https://github.com/robijoychakma375-hash/tori-download-manager.git`.
+- [x] Audit `.gitignore` and tracked files ensuring zero secrets, `.key`, `.pwd`, `.pem`, databases, or local files are tracked (untracked `tdm_metadata.sqlite`, deleted `chunk-stream1-00002.m4s.tmp`, ignored `*.sqlite`, `*.tmp`).
+- [x] Review license notices: created root `LICENSE` (MIT) and updated `LICENSE-THIRD-PARTY.txt` (v1.0.0, FFmpeg GPLv3, yt-dlp Unlicense, TORI MIT/Apache-2.0).
+
+#### Milestone 2: Replace Incorrect GitHub URLs
+- [x] Update `ui/src/components/SettingsModal.tsx` (Repository, Releases, Issues links updated to `robijoychakma375-hash/tori-download-manager`).
+- [x] Update `src-tauri/tauri.conf.json` (`plugins.updater.endpoints` updated to `robijoychakma375-hash/tori-download-manager`).
+- [x] Update `scripts/generate_release_metadata.js` (`owner = 'robijoychakma375-hash'`).
+- [x] Verified `README.md`, `RELEASE_NOTES.md`, and `CHANGELOG.md` are aligned with v1.0.0.
+- [x] Update QA and test suites referencing repository URLs (`updater_cryptography_tests.rs`, `verify_gate13_5_qa.js`, `verify_gate13_5_1_updater_e2e.js`).
+- [x] Confirm official website link remains safely hidden (`OFFICIAL_WEBSITE_URL: null`).
+
+#### Milestone 3: Rebuild v1.0.0 Production Application & NSIS Installer
+- [x] Rebuild React frontend: `npm --prefix ui run build` (clean build in 295ms).
+- [x] Rebuild self-contained Windows NSIS installer: `cargo tauri build --bundles nsis` (116.8 MB installer generated).
+- [x] Re-sign installer and generate `latest.json` with existing Ed25519 key (`scripts/generate_release_metadata.js`).
+- [x] Recalculate `SHA256SUMS.txt` for all release deliverables.
+- [x] Restage final distribution bundle into `release/v1.0.0/` (`scripts/stage_release_package.js`).
+
+#### Milestone 4: Verification & Acceptance Suites
+- [x] Run Rust workspace tests (`cargo test --workspace` — 146 tests passed, 0 failed).
+- [x] Run updater cryptographic verification tests (`cargo test --test updater_cryptography_tests` — 5 tests passed).
+- [x] Run Gate 13.5 QA suite (`scripts/verify_gate13_5_qa.js` — 61 tests passed).
+- [x] Run Gate 13.5.1 signed updater E2E suite (`scripts/verify_gate13_5_1_updater_e2e.js` — 67 tests passed).
+- [x] Run installed application acceptance tests under scrubbed PATH (`scripts/verify_gate13_6_installed_app.js` — 33 tests passed).
+- [x] Run production release build guard (`scripts/verify_production_release.ps1` — 15 checks passed).
+- [x] Verify that installed executable contains the corrected GitHub URLs.
+
+#### Milestone 5: Gate 13.7 Report & Local Commit
+- [x] Create `docs/reports/GATE13_7_GITHUB_INTEGRATION_REPORT.md`.
+- [x] Record Git remote, corrected URLs, binary hashes, test results, and status.
+- [x] Commit verified changes locally.
+- [x] Strictly do NOT push remote, do NOT create GitHub release, do NOT publish.
+
+
 
 
 

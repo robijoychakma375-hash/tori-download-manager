@@ -3,8 +3,12 @@ node_modules/
 dist/
 .tdm-data/
 *.tdm-part
+*.sqlite
+*.sqlite3
 *.sqlite-wal
 *.sqlite-shm
+*.db
+*.tmp
 resources/bin/*.exe
 resources/bin/*.pdb
 *.key

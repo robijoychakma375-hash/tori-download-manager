@@ -917,21 +917,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="row" style={{ justifyContent: 'center', gap: 12, marginTop: 8, fontSize: 12, flexWrap: 'wrap' }}>
                 <span
                   style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}
-                  onClick={() => openExternalUrl('https://github.com/tori-download-manager/tori-download-manager')}
+                  onClick={() => openExternalUrl('https://github.com/robijoychakma375-hash/tori-download-manager')}
                 >
                   GitHub Repository
                 </span>
                 <span style={{ color: 'var(--mut)' }}>•</span>
                 <span
                   style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}
-                  onClick={() => openExternalUrl('https://github.com/tori-download-manager/tori-download-manager/releases')}
+                  onClick={() => openExternalUrl('https://github.com/robijoychakma375-hash/tori-download-manager/releases')}
                 >
                   Releases & Downloads
                 </span>
                 <span style={{ color: 'var(--mut)' }}>•</span>
                 <span
                   style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}
-                  onClick={() => openExternalUrl('https://github.com/tori-download-manager/tori-download-manager/issues')}
+                  onClick={() => openExternalUrl('https://github.com/robijoychakma375-hash/tori-download-manager/issues')}
                 >
                   Issues & Feedback
                 </span>
@@ -1054,7 +1054,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <button
                         className="btn"
                         onClick={() =>
-                          openExternalUrl('https://github.com/tori-download-manager/tori-download-manager/releases')
+                          openExternalUrl('https://github.com/robijoychakma375-hash/tori-download-manager/releases')
                         }
                       >
                         GitHub

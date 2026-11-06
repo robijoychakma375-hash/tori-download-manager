@@ -306,7 +306,7 @@ fn test_latest_json_matches_signature_file() {
         .as_str()
         .unwrap();
     assert!(
-        download_url.starts_with("https://github.com/tori-download-manager/tori-download-manager/releases/download/v1.0.0/"),
+        download_url.starts_with("https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.0/"),
         "Download URL must point to verified GitHub Releases: {}",
         download_url
     );

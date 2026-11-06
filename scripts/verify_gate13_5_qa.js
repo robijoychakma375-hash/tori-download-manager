@@ -74,8 +74,8 @@ async function runTests() {
   assert(settingsModal.includes('showNotesModal'), 'SettingsModal includes Release Notes viewer');
   assert(settingsModal.includes('autoCheckUpdates'), 'SettingsModal provides auto-check updates daily toggle');
   assert(settingsModal.includes('OFFICIAL_WEBSITE_URL: string | null = null'), 'SettingsModal hides website link until verified URL is configured');
-  assert(settingsModal.includes('https://github.com/tori-download-manager/tori-download-manager/issues'), 'SettingsModal links to GitHub Issues for bug reports and feedback');
-  assert(settingsModal.includes('https://github.com/tori-download-manager/tori-download-manager/releases'), 'SettingsModal links to GitHub Releases for official downloads');
+  assert(settingsModal.includes('https://github.com/robijoychakma375-hash/tori-download-manager/issues'), 'SettingsModal links to GitHub Issues for bug reports and feedback');
+  assert(settingsModal.includes('https://github.com/robijoychakma375-hash/tori-download-manager/releases'), 'SettingsModal links to GitHub Releases for official downloads');
 
   const licenseFile = path.join(PROJECT_ROOT, 'resources', 'LICENSE-THIRD-PARTY.txt');
   assert(fs.existsSync(licenseFile), 'resources/LICENSE-THIRD-PARTY.txt exists and is bundled');

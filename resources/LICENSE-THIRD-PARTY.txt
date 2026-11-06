@@ -1,5 +1,5 @@
 ================================================================================
-TORI Download Manager v2.0 — Third-Party Software Notices & Licenses
+TORI Download Manager v1.0.0 — Third-Party Software Notices & Licenses
 ================================================================================
 
 This distribution of TORI Download Manager bundles and/or interacts with third-party

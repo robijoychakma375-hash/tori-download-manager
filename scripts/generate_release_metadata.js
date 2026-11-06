@@ -96,7 +96,7 @@ function main() {
   }
 
   const version = '1.0.0';
-  const owner = 'tori-download-manager';
+  const owner = 'robijoychakma375-hash';
   const repo = 'tori-download-manager';
   const pubDate = new Date().toISOString();
 
