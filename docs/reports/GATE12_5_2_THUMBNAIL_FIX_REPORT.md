@@ -128,6 +128,6 @@ Executed via live WebView2 Chrome DevTools Protocol (CDP) session:
 
 ### 5. Artifacts Generated
 
-1. `gate12_5_2_main_download_facebook_thumbnail.png` — Screenshot of TORI main window showing the completed Facebook Reel with authentic thumbnail.
-2. `gate12_5_2_toast_facebook_thumbnail.png` — Screenshot of Download Toast showing the Facebook Reel with thumbnail inside progress ring.
-3. `GATE12_5_2_THUMBNAIL_FIX_REPORT.md` — This comprehensive engineering report.
+1. `docs/screenshots/gate12_5_2_main_download_facebook_thumbnail.png` — Screenshot of TORI main window showing the completed Facebook Reel with authentic thumbnail.
+2. `docs/screenshots/gate12_5_2_toast_facebook_thumbnail.png` — Screenshot of Download Toast showing the Facebook Reel with thumbnail inside progress ring.
+3. `docs/reports/GATE12_5_2_THUMBNAIL_FIX_REPORT.md` — This comprehensive engineering report.

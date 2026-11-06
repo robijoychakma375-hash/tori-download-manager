@@ -230,7 +230,7 @@ Executed: `cargo test --workspace`
 - **`gate12_9_1_acceptance_tests`:** **6 passed, 0 failed**
 - **`gate12_9_2_e2e_tests`:** **5 passed, 0 failed**
 - **`gate12_9_discovery_tests`:** **5 passed, 0 failed**
-- **`gate2_adaptive_tests`:** **7 passed, 0 failed**
+- **`gate2_adaptive_tests`:** **8 passed, 0 failed**
 - **`gate4_hls_tests`:** **8 passed, 0 failed**
 - **`gate5_dash_tests`:** **9 passed, 0 failed**
 - **`gate6_torrent_tests`:** **8 passed, 0 failed**
@@ -242,7 +242,7 @@ Executed: `cargo test --workspace`
 - **`tdm-native-host` (lib unit):** **1 passed, 0 failed**
 - **`tdm-native-host` (host tests):** **7 passed, 0 failed**
 - **`tdm-native-host` (server tests):** **7 passed, 0 failed** (including new duplicate check test)
-- **Total Tests Passed:** **133 passed; 0 failed; 0 ignored**
+- **Total Tests Passed:** **139 passed; 0 failed; 0 ignored**
 
 ### 8.2 Production Build Guard & Browser E2E Results
 - **Production Release Guard Script (`scripts\verify_production_release.ps1`):**

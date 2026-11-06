@@ -215,7 +215,9 @@ async function main() {
 
     if (screenshotRes && screenshotRes.data) {
         const buf = Buffer.from(screenshotRes.data, 'base64');
-        const outPath = path.resolve('gate12_6_production_launch_verified.png');
+        const outDir = path.resolve('docs/screenshots');
+        if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+        const outPath = path.join(outDir, 'gate12_6_production_launch_verified.png');
         fs.writeFileSync(outPath, buf);
         console.log(`[PASS 15] Verified production UI screenshot captured (${buf.length} bytes) to: ${outPath}`);
     }

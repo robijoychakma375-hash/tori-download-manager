@@ -203,7 +203,7 @@ ALL GATE 12.6 PRODUCTION LAUNCH CHECKS PASSED SUCCESSFULLY!
 ```
 
 ### Production Screenshot:
-![Verified Standalone Production Launch Screenshot](gate12_6_production_launch_verified.png)
+![Verified Standalone Production Launch Screenshot](../screenshots/gate12_6_production_launch_verified.png)
 
 ---
 

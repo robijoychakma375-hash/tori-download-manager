@@ -172,8 +172,9 @@ async function runVerification() {
 
     // 3. Capture Main Window Screenshot
     const mainScreenshotPath = path.join(ARTIFACT_DIR, 'gate12_5_2_main_download_facebook_thumbnail.png');
-    const localMainScreenshotPath = path.resolve('gate12_5_2_main_download_facebook_thumbnail.png');
+    const localMainScreenshotPath = path.resolve('docs/screenshots/gate12_5_2_main_download_facebook_thumbnail.png');
     await client.captureScreenshot(mainScreenshotPath);
+    fs.mkdirSync(path.dirname(localMainScreenshotPath), { recursive: true });
     fs.copyFileSync(mainScreenshotPath, localMainScreenshotPath);
     console.log(`[VERIFY 4] Main window screenshot saved to:\n  ${mainScreenshotPath}`);
 
@@ -240,8 +241,9 @@ async function runVerification() {
 
     // 5. Capture Toast Screenshot
     const toastScreenshotPath = path.join(ARTIFACT_DIR, 'gate12_5_2_toast_facebook_thumbnail.png');
-    const localToastScreenshotPath = path.resolve('gate12_5_2_toast_facebook_thumbnail.png');
+    const localToastScreenshotPath = path.resolve('docs/screenshots/gate12_5_2_toast_facebook_thumbnail.png');
     await toastClient.captureScreenshot(toastScreenshotPath);
+    fs.mkdirSync(path.dirname(localToastScreenshotPath), { recursive: true });
     fs.copyFileSync(toastScreenshotPath, localToastScreenshotPath);
     console.log(`[VERIFY 6] Download Toast screenshot saved to:\n  ${toastScreenshotPath}`);
 
