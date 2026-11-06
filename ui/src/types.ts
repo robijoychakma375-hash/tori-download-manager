@@ -99,6 +99,7 @@ export interface AppSettings {
   motion: boolean;
   details?: boolean;
   showDownloadPopup?: 'always' | 'on_start' | 'never';
+  closeToTray?: boolean;
 }
 
 export interface PlaylistItem {

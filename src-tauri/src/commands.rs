@@ -290,6 +290,12 @@ pub async fn register_native_host() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    crate::tray::show_main_window(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn window_minimize(window: tauri::Window) -> Result<(), String> {
     window.minimize().map_err(|e| e.to_string())
 }
@@ -304,8 +310,41 @@ pub async fn window_maximize(window: tauri::Window) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn window_close(window: tauri::Window) -> Result<(), String> {
-    window.close().map_err(|e| e.to_string())
+pub async fn window_close(
+    window: tauri::Window,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let close_to_tray = crate::tray::is_close_to_tray_enabled(&state.manager);
+    crate::lifecycle::log_event(
+        "WINDOW",
+        "WINDOW_CLOSE_COMMAND",
+        &format!("label={}, close_to_tray={}", window.label(), close_to_tray),
+    );
+    if window.label() == "main" && close_to_tray {
+        window.hide().map_err(|e| e.to_string())
+    } else {
+        window.close().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn exit_app(
+    app: tauri::AppHandle,
+    force: Option<bool>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let is_force = force.unwrap_or(false);
+    let active = crate::tray::count_active_downloads(&state.manager);
+    crate::lifecycle::log_event(
+        "APP",
+        "EXIT_APP_COMMAND",
+        &format!("force={}, active_downloads={}", is_force, active),
+    );
+    if !is_force && active > 0 {
+        return Err("active_downloads".to_string());
+    }
+    app.exit(0);
+    Ok(())
 }
 
 pub fn apply_settings_to_manager(

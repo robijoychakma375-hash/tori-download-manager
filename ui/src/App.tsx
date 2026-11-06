@@ -43,6 +43,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   motion: false,
   details: false,
   showDownloadPopup: 'always',
+  closeToTray: true,
 };
 
 function loadStoredSettings(): AppSettings {

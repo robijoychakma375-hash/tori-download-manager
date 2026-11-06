@@ -6,17 +6,30 @@ use tdm_core::{Database, DownloadManager, EventBus};
 use tokio_util::sync::CancellationToken;
 
 mod commands;
+pub mod lifecycle;
 mod state;
+pub mod tray;
 
 use commands::*;
 use state::AppState;
 
 pub fn run() {
     tracing_subscriber::fmt::init();
+    lifecycle::install_panic_hook();
+    lifecycle::log_event(
+        "APP",
+        "STARTUP",
+        "Initializing TORI Download Manager desktop application",
+    );
 
     // Single-Instance Check: If a primary instance is already active with the Named Pipe server,
     // request that the primary instance bring its window to the foreground, then exit cleanly.
     if tdm_native_host::ipc::try_connect_engine().is_ok() {
+        lifecycle::log_event(
+            "APP",
+            "SECONDARY_INSTANCE",
+            "Active primary instance detected; forwarding show_window and exiting",
+        );
         eprintln!("[TORI] An active instance of TORI Download Manager is already running. Focusing primary window and exiting secondary process.");
         if let Ok(rt) = tokio::runtime::Runtime::new() {
             rt.block_on(async {
@@ -74,7 +87,7 @@ pub fn run() {
     let ipc_shutdown = shutdown_token.clone();
     let srv_shutdown = shutdown_token.clone();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             manager: manager.clone(),
@@ -84,18 +97,19 @@ pub fn run() {
             let mut rx = event_bus.subscribe();
             let mgr = event_manager.clone();
 
+            let bus_app_handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 while let Ok(event) = rx.recv().await {
                     match &event {
                         tdm_core::DownloadEvent::ShowWindow => {
-                            if let Some(window) = app_handle.get_webview_window("main") {
+                            if let Some(window) = bus_app_handle.get_webview_window("main") {
                                 let _ = window.unminimize();
                                 let _ = window.show();
                                 let _ = window.set_focus();
                             }
                         }
                         tdm_core::DownloadEvent::OpenProgressWindow { id } => {
-                            let app = app_handle.clone();
+                            let app = bus_app_handle.clone();
                             let m = mgr.clone();
                             let id_c = id.clone();
                             tauri::async_runtime::spawn(async move {
@@ -106,7 +120,7 @@ pub fn run() {
                         }
                         _ => {}
                     }
-                    let _ = app_handle.emit("download-event", &event);
+                    let _ = bus_app_handle.emit("download-event", &event);
                 }
             });
 
@@ -130,7 +144,28 @@ pub fn run() {
                 }
             }
 
+            if let Err(e) = tray::setup_system_tray(&app_handle, manager.clone()) {
+                eprintln!("[TORI] Failed to setup system tray: {}", e);
+                lifecycle::log_event("TRAY", "ERROR", &format!("Setup failed: {}", e));
+            }
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let app_handle = window.app_handle();
+                let state = app_handle.state::<AppState>();
+                let close_to_tray = tray::is_close_to_tray_enabled(&state.manager);
+                lifecycle::log_event(
+                    "WINDOW",
+                    "CLOSE_REQUESTED",
+                    &format!("label={}, close_to_tray={}", window.label(), close_to_tray),
+                );
+                if window.label() == "main" && close_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             create_download,
@@ -155,6 +190,8 @@ pub fn run() {
             window_minimize,
             window_maximize,
             window_close,
+            show_main_window,
+            exit_app,
             update_engine_settings,
             get_engine_settings,
             get_browser_integration_info,
@@ -171,6 +208,35 @@ pub fn run() {
             resolve_media,
             create_media_download,
         ])
-        .run(tauri::generate_context!())
-        .expect("Error while running TORI Download Manager desktop application");
+        .build(tauri::generate_context!())
+        .expect("Error while building TORI Download Manager desktop application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+            lifecycle::log_event("APP", "EXIT_REQUESTED", &format!("code={:?}", code));
+            if code.is_none() {
+                let state = app_handle.state::<AppState>();
+                if tray::is_close_to_tray_enabled(&state.manager) {
+                    lifecycle::log_event(
+                        "APP",
+                        "PREVENT_EXIT",
+                        "Preventing app exit; running in system tray",
+                    );
+                    api.prevent_exit();
+                } else {
+                    lifecycle::log_event(
+                        "APP",
+                        "ALLOW_EXIT",
+                        "Close to tray disabled; allowing app termination",
+                    );
+                }
+            } else {
+                lifecycle::log_event(
+                    "APP",
+                    "EXPLICIT_EXIT",
+                    &format!("Exiting with explicit code: {:?}", code),
+                );
+            }
+        }
+    });
 }

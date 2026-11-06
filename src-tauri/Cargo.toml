@@ -19,7 +19,7 @@ custom-protocol = ["tauri/custom-protocol"]
 [dependencies]
 tdm-core = { path = "../crates/tdm-core" }
 tdm-native-host = { path = "../crates/tdm-native-host" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }

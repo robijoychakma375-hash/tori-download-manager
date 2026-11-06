@@ -381,6 +381,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </select>
                   </div>
                 </div>
+
+                <div className="sr">
+                  <div>
+                    <b>Close to System Tray</b>
+                    <span className="sub">
+                      {settings.closeToTray !== false
+                        ? 'Keep TORI running in the background when window is closed'
+                        : 'Exit application when window is closed'}
+                    </span>
+                  </div>
+                  <div className="sc">
+                    <ToggleSwitch
+                      checked={settings.closeToTray !== false}
+                      onChange={(checked) => update('closeToTray', checked)}
+                      ariaLabel="Close to System Tray"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="scard">

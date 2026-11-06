@@ -1139,6 +1139,20 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
           <button
             type="button"
             className="toast-context-menu-item"
+            onClick={async () => {
+              setContextMenuPos(null);
+              try {
+                await invoke('show_main_window');
+              } catch (err) {
+                console.error('Failed to open main window:', err);
+              }
+            }}
+          >
+            <span>Open TORI</span>
+          </button>
+          <button
+            type="button"
+            className="toast-context-menu-item"
             onClick={handleResetPosition}
           >
             <span>Reset Position</span>
