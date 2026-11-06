@@ -180,3 +180,4 @@ When the repository maintainer decides to publish TORI Download Manager v1.0.0, 
    - `RELEASE_NOTES.md`
    - `CHANGELOG.md`
 5. Switch GitHub repository visibility from Private to Public.
+
