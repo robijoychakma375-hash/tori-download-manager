@@ -9,7 +9,9 @@
   ],
   "permissions": [
     "core:default",
+    "core:app:allow-version",
     "dialog:allow-open",
+    "updater:default",
     "core:window:allow-start-dragging",
     "core:window:allow-start-resize-dragging",
     "core:window:allow-toggle-maximize",

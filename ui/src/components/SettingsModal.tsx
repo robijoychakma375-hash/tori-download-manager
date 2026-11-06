@@ -4,11 +4,22 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { TitleBar } from './TitleBar';
 import { ToggleSwitch } from './ToggleSwitch';
 import type { AppSettings } from '../types';
+import {
+  fetchAppVersion,
+  fetchThirdPartyLicenses,
+  openExternalUrl,
+  checkForUpdate,
+  downloadUpdate,
+  installUpdateSafe,
+  type UpdateStatus,
+} from '../updater';
+import type { Update } from '@tauri-apps/plugin-updater';
 
 interface SettingsModalProps {
   settings: AppSettings;
   onUpdateSettings: (newSettings: AppSettings) => void;
   onClose: () => void;
+  initialTab?: TabKey;
 }
 
 type TabKey = 'appearance' | 'engine' | 'integration' | 'about';
@@ -97,6 +108,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
   onUpdateSettings,
   onClose,
+  initialTab,
 }) => {
   const [currentTab, setCurrentTab] = useState<TabKey>(() => {
     try {
@@ -107,12 +119,116 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     } catch {
       // ignore
     }
-    return 'engine';
+    return initialTab || 'engine';
   });
-  const [updateMsg, setUpdateMsg] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string>('1.0.0');
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
+    state: 'idle',
+    currentVersion: '1.0.0',
+    downloadedBytes: 0,
+    totalBytes: 0,
+  });
+  const [currentUpdate, setCurrentUpdate] = useState<Update | null>(null);
+  const [showLicensesModal, setShowLicensesModal] = useState(false);
+  const [licensesContent, setLicensesContent] = useState<string | null>(null);
+  const [showNotesModal, setShowNotesModal] = useState(false);
   const [hostStatus, setHostStatus] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchAppVersion().then((ver) => {
+      setAppVersion(ver);
+      setUpdateStatus((prev) => ({ ...prev, currentVersion: ver }));
+    });
+  }, []);
+
+  const handleCheckForUpdates = async () => {
+    setUpdateStatus((prev) => ({ ...prev, state: 'checking', errorMessage: undefined }));
+    update('lastUpdateCheck', Date.now());
+
+    const result = await checkForUpdate();
+    if (result.error) {
+      setUpdateStatus((prev) => ({
+        ...prev,
+        state: 'error',
+        errorMessage: result.error,
+      }));
+      return;
+    }
+
+    if (result.available && result.update) {
+      setCurrentUpdate(result.update);
+      setUpdateStatus((prev) => ({
+        ...prev,
+        state: 'available',
+        newVersion: result.update?.version,
+        releaseDate: result.update?.date,
+        releaseNotes: result.update?.body,
+      }));
+    } else {
+      setCurrentUpdate(null);
+      setUpdateStatus((prev) => ({
+        ...prev,
+        state: 'up_to_date',
+      }));
+    }
+  };
+
+  const handleDownloadAndInstall = async () => {
+    if (!currentUpdate) return;
+    setUpdateStatus((prev) => ({ ...prev, state: 'downloading', downloadedBytes: 0, totalBytes: 0 }));
+
+    try {
+      await downloadUpdate(currentUpdate, (downloaded, total) => {
+        setUpdateStatus((prev) => ({
+          ...prev,
+          state: 'downloading',
+          downloadedBytes: downloaded,
+          totalBytes: total,
+        }));
+      });
+
+      const installRes = await installUpdateSafe(currentUpdate);
+      if (!installRes.success) {
+        if (installRes.activeDownloads && installRes.activeDownloads > 0) {
+          setUpdateStatus((prev) => ({
+            ...prev,
+            state: 'blocked_active_downloads',
+            activeDownloadsCount: installRes.activeDownloads,
+          }));
+        } else {
+          setUpdateStatus((prev) => ({
+            ...prev,
+            state: 'error',
+            errorMessage: installRes.error || 'Failed to install update',
+          }));
+        }
+      } else {
+        setUpdateStatus((prev) => ({ ...prev, state: 'ready' }));
+      }
+    } catch (err) {
+      setUpdateStatus((prev) => ({
+        ...prev,
+        state: 'error',
+        errorMessage: String(err),
+      }));
+    }
+  };
+
+  const handleRemindLater = () => {
+    update('remindLaterUntil', Date.now() + 24 * 60 * 60 * 1000);
+    setUpdateStatus((prev) => ({ ...prev, state: 'idle' }));
+    flash('Update reminder deferred for 24 hours');
+  };
+
+  const handleOpenLicenses = async () => {
+    if (!licensesContent) {
+      const text = await fetchThirdPartyLicenses();
+      setLicensesContent(text);
+    }
+    setShowLicensesModal(true);
+  };
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -766,8 +882,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* ================= ABOUT ================= */}
           {currentTab === 'about' && (
-            <div style={{ textAlign: 'center', paddingTop: 20 }}>
-              <svg width="88" height="88" viewBox="0 0 1024 1024" style={{ margin: '0 auto' }}>
+            <div style={{ textAlign: 'center', paddingTop: 16 }}>
+              {/* Official Torii Gate Logo */}
+              <svg width="84" height="84" viewBox="0 0 1024 1024" style={{ margin: '0 auto' }}>
                 <defs>
                   <linearGradient id="ag" x1="0" y1="0" x2="1" y2="1">
                     <stop offset="0" stopColor="#696cf6" />
@@ -775,13 +892,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </linearGradient>
                 </defs>
                 <rect width="1024" height="1024" rx="232" fill="url(#ag)" />
-                <g
-                  fill="none"
-                  stroke="#fff"
-                  strokeWidth="100"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
+                <g fill="none" stroke="#fff" strokeWidth="100" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M176 199C344 281 680 281 848 199" strokeWidth="96" />
                   <path d="M512 285V649" />
                   <path d="M340 569L512 741L684 569" />
@@ -789,39 +900,367 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </g>
               </svg>
 
-              <h2 style={{ margin: '14px 0 2px', fontSize: 20, color: 'var(--txt)' }}>
-                Tori Download Manager
+              <h2 style={{ margin: '12px 0 2px', fontSize: 20, color: 'var(--txt)', fontWeight: 600 }}>
+                TORI Download Manager
               </h2>
-              <div className="mut">Version 2.0.0 (Production Release)</div>
+              <div className="mut" style={{ fontSize: 13 }}>
+                Version {appVersion} (Production Release)
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--mut)', marginTop: 2 }}>
+                Developed by TORI Download Manager Team
+              </div>
 
-              <p className="mut" style={{ margin: '14px 0 24px', lineHeight: '20px' }}>
-                Fast, resumable downloads with a browser extension.
+              {/* Verified Links */}
+              <div className="row" style={{ justifyContent: 'center', gap: 16, marginTop: 8, fontSize: 12 }}>
+                <span
+                  style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}
+                  onClick={() => openExternalUrl('https://github.com/tori-download-manager/tori-download-manager')}
+                >
+                  GitHub Repository
+                </span>
+                <span style={{ color: 'var(--mut)' }}>•</span>
+                <span
+                  style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}
+                  onClick={() => openExternalUrl('https://github.com/tori-download-manager/tori-download-manager/releases')}
+                >
+                  Releases & Notes
+                </span>
+              </div>
+
+              <p className="mut" style={{ margin: '12px 0 16px', lineHeight: '18px', fontSize: 12 }}>
+                High-performance resumable multipart HTTP, RFC 8216 HLS, ISO/IEC 23009-1 MPEG-DASH,
                 <br />
-                Direct HTTP partitioned ranges, RFC 8216 HLS, ISO/IEC 23009-1 MPEG-DASH,
-                <br />
-                BitTorrent P2P & Universal Live Stream Recording.
+                BitTorrent P2P & Live Stream Recording with Chrome & Edge integration.
               </p>
 
-              <div className="row" style={{ justifyContent: 'center', gap: 12 }}>
+              {/* Automatic Update Check Toggle */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                  margin: '0 auto 16px',
+                }}
+              >
+                <ToggleSwitch
+                  checked={settings.autoCheckUpdates !== false}
+                  onChange={(checked) => update('autoCheckUpdates', checked)}
+                />
+                <span style={{ fontSize: 12, color: 'var(--txt)' }}>Check for updates automatically (daily)</span>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="row" style={{ justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <button
                   className="btn"
-                  onClick={() => setUpdateMsg('You are running the latest verified production build.')}
+                  onClick={handleCheckForUpdates}
+                  disabled={updateStatus.state === 'checking' || updateStatus.state === 'downloading'}
                 >
-                  Check for updates
+                  {updateStatus.state === 'checking' ? 'Checking...' : 'Check for updates'}
                 </button>
                 <button className="btn" onClick={handleOpenDataFolder}>
                   Open data folder
                 </button>
+                <button className="btn" onClick={handleOpenLicenses}>
+                  View Licenses
+                </button>
+                <button className="btn" onClick={() => setShowNotesModal(true)}>
+                  Release Notes
+                </button>
               </div>
 
-              {updateMsg && (
-                <p className="mut" style={{ textAlign: 'center', fontSize: 12, marginTop: 12 }}>
-                  {updateMsg}
-                </p>
-              )}
+              {/* Updater Status Display */}
+              <div style={{ marginTop: 14, minHeight: 28 }}>
+                {updateStatus.state === 'checking' && (
+                  <p className="mut" style={{ fontSize: 12 }}>Checking update server for newer releases...</p>
+                )}
+
+                {updateStatus.state === 'up_to_date' && (
+                  <p style={{ fontSize: 12, color: 'var(--green)', fontWeight: 500 }}>
+                    ✓ You are running the latest verified production build (v{appVersion}).
+                  </p>
+                )}
+
+                {updateStatus.state === 'available' && (
+                  <div
+                    style={{
+                      background: 'var(--bg2)',
+                      border: '1px solid var(--blue)',
+                      borderRadius: 8,
+                      padding: 12,
+                      margin: '12px auto 0',
+                      maxWidth: 440,
+                      textAlign: 'left',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <b style={{ color: 'var(--txt)', fontSize: 13 }}>
+                        Update Available: v{updateStatus.newVersion}
+                      </b>
+                      {updateStatus.releaseDate && (
+                        <span className="mut" style={{ fontSize: 11 }}>
+                          {new Date(updateStatus.releaseDate).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                    {updateStatus.releaseNotes && (
+                      <div
+                        style={{
+                          background: 'var(--bg)',
+                          border: '1px solid var(--bdr)',
+                          borderRadius: 4,
+                          padding: 8,
+                          margin: '8px 0',
+                          maxHeight: 100,
+                          overflowY: 'auto',
+                          fontSize: 11,
+                          lineHeight: '16px',
+                          color: 'var(--txt)',
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {updateStatus.releaseNotes}
+                      </div>
+                    )}
+                    <div className="row" style={{ gap: 8, marginTop: 8 }}>
+                      <button className="btn def" style={{ flex: 1 }} onClick={handleDownloadAndInstall}>
+                        Download & Install
+                      </button>
+                      <button className="btn" onClick={handleRemindLater}>
+                        Remind Me Later
+                      </button>
+                      <button
+                        className="btn"
+                        onClick={() =>
+                          openExternalUrl('https://github.com/tori-download-manager/tori-download-manager/releases')
+                        }
+                      >
+                        GitHub
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {updateStatus.state === 'downloading' && (
+                  <div style={{ maxWidth: 360, margin: '12px auto 0', textAlign: 'center' }}>
+                    <div style={{ fontSize: 12, color: 'var(--txt)', marginBottom: 6 }}>
+                      Downloading update: {(updateStatus.downloadedBytes / 1024 / 1024).toFixed(1)}
+                      {updateStatus.totalBytes > 0
+                        ? ` / ${(updateStatus.totalBytes / 1024 / 1024).toFixed(1)} MB`
+                        : ' MB'}
+                    </div>
+                    <div
+                      style={{
+                        width: '100%',
+                        height: 6,
+                        background: 'var(--bdr)',
+                        borderRadius: 3,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: '100%',
+                          background: 'var(--blue)',
+                          width: `${updateStatus.totalBytes > 0 ? Math.min(100, (updateStatus.downloadedBytes / updateStatus.totalBytes) * 100) : 100}%`,
+                          transition: 'width 0.2s',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {updateStatus.state === 'ready' && (
+                  <div
+                    style={{
+                      background: 'rgba(52, 211, 153, 0.12)',
+                      border: '1px solid var(--green)',
+                      borderRadius: 8,
+                      padding: 12,
+                      margin: '12px auto 0',
+                      maxWidth: 400,
+                    }}
+                  >
+                    <p style={{ color: 'var(--green)', fontSize: 13, fontWeight: 500, margin: '0 0 8px' }}>
+                      ✓ Update downloaded and verified with signature!
+                    </p>
+                    <button className="btn def" onClick={handleDownloadAndInstall}>
+                      Restart & Install Now
+                    </button>
+                  </div>
+                )}
+
+                {updateStatus.state === 'blocked_active_downloads' && (
+                  <div
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid var(--red)',
+                      borderRadius: 8,
+                      padding: 12,
+                      margin: '12px auto 0',
+                      maxWidth: 420,
+                      textAlign: 'left',
+                    }}
+                  >
+                    <b style={{ color: 'var(--red)', fontSize: 13 }}>
+                      ⚠️ Active Downloads In Progress
+                    </b>
+                    <p style={{ fontSize: 12, color: 'var(--txt)', margin: '6px 0 10px' }}>
+                      Cannot restart while {updateStatus.activeDownloadsCount} download(s) are actively downloading.
+                      Please pause or complete them before updating to prevent transfer interruption.
+                    </p>
+                    <div className="row" style={{ gap: 8 }}>
+                      <button className="btn" onClick={handleDownloadAndInstall}>
+                        Retry Installation
+                      </button>
+                      <button className="btn" onClick={() => setUpdateStatus((prev) => ({ ...prev, state: 'idle' }))}>
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {updateStatus.state === 'error' && (
+                  <div style={{ maxWidth: 420, margin: '12px auto 0' }}>
+                    <p style={{ fontSize: 12, color: 'var(--red)', margin: '0 0 6px' }}>
+                      {updateStatus.errorMessage}
+                    </p>
+                    <button className="btn" style={{ fontSize: 11 }} onClick={handleCheckForUpdates}>
+                      Try Again
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
+
+        {/* Third-Party Notices Modal */}
+        {showLicensesModal && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(0,0,0,0.7)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 200,
+            }}
+          >
+            <div
+              style={{
+                background: 'var(--bg)',
+                border: '1px solid var(--bdr)',
+                borderRadius: 8,
+                width: '85%',
+                maxWidth: 620,
+                maxHeight: '80%',
+                display: 'flex',
+                flexDirection: 'column',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                padding: 16,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <b style={{ color: 'var(--txt)', fontSize: 14 }}>Open-Source & Third-Party Licenses</b>
+                <button className="btn" onClick={() => setShowLicensesModal(false)} style={{ padding: '2px 8px' }}>
+                  ✕
+                </button>
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  background: 'var(--bg2)',
+                  border: '1px solid var(--bdr)',
+                  borderRadius: 4,
+                  padding: 12,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  lineHeight: '16px',
+                  color: 'var(--txt)',
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {licensesContent || 'Loading third-party license notices...'}
+              </div>
+              <div style={{ textAlign: 'right', marginTop: 12 }}>
+                <button className="btn def" onClick={() => setShowLicensesModal(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Release Notes Modal */}
+        {showNotesModal && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(0,0,0,0.7)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 200,
+            }}
+          >
+            <div
+              style={{
+                background: 'var(--bg)',
+                border: '1px solid var(--bdr)',
+                borderRadius: 8,
+                width: '85%',
+                maxWidth: 620,
+                maxHeight: '80%',
+                display: 'flex',
+                flexDirection: 'column',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                padding: 16,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <b style={{ color: 'var(--txt)', fontSize: 14 }}>TORI Download Manager — Release Notes v1.0.0</b>
+                <button className="btn" onClick={() => setShowNotesModal(false)} style={{ padding: '2px 8px' }}>
+                  ✕
+                </button>
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  background: 'var(--bg2)',
+                  border: '1px solid var(--bdr)',
+                  borderRadius: 4,
+                  padding: 12,
+                  fontSize: 12,
+                  lineHeight: '18px',
+                  color: 'var(--txt)',
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {`TORI Download Manager v1.0.0 (Initial Public Production Release)
+• High-performance multi-connection partitioned HTTP ranges (up to 32 connections)
+• RFC 8216 Apple HLS & ISO/IEC 23009-1 MPEG-DASH manifest resolution & stream-copy remuxing
+• BitTorrent and magnet download client powered by librqbit
+• Manifest V3 browser extension for Chrome & Microsoft Edge with media discrimination
+• Windows System Tray support with background downloads persistence and Close-to-Tray mode
+• Floating DPI-aware Download Toast window with interactive controls and drawer expansion
+• Recursive WebView2 and process tree memory trimming via Win32 SetProcessWorkingSetSize
+• Signed auto-updater with Ed25519 verification and active download collision guards
+• Self-contained Windows NSIS installer with bundled offline runtime tools (FFmpeg, yt-dlp)`}
+              </div>
+              <div style={{ textAlign: 'right', marginTop: 12 }}>
+                <button className="btn def" onClick={() => setShowNotesModal(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {toast && (
           <div

@@ -100,6 +100,9 @@ export interface AppSettings {
   details?: boolean;
   showDownloadPopup?: 'always' | 'on_start' | 'never';
   closeToTray?: boolean;
+  autoCheckUpdates?: boolean;
+  lastUpdateCheck?: number;
+  remindLaterUntil?: number;
 }
 
 export interface PlaylistItem {

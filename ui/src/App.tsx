@@ -16,6 +16,8 @@ import { ContextMenu } from './components/ContextMenu';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { PlaylistModal } from './components/PlaylistModal';
 import { typeOfJob, isMediaPageUrl } from './utils';
+import { checkForUpdate } from './updater';
+import type { Update } from '@tauri-apps/plugin-updater';
 
 const DEFAULT_SETTINGS: AppSettings = {
   dir: 'C:\\Users\\User\\Downloads',
@@ -269,10 +271,12 @@ export function App() {
       if (new URLSearchParams(window.location.search).get('modal') === 'playlist') {
         return 'https://www.youtube.com/playlist?list=PL6B3937A5D230E335';
       }
-    } catch {}
+    } catch { }
     return null;
   });
   const [progressJobId, setProgressJobId] = useState<string | null>(null);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'appearance' | 'engine' | 'integration' | 'about'>('engine');
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(() => {
     try {
       return new URLSearchParams(window.location.search).get('modal') === 'settings';
@@ -280,12 +284,31 @@ export function App() {
       return false;
     }
   });
+
+  useEffect(() => {
+    if (settings.autoCheckUpdates !== false) {
+      const now = Date.now();
+      const lastCheck = settings.lastUpdateCheck || 0;
+      const remindUntil = settings.remindLaterUntil || 0;
+      const oneDayMs = 24 * 60 * 60 * 1000;
+
+      if (now - lastCheck > oneDayMs && now >= remindUntil) {
+        checkForUpdate()
+          .then((res) => {
+            if (res.available && res.update) {
+              setAvailableUpdate(res.update);
+            }
+          })
+          .catch(() => { });
+      }
+    }
+  }, [settings.autoCheckUpdates, settings.lastUpdateCheck, settings.remindLaterUntil]);
   const [deleteConfirmJobs, setDeleteConfirmJobs] = useState<DownloadJob[] | null>(() => {
     try {
       if (new URLSearchParams(window.location.search).get('modal') === 'delete') {
         return DEMO_DOWNLOADS.slice(0, 3);
       }
-    } catch {}
+    } catch { }
     return null;
   });
   const [contextMenu, setContextMenu] = useState<{
@@ -906,7 +929,10 @@ export function App() {
         onStopAll={handleStopAll}
         onDelete={() => selectedJobs.length > 0 && setDeleteConfirmJobs(selectedJobs)}
         onStartQueue={handleStartQueue}
-        onOpenSettings={() => setIsSettingsModalOpen(true)}
+        onOpenSettings={() => {
+          setSettingsInitialTab('engine');
+          setIsSettingsModalOpen(true);
+        }}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         selectedCount={selectedJobs.length}
@@ -974,10 +1000,52 @@ export function App() {
         />
       )}
 
+      {availableUpdate && !isSettingsModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 42,
+            right: 20,
+            background: 'var(--blue)',
+            color: '#fff',
+            padding: '8px 14px',
+            borderRadius: 8,
+            boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            fontSize: 12,
+            fontWeight: 500,
+            zIndex: 9999,
+            cursor: 'pointer',
+          }}
+          onClick={() => {
+            setSettingsInitialTab('about');
+            setIsSettingsModalOpen(true);
+          }}
+        >
+          <span>✨ New version available: v{availableUpdate.version}</span>
+          <button
+            style={{
+              background: 'rgba(255,255,255,0.25)',
+              border: 'none',
+              borderRadius: 4,
+              color: '#fff',
+              padding: '2px 8px',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            Review
+          </button>
+        </div>
+      )}
+
       {isSettingsModalOpen && (
         <SettingsModal
           settings={settings}
           onUpdateSettings={handleUpdateSettings}
+          initialTab={settingsInitialTab}
           onClose={() => setIsSettingsModalOpen(false)}
         />
       )}

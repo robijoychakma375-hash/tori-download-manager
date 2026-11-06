@@ -89,6 +89,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             manager: manager.clone(),
         })
@@ -219,6 +220,10 @@ pub fn run() {
             enqueue_playlist_items,
             resolve_media,
             create_media_download,
+            get_app_version,
+            get_active_downloads_count,
+            open_external_url,
+            get_third_party_licenses,
         ])
         .build(tauri::generate_context!())
         .expect("Error while building TORI Download Manager desktop application");

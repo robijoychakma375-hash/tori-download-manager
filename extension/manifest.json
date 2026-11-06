@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TORI Download Manager — Media Interceptor",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "High-performance automatic media detection and one-click downloader for TORI Download Manager",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsrjnJLBFoELQRf3BB7C0DvCxP4KWJv1V5kQEDCZyFBrbNGcnB6TAZIugSfn8EOjBx+4H7wsT/B+vomzI8nqCDvqDrzJNAfX++ak2l4zM3CJ+K/nk/CP/JuAPEunGrl2gpcuRFUlNqBmYI1pToOvcBzpmpG47EDQME+UDqN6eZ5YOR4pZpW0HZKhuVjQ0ZVZlmpdR0QWQfgpn7GqJyF7Pz+7yo855/I4k9Phjj/NhxBBpY3iTvxl2Ret2/8rxgaDG0jjBmnUxp8Js4C7E5iivKX04PGywon6/4v400HSecLVpv9by9hQwK2PqHjUnhrdL2zLyzgkF2NfJD7W0sXGKRwIDAQAB",
   "icons": {

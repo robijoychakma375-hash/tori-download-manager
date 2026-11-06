@@ -7,10 +7,15 @@ use tdm_core::{ChunkRecord, DownloadJob};
 use std::os::windows::process::CommandExt;
 
 #[cfg(windows)]
-fn silent_explorer_command() -> Command {
-    let mut cmd = Command::new("explorer");
+fn silent_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     cmd
+}
+
+#[cfg(windows)]
+fn silent_explorer_command() -> Command {
+    silent_command("explorer")
 }
 
 use crate::state::AppState;
@@ -266,6 +271,65 @@ pub async fn open_data_folder() -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
+pub fn get_active_downloads_count(state: State<'_, AppState>) -> usize {
+    state.manager.active_downloads_count()
+}
+
+#[tauri::command]
+pub async fn open_external_url(url: String) -> Result<(), String> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err("Only http and https URLs are supported".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        silent_command("rundll32")
+            .args(["url.dll,FileProtocolHandler", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn get_third_party_licenses() -> Result<String, String> {
+    let candidates = [
+        PathBuf::from("resources").join("LICENSE-THIRD-PARTY.txt"),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("LICENSE-THIRD-PARTY.txt")))
+            .unwrap_or_default(),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| {
+                p.parent()
+                    .map(|d| d.join("resources").join("LICENSE-THIRD-PARTY.txt"))
+            })
+            .unwrap_or_default(),
+    ];
+    for c in candidates {
+        if c.exists() {
+            if let Ok(content) = std::fs::read_to_string(&c) {
+                return Ok(content);
+            }
+        }
+    }
+    Ok(include_str!("../../resources/LICENSE-THIRD-PARTY.txt").to_string())
 }
 
 #[tauri::command]

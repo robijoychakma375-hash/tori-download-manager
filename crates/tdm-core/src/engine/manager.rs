@@ -285,6 +285,10 @@ impl DownloadManager {
         self.max_active_jobs.load(Ordering::SeqCst)
     }
 
+    pub fn active_downloads_count(&self) -> usize {
+        self.active_tokens.lock().unwrap().len()
+    }
+
     pub fn set_max_active_jobs(&self, max: usize) {
         self.max_active_jobs.store(max, Ordering::SeqCst);
         let _ = self.process_queue();

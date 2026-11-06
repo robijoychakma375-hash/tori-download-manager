@@ -253,3 +253,74 @@ Perform a rigorous, empirical release-readiness verification covering WebView2 a
 - [x] Package final updated NSIS installer if any binaries were modified.
 - [x] Deliver `docs/reports/GATE13_4_1_RELEASE_RELIABILITY_AUDIT.md`.
 
+---
+
+# TORI Download Manager v1.0.0 — Milestone Plan: Gate 13.5
+## About Page, GitHub Integration & Signed Auto-Updater
+
+### Objective
+Prepare TORI Download Manager for its first public GitHub v1.0.0 release by establishing verified application identity and release metadata, aligning application versions to v1.0.0 without breaking existing user data, enriching the About page matching `design/tori-final/` with dynamic versioning and license notices, configuring the official Tauri v2 signed updater with secure out-of-repo keys, implementing a user-controlled in-app update experience with active download safety guards, and preparing validated GitHub Releases metadata generator scripts.
+
+---
+
+### Specific Measurable Next Milestones
+
+#### Milestone 1: Project Identity, Version Alignment & Remote Verification
+- [ ] Audit Git remote, tags, publisher metadata, and website configuration.
+- [ ] Reconcile version from 2.0.0 to 1.0.0 across all components:
+  - `Cargo.toml` (`[workspace.package] version = "1.0.0"`)
+  - `src-tauri/tauri.conf.json` (`"version": "1.0.0"`)
+  - `ui/package.json` (`"version": "1.0.0"`)
+  - `extension/manifest.json` (`"version": "1.0.0"`)
+- [ ] Verify that no public v2.0.0 distribution or updater migration exists or breaks.
+- [ ] Strictly preserve application identifiers (`com.tori.downloadmanager`), AppData paths (`%APPDATA%\tori-download-manager`), and SQLite storage.
+- [ ] Report verified repository URL/owner or report user-supplied values needed.
+
+#### Milestone 2: About Page Improvements & Design Token Preservation
+- [x] Connect dynamic version retrieval in UI using Tauri app API (`getVersion()`), eliminating hardcoded version text.
+- [x] Display complete application metadata:
+  - Official TORI Torii-gate logo
+  - Product Name: "TORI Download Manager"
+  - Dynamic Version: "v1.0.0"
+  - Developer / Publisher: "TORI Download Manager Team"
+  - Official GitHub repository & website links
+  - Open data folder action
+  - Third-party licenses viewer displaying `LICENSE-THIRD-PARTY.txt`
+  - Release notes / changelog viewer
+- [x] Support external URL opening via safe desktop opener command or plugin.
+- [x] Maintain 100% fidelity to `design/tori-final/` tokens, styling, accent themes, and dark/light modes.
+
+#### Milestone 3: Official Tauri v2 Signed Auto-Updater Configuration
+- [x] Add `tauri-plugin-updater = "2"` to `src-tauri/Cargo.toml` and `@tauri-apps/plugin-updater` to `ui/package.json`.
+- [x] Register updater plugin in `src-tauri/src/lib.rs` and configure permissions in `src-tauri/capabilities/default.json`.
+- [x] Securely generate dedicated Ed25519 signing key outside the repository (`%USERPROFILE%\.tori-keys\tori-updater.key`).
+- [x] NEVER embed private key in repo, binaries, or reports; document secure key backup requirements.
+- [x] Embed public key in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`).
+- [x] Configure `bundle.createUpdaterArtifacts = true` in `src-tauri/tauri.conf.json`.
+- [x] Configure update endpoints pointing to GitHub Releases `latest.json` or configurable endpoint.
+
+#### Milestone 4: In-App Update Experience & Download Safety Guard
+- [x] Implement update check & install workflow in `ui/src/components/SettingsModal.tsx` and background service:
+  - Manual "Check for Updates" button in About tab.
+  - Optional periodic background check (24-hour interval) persisted in settings.
+  - Explicit states: Idle, Checking, Up to Date, Update Available, Downloading, Ready to Install, Error.
+  - Display available version, release date, and release notes.
+  - User controls: "Download & Install", "Remind Me Later", and "View on GitHub".
+  - Download progress tracking (`downloaded / totalBytes`).
+  - Active Download Safety Guard: Check active download queue; refuse immediate restart while downloads are in `Downloading` state; warn user to pause or complete active downloads.
+  - Preserve SQLite database, partial downloads (`.tdm-part`), and settings across updates.
+  - Graceful fallback for offline mode or network errors without blocking application startup.
+
+#### Milestone 5: GitHub Release Metadata Generation & Release Assets
+- [x] Create `CHANGELOG.md` and `RELEASE_NOTES.md` for v1.0.0.
+- [x] Implement `scripts/generate_release_metadata.js`:
+  - Parses built NSIS installer (`TORI Download Manager_1.0.0_x64-setup.exe`) and detached `.sig` signature.
+  - Formats valid Tauri v2 `latest.json`.
+  - Generates `SHA256SUMS.txt` for all release deliverables.
+- [x] Compile release binaries, Windows NSIS installer, and updater artifacts.
+- [x] Create comprehensive automated test harness `scripts/verify_gate13_5_qa.js`:
+  - Validates `latest.json` format, signatures, version ordering, download lock safety, and UI states.
+- [x] Run full workspace test suite (`cargo fmt`, `cargo clippy`, `cargo test --workspace`, release guard).
+- [x] Produce `docs/reports/GATE13_5_RELEASE_PREPARATION_REPORT.md` and commit to Git.
+
+
