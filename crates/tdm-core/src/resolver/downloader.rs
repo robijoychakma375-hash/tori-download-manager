@@ -58,7 +58,11 @@ pub async fn download_managed_media(
             let is_audio = format_arg.contains("audio")
                 || format_arg.contains("ba")
                 || is_common_audio_format(format_arg);
-            if format_arg == "best" {
+            if format_arg == "best"
+                || format_arg == "direct"
+                || format_arg.starts_with("hls_")
+                || format_arg.starts_with("dash_")
+            {
                 args.push("bestvideo+bestaudio/best".to_string());
             } else if format_arg.contains('+') || format_arg.contains('/') || is_audio {
                 args.push(format_arg.to_string());

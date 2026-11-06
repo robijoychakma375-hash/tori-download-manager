@@ -92,6 +92,7 @@ pub struct CreateMediaDownloadReq {
     pub destination: Option<String>,
     pub priority: Option<String>,
     pub thumbnail_url: Option<String>,
+    pub direct_stream_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -736,10 +737,16 @@ async fn handle_create_media_download(
         _ => Priority::Normal,
     };
 
+    let target_media_url = payload
+        .direct_stream_url
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(raw_url);
+
     match state
         .manager
         .create_managed_media_download(
-            raw_url,
+            target_media_url,
             format_id,
             &initial_filename,
             &dest_path,

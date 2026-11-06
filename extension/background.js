@@ -1084,7 +1084,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .get(targetUrl)
         .then((res) => sendResponse({ ...res, generation }))
         .catch((err) =>
-          sendResponse({ status: 'error', code: 'ERROR', message: err.message || 'Resolution error', generation })
+          sendResponse({ status: 'error', code: 'ERROR', message: (err.stack || err.message || 'Resolution error'), generation })
         );
       return true;
     }
@@ -1172,14 +1172,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return { status: 'ok', metadata: httpRes.data };
       }
 
+      console.warn('[TORI Diagnostic] Resolve HTTP response not ok:', JSON.stringify(httpRes));
+
       let code = httpRes.data?.error_category || httpRes.code || 'RESOLVER_ERROR';
-      let message = httpRes.data?.message || httpRes.error || 'Media resolution failed';
+      let errorMsg = httpRes.data?.message || httpRes.error || 'Media resolution failed';
       if (httpRes.status === 401) {
         code = 'UNAUTHORIZED';
-        message = 'Authentication required. Check API Key in Extension Settings.';
+        errorMsg = 'Authentication required. Check API Key in Extension Settings.';
       } else if (httpRes.status === 429) {
         code = 'RATE_LIMITED';
-        message = 'Rate limited by streaming service (HTTP 429). Please wait before retrying.';
+        errorMsg = 'Rate limited by streaming service (HTTP 429). Please wait before retrying.';
       } else if (httpRes.status === 400) {
         code = 'INVALID_REQUEST';
       }
@@ -1198,11 +1200,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         rawUrl,
         status: 'error',
         code,
-        message,
+        message: errorMsg,
         generation,
       }).catch(() => {});
 
-      return { status: 'error', code, message };
+      return { status: 'error', code, message: errorMsg };
     })();
 
     activeResolutions.set(targetUrl, resolutionPromise);
@@ -1212,9 +1214,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     resolutionPromise
       .then((res) => sendResponse({ ...res, generation }))
-      .catch((err) =>
-        sendResponse({ status: 'error', code: 'ERROR', message: err.message || 'Resolution failed', generation })
-      );
+      .catch((err) => {
+        console.error('[TORI Catch]', err);
+        sendResponse({ status: 'error', code: 'ERROR', message: (err.stack || err.message || 'Resolution failed'), generation });
+      });
     return true;
   }
 
@@ -1236,20 +1239,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       destination: message.destination,
       priority: message.priority || 'normal',
       thumbnail_url: message.thumbnail_url || null,
+      direct_stream_url: message.direct_stream_url || null,
     }).then((httpRes) => {
       if (httpRes.ok && httpRes.data) {
         sendResponse(httpRes.data);
       } else {
         let code = httpRes.code || 'DOWNLOAD_ERROR';
-        let message = httpRes.data?.message || httpRes.error || 'Download request failed';
+        let errorMsg = httpRes.data?.message || httpRes.error || 'Download request failed';
         if (httpRes.status === 401) {
           code = 'UNAUTHORIZED';
-          message = 'Authentication required. Check API Key in Extension Settings.';
+          errorMsg = 'Authentication required. Check API Key in Extension Settings.';
         }
         sendResponse({
           status: 'error',
           code,
-          message,
+          message: errorMsg,
         });
       }
     }).catch((err) => {

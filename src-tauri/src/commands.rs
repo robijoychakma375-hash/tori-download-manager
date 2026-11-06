@@ -951,6 +951,7 @@ pub struct CreateMediaDownloadArgs {
     pub priority: Option<String>,
     pub thumbnail_url: Option<String>,
     pub start_immediately: Option<bool>,
+    pub direct_stream_url: Option<String>,
 }
 
 #[tauri::command]
@@ -1005,10 +1006,16 @@ pub async fn create_media_download(
         _ => tdm_core::Priority::Normal,
     };
 
+    let target_media_url = args
+        .direct_stream_url
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(raw_url);
+
     let job = state
         .manager
         .create_managed_media_download(
-            raw_url,
+            target_media_url,
             &format_id,
             &filename_with_ext,
             &dest_path,

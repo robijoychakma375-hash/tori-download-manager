@@ -575,12 +575,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         b.disabled = true;
         const correlationId = 'tori_pop_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
         const safeFilename = `${displayTitle.replace(/[\\/:*?"<>|]/g, '') || 'media'}.${selected.container || 'mp4'}`;
-        const sourceUrl = meta.source_url || tab.url;
+        const directUrl = selected.direct_stream_url || null;
+        const sourceUrl = directUrl || meta.source_url || tab.url;
 
         chrome.runtime.sendMessage(
           {
             action: 'START_MEDIA_DOWNLOAD',
             url: sourceUrl,
+            direct_stream_url: directUrl,
             format_id: selected.format_id,
             filename: safeFilename,
             priority: 'high',
