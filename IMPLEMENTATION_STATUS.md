@@ -272,4 +272,21 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
   - **15/15** production release guard checks passing.
   - Clippy and `cargo fmt` clean with 0 warnings/errors.
 
+## Gate 13.6: Final Release Candidate & Distribution Readiness
+
+- **Status**: **NOT READY FOR PUBLIC PUBLICATION (BLOCKED ON GITHUB REPO CREATION)**; **LOCAL ARTIFACTS 100% READY**
+- **Release Staging**:
+  - Staged in `release/v1.0.0/`: `TORI Download Manager_1.0.0_x64-setup.exe` (111.41 MB), `.sig` signature, `latest.json`, `tori-download-manager-extension-v1.0.0.zip`, `SHA256SUMS.txt`, `RELEASE_NOTES.md`, `CHANGELOG.md`, `LICENSE-THIRD-PARTY.txt`, `INSTALL.md`.
+- **Installed App Acceptance (`verify_gate13_6_installed_app.js`)**:
+  - **33/33 Passed** under scrubbed PATH (`C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem`).
+  - Tested: Silent NSIS install, Win32 PE version 1.0.0, bundled FFmpeg/FFprobe/yt-dlp execution, standalone launch, port 6800 desktop API, direct HTTP 206 download with SHA-256 integrity, Chrome/Edge Native Messaging registry, process restart with SQLite persistence, silent uninstallation, and SQLite preservation.
+- **Repository Audit**:
+  - `git remote -v`: No remote configured.
+  - Probe of `https://github.com/tori-download-manager/tori-download-manager`: HTTP 404 (Not Found).
+  - Explicit blocker documented in `docs/reports/GATE13_6_FINAL_RELEASE_READINESS_REPORT.md`.
+- **Auto-Updater Blocker**:
+  - Live in-app update unverified until repository exists and hosts public release assets.
+  - Local cryptographic verification, tamper rejection, active download guards, and offline resilience 100% verified.
+
+
 

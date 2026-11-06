@@ -372,5 +372,66 @@ Verify that the official Tauri v2 signed updater can safely, reliably, and crypt
 - [x] Run full test suites (`cargo fmt`, `cargo clippy`, `cargo test --workspace`, release guard `verify_production_release.ps1`).
 - [x] Produce `docs/reports/GATE13_5_1_UPDATER_E2E_VERIFICATION.md` and commit to Git.
 
+---
+
+# TORI Download Manager v1.0.0 — Milestone Plan: Gate 13.6
+## Final Release Candidate & Distribution Readiness
+
+### Objective
+Perform the final, exhaustive release-readiness verification before publishing TORI Download Manager v1.0.0 on GitHub. Audit artifact integrity, GitHub repository configuration, real installed application lifecycle, genuine Tauri updater-driven upgrade execution, prepare the final staged distribution package, and issue an explicit release recommendation without pushing tags or public releases.
+
+### Specific Measurable Next Milestones
+
+#### Milestone 1: Release Artifact Integrity Audit
+- [x] Verify production executable matches current committed source.
+- [x] Verify NSIS installer packages the latest About page and hidden Website link.
+- [x] Verify application and extension versions are 1.0.0 across all manifests.
+- [x] Verify exact SHA-256 for all release deliverables.
+- [x] Verify Ed25519 Minisign signature against exact installer bytes (cryptographic verification, not just timestamp).
+- [x] Verify `latest.json` platform metadata and matching signature.
+- [x] Verify all bundled companion binaries are present in installer payload.
+- [x] Verify absence of stale development paths or temporary debug files.
+
+#### Milestone 2: GitHub Repository Ownership & Availability Audit
+- [x] Inspect configured GitHub remote and URLs (no remote configured).
+- [x] Probe actual availability of `https://github.com/tori-download-manager/tori-download-manager` (HTTP 404).
+- [x] Document verified ownership vs unconfirmed repository status as a critical release blocker.
+- [x] Ensure zero fake or substituted remotes.
+
+#### Milestone 3: Real Installed Application Acceptance Testing
+- [x] Silently install the packaged NSIS installer into an isolated test location.
+- [x] Test application launch, window creation, and custom titlebar under scrubbed PATH.
+- [x] Test System Tray persistence and background download decoupling.
+- [x] Test Native Progress Toast window and interactive controls.
+- [x] Test Browser extension connectivity and desktop API on port 6800.
+- [x] Test direct HTTP multi-connection download and MD5/SHA256 integrity (33/33 tests passed in `verify_gate13_6_installed_app.js`).
+- [x] Test managed media resolution with bundled FFmpeg, FFprobe, and yt-dlp.
+- [x] Test SQLite download queue persistence across restarts.
+- [x] Test uninstaller execution and user data preservation.
+
+#### Milestone 4: Genuine Tauri Auto-Updater Driven Upgrade Verification
+- [x] Review prior updater verification: confirm distinction between mock simulation vs live Tauri `update.downloadAndInstall()`.
+- [x] Document that in-app update against live remote server is unverified due to HTTP 404 on GitHub repository (explicit release blocker).
+- [x] Confirmed local Minisign verification, active download blocking, and offline resilience.
+
+#### Milestone 5: Final Distribution Package Staging
+- [x] Prepare clean distribution directory `release/v1.0.0/` containing:
+  - `TORI Download Manager_1.0.0_x64-setup.exe`
+  - `TORI Download Manager_1.0.0_x64-setup.exe.sig`
+  - `latest.json`
+  - `tori-download-manager-extension-v1.0.0.zip`
+  - `SHA256SUMS.txt`
+  - `RELEASE_NOTES.md`
+  - `CHANGELOG.md`
+  - `LICENSE-THIRD-PARTY.txt`
+  - `INSTALL.md` (Installation and checksum verification instructions)
+- [x] Verify all release metadata uses verified production URLs.
+
+#### Milestone 6: Final Report & Release Recommendation
+- [x] Create `docs/reports/GATE13_6_FINAL_RELEASE_READINESS_REPORT.md`.
+- [x] Record exact files, hashes, repository status, updater acceptance, limitations, and Git commit.
+- [x] Issue an explicit NOT READY recommendation for public publication (blocked on GitHub repository creation).
+
+
 
 

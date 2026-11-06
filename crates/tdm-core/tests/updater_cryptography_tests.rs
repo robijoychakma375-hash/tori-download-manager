@@ -16,7 +16,12 @@ use std::path::PathBuf;
 
 fn get_project_root() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.parent().unwrap().parent().unwrap().to_path_buf()
+    manifest_dir
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 fn decode_base64_str(input: &str) -> Vec<u8> {
@@ -49,12 +54,14 @@ fn test_updater_public_key_decoding_and_format() {
     );
 
     // Parse with minisign_verify
-    let public_key =
-        PublicKey::decode(&decoded_pubkey_str).expect("Failed to parse decoded Minisign public key");
+    let public_key = PublicKey::decode(&decoded_pubkey_str)
+        .expect("Failed to parse decoded Minisign public key");
 
     // Also check out-of-repo public key if present in USERPROFILE
     if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        let out_of_repo_pub = PathBuf::from(home).join(".tori-keys").join("tori-updater.key.pub");
+        let out_of_repo_pub = PathBuf::from(home)
+            .join(".tori-keys")
+            .join("tori-updater.key.pub");
         if out_of_repo_pub.exists() {
             let disk_pub = fs::read_to_string(&out_of_repo_pub)
                 .expect("Failed to read out-of-repo public key");
@@ -93,8 +100,14 @@ fn test_installer_signature_cryptographic_verification() {
 
     if !installer_path.exists() || !sig_path.exists() {
         // Fall back to target/release/ directly if staged
-        let alt_installer = root.join("target").join("release").join("TORI Download Manager_1.0.0_x64-setup.exe");
-        let alt_sig = root.join("target").join("release").join("TORI Download Manager_1.0.0_x64-setup.exe.sig");
+        let alt_installer = root
+            .join("target")
+            .join("release")
+            .join("TORI Download Manager_1.0.0_x64-setup.exe");
+        let alt_sig = root
+            .join("target")
+            .join("release")
+            .join("TORI Download Manager_1.0.0_x64-setup.exe.sig");
         if !alt_installer.exists() || !alt_sig.exists() {
             eprintln!("[SKIP] Installer or sig file not found for direct test; skipping.");
             return;
@@ -104,16 +117,21 @@ fn test_installer_signature_cryptographic_verification() {
     let actual_installer_path = if installer_path.exists() {
         installer_path
     } else {
-        root.join("target").join("release").join("TORI Download Manager_1.0.0_x64-setup.exe")
+        root.join("target")
+            .join("release")
+            .join("TORI Download Manager_1.0.0_x64-setup.exe")
     };
 
     let actual_sig_path = if sig_path.exists() {
         sig_path
     } else {
-        root.join("target").join("release").join("TORI Download Manager_1.0.0_x64-setup.exe.sig")
+        root.join("target")
+            .join("release")
+            .join("TORI Download Manager_1.0.0_x64-setup.exe.sig")
     };
 
-    let installer_bytes = fs::read(&actual_installer_path).expect("Failed to read installer executable");
+    let installer_bytes =
+        fs::read(&actual_installer_path).expect("Failed to read installer executable");
     assert!(
         installer_bytes.starts_with(b"MZ"),
         "Packaged installer must be a valid PE executable starting with MZ header"
@@ -121,7 +139,8 @@ fn test_installer_signature_cryptographic_verification() {
 
     let sig_str = fs::read_to_string(&actual_sig_path).expect("Failed to read .sig file");
     let sig_raw = decode_base64_str(&sig_str);
-    let sig_text = String::from_utf8(sig_raw).expect("Signature base64 did not decode to UTF-8 text");
+    let sig_text =
+        String::from_utf8(sig_raw).expect("Signature base64 did not decode to UTF-8 text");
 
     assert!(
         sig_text.starts_with("untrusted comment: signature from tauri secret key")
@@ -130,7 +149,8 @@ fn test_installer_signature_cryptographic_verification() {
         sig_text
     );
 
-    let signature = Signature::decode(&sig_text).expect("Signature failed to parse as Minisign Signature");
+    let signature =
+        Signature::decode(&sig_text).expect("Signature failed to parse as Minisign Signature");
 
     // Load public key
     let conf_path = root.join("src-tauri").join("tauri.conf.json");
@@ -282,11 +302,12 @@ fn test_latest_json_matches_signature_file() {
         "latest.json version must be 1.0.0"
     );
 
-    let download_url = latest_json["platforms"]["windows-x86_64"]["url"].as_str().unwrap();
+    let download_url = latest_json["platforms"]["windows-x86_64"]["url"]
+        .as_str()
+        .unwrap();
     assert!(
         download_url.starts_with("https://github.com/tori-download-manager/tori-download-manager/releases/download/v1.0.0/"),
         "Download URL must point to verified GitHub Releases: {}",
         download_url
     );
 }
-

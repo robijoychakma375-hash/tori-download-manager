@@ -12,5 +12,6 @@ resources/bin/*.pdb
 *.pem
 id_ed25519*
 *.pfx
+release/
 
 
