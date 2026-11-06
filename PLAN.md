@@ -1,33 +1,32 @@
-# TORI Download Manager v2.0 — Milestone Plan: Gate 13.1
-## Post-Migration Stability, Recovery & Performance
+# TORI Download Manager v2.0 — Milestone Plan: Gate 13.2
+## Self-Contained Windows NSIS Installer
 
 ### Objective
-Prepare TORI for a reliable Windows release. Eliminate proven reliability, portability, and performance problems from project migration and dependency resolution while preserving 100% of existing functionality and the approved UI.
+Create a reliable, professional Windows NSIS installer that packages TORI Download Manager v2.0 with all required companion binaries and external dependencies, running self-contained on a clean Windows 10/11 x64 machine without requiring Rust, Node.js, Python, WinGet, or separately installed FFmpeg.
 
 ---
 
 ### Specific Measurable Next Milestones
 
-#### Milestone 1: Migration Path Decoupling & Registration Fix
-- [x] Update `ui/src/components/DownloadToast.tsx` to replace hardcoded `C:\Users\ritud` mock paths with portable paths.
-- [x] Update `scripts/diagnose_env.ps1` to use `$env:USERPROFILE` and `$env:LOCALAPPDATA` dynamically.
-- [x] Update `scripts/verify_gate12_9_2_browser_e2e.js` to dynamically locate `ffprobe.exe` via PATH, local appdata, or winget.
-- [x] Register `tdm-native-host.exe` from `F:\TORI\final tori download manager\target\release\tdm-native-host.exe` so `%APPDATA%\tori-download-manager\com.tori.download_manager.json` points to the active `F:` drive executable.
+#### Milestone 1: Dependency & Licensing Audit for Standalone Packaging
+- [x] Audit existing system binaries (`ffmpeg.exe`, `ffprobe.exe`, `yt-dlp.exe`) in WinGet packages directory.
+- [x] Create staging directory `resources/bin/` and copy verified binaries alongside companion executables (`tdm-native-host.exe`, `tdm-cli.exe`).
+- [x] Audit licensing requirements (FFmpeg GPL v3 / LGPL, yt-dlp Unlicense, Rust MIT/Apache-2.0) and create `resources/LICENSE-THIRD-PARTY.txt`.
 
-#### Milestone 2: Portable Tauri Resource Discovery for External Binaries
-- [x] Extend `find_ffmpeg()` and `find_ffprobe()` in `crates/tdm-core/src/hls/muxer.rs` to search `resources/` and `resources/bin/` relative to `current_exe()`.
-- [x] Extend `find_yt_dlp()` in `crates/tdm-core/src/resolver/discovery.rs` to search `resources/` and `resources/bin/` relative to `current_exe()`.
-- [x] Verify discovery passes unit and integration tests.
+#### Milestone 2: Tauri v2 NSIS Packaging Configuration & Branded Metadata
+- [x] Update `src-tauri/tauri.conf.json` with product version `2.0.0`, official icons, and `bundle.resources` mapping to include `resources/bin/*` and third-party license notices.
+- [x] Configure NSIS installer branding: Start Menu shortcut, desktop shortcut option, official TORI Torii-gate icon.
 
-#### Milestone 3: Duplicate Download Prevention Across Extension & Backend
-- [x] In `extension/popup/popup.js`, disable the download button immediately on click (`btn.disabled = true`) to prevent double-click / rapid spam.
-- [x] In `crates/tdm-native-host/src/server.rs` (`handle_create_media_download`), add duplicate check against active jobs in SQLite (matching URL, non-cancelled/failed) returning `already_exists`.
+#### Milestone 3: Native Messaging Post-Install Registration & Uninstall Hooks
+- [x] Verify and update `src-tauri/nsis/hooks.nsh` to invoke `tdm-native-host.exe --register` at `$INSTDIR\resources\bin\tdm-native-host.exe` (or `$INSTDIR\resources\tdm-native-host.exe`) so `%APPDATA%\tori-download-manager\com.tori.download_manager.json` points to the real installed binary.
+- [x] Verify clean uninstallation hook removes Native Messaging host manifest and HKCU registry keys for Chrome and Edge while preserving user SQLite database and downloaded media.
 
-#### Milestone 4: Comprehensive Verification & Production Build
-- [x] Run `cargo check --workspace` and `cargo clippy --workspace --all-targets -- -D warnings`.
-- [x] Run `cargo test -p tdm-core` (unit & integration suites).
-- [x] Run `cargo test -p tdm-native-host` (host & server suites).
-- [x] Build release executable: `cargo tauri build --no-bundle`.
-- [x] Run `scripts/verify_production_release.ps1` to verify standalone launch without Vite, custom-protocol embedded assets, and CDP health.
-- [x] Measure RAM, CPU, startup time, and throughput metrics.
-- [x] Produce `docs/reports/GATE13_1_STABILITY_AND_MIGRATION_REPORT.md` documenting all findings and results.
+#### Milestone 4: NSIS Installer Build & Clean Windows Verification
+- [x] Build release installer via `cargo tauri build --bundles nsis`.
+- [x] Inspect generated NSIS installer in `target/release/bundle/nsis/` (filename, size, SHA-256).
+- [x] Test clean Windows environment compatibility: simulate zero-PATH environment (`PATH` cleared of WinGet and dev tools) and verify discovery of bundled `ffmpeg`, `ffprobe`, `yt-dlp`.
+- [x] Run regression suite: `cargo check --workspace`, `cargo test --workspace`, production release guard `verify_production_release.ps1`.
+
+#### Milestone 5: Final Engineering Report & Status Update
+- [x] Create `docs/reports/GATE13_2_NSIS_INSTALLER_REPORT.md` documenting inventory, licensing, hashes, and verification.
+- [x] Update `IMPLEMENTATION_STATUS.md`.

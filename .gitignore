@@ -5,4 +5,6 @@ dist/
 *.tdm-part
 *.sqlite-wal
 *.sqlite-shm
+resources/bin/*.exe
+resources/bin/*.pdb
 

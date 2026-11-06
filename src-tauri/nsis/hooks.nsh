@@ -7,6 +7,12 @@
   IfFileExists "$INSTDIR\tdm-native-host.exe" 0 +3
     ExecWait '"$INSTDIR\tdm-native-host.exe" --register'
     Goto postinstall_done
+  IfFileExists "$INSTDIR\bin\tdm-native-host.exe" 0 +3
+    ExecWait '"$INSTDIR\bin\tdm-native-host.exe" --register'
+    Goto postinstall_done
+  IfFileExists "$INSTDIR\resources\bin\tdm-native-host.exe" 0 +3
+    ExecWait '"$INSTDIR\resources\bin\tdm-native-host.exe" --register'
+    Goto postinstall_done
   IfFileExists "$INSTDIR\resources\tdm-native-host.exe" 0 postinstall_fallback
     ExecWait '"$INSTDIR\resources\tdm-native-host.exe" --register'
     Goto postinstall_done
@@ -23,6 +29,12 @@ postinstall_done:
   ; Unregister Native Messaging Host cleanly
   IfFileExists "$INSTDIR\tdm-native-host.exe" 0 +3
     ExecWait '"$INSTDIR\tdm-native-host.exe" --unregister'
+    Goto preuninstall_done
+  IfFileExists "$INSTDIR\bin\tdm-native-host.exe" 0 +3
+    ExecWait '"$INSTDIR\bin\tdm-native-host.exe" --unregister'
+    Goto preuninstall_done
+  IfFileExists "$INSTDIR\resources\bin\tdm-native-host.exe" 0 +3
+    ExecWait '"$INSTDIR\resources\bin\tdm-native-host.exe" --unregister'
     Goto preuninstall_done
   IfFileExists "$INSTDIR\resources\tdm-native-host.exe" 0 preuninstall_done
     ExecWait '"$INSTDIR\resources\tdm-native-host.exe" --unregister'

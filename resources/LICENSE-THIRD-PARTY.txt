@@ -1,0 +1,49 @@
+================================================================================
+TORI Download Manager v2.0 — Third-Party Software Notices & Licenses
+================================================================================
+
+This distribution of TORI Download Manager bundles and/or interacts with third-party
+open-source software as standalone helper executables.
+
+--------------------------------------------------------------------------------
+1. FFmpeg and FFprobe (ffmpeg.exe, ffprobe.exe)
+--------------------------------------------------------------------------------
+License: GNU General Public License version 3 (GPLv3)
+Build: FFmpeg Git snapshot built by Gyan.dev (win64-gpl)
+Source Code Availability:
+Under the terms of the GNU General Public License v3, source code for FFmpeg is freely
+available at:
+  - Official FFmpeg repository: https://ffmpeg.org/download.html
+  - Gyan.dev build scripts & sources: https://github.com/GyanD/codexffmpeg
+TORI Download Manager executes FFmpeg and FFprobe as standalone, separate companion
+processes via standard operating system process pipes (Command execution). No TORI
+source code links directly to FFmpeg dynamic or static C libraries.
+
+--------------------------------------------------------------------------------
+2. yt-dlp (yt-dlp.exe)
+--------------------------------------------------------------------------------
+License: The Unlicense (Public Domain Dedication)
+Source Code: https://github.com/yt-dlp/yt-dlp
+
+This is free and unencumbered software released into the public domain.
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute this software,
+either in source code form or as a compiled binary, for any purpose, commercial or
+non-commercial, and by any means.
+
+--------------------------------------------------------------------------------
+3. TORI Companion Executables (tdm-native-host.exe, tdm-cli.exe)
+--------------------------------------------------------------------------------
+License: MIT License OR Apache License 2.0 (Dual Licensed)
+Copyright (c) 2026 TORI Download Manager Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+================================================================================
+

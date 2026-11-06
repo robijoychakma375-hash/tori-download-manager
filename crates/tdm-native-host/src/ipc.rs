@@ -116,13 +116,24 @@ pub fn try_connect_engine() -> io::Result<NamedPipeClient> {
 
 /// Locates the `tori-download-manager.exe` desktop binary.
 pub fn locate_desktop_binary() -> Option<PathBuf> {
-    // 1. Same folder as current executable
+    // 1. Same folder as current executable or any parent directory (e.g. resources/bin -> INSTDIR)
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(parent) = current_exe.parent() {
             let candidate = parent.join("tori-download-manager.exe");
             if candidate.exists() {
                 return Some(candidate);
             }
+
+            // Climb parent directories (e.g. resources/bin -> resources -> app root)
+            let mut curr = parent;
+            while let Some(p) = curr.parent() {
+                let cand = p.join("tori-download-manager.exe");
+                if cand.exists() {
+                    return Some(cand);
+                }
+                curr = p;
+            }
+
             // 2. target/release or target/debug check
             let target_release = parent.parent().and_then(|p| p.parent()).map(|p| {
                 p.join("target")
