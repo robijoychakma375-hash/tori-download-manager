@@ -109,3 +109,44 @@ Resolve the root cause of unexpected TORI application exits, implement a resilie
 - [x] Run production release guard `scripts/verify_production_release.ps1`.
 - [x] Measure and document main TORI process and WebView2 RAM usage in background.
 - [x] Deliver `docs/reports/GATE13_3_CRASH_TRAY_BACKGROUND_REPORT.md` and commit.
+
+---
+
+# TORI Download Manager v2.0 — Milestone Plan: Gate 13.3.1
+## Final System Tray & Background Lifecycle Verification
+
+### Objective
+Verify and stress-test the complete application lifecycle across all edge cases: Close-to-Tray ON vs OFF (orphan process prevention), setting persistence across restarts, floating Download Toast visibility and controls (Pause/Resume/Cancel) while hidden, tray menu actions, authenticated desktop API reachability, panic/crash differentiation, and NSIS installer currency audit.
+
+---
+
+### Specific Measurable Next Milestones
+
+#### Milestone 1: Close-to-Tray ON vs OFF & Orphan Process Prevention
+- [x] Test `closeToTray = false`: clicking X closes window, `prevent_exit()` is NOT called, and TORI terminates completely with exit code 0 leaving zero orphan processes.
+- [x] Test `closeToTray = true`: clicking X hides window, `prevent_exit()` is called, and background tasks remain alive.
+- [x] Verify `closeToTray` setting survives application restart and is restored from SQLite `app_settings`.
+
+#### Milestone 2: Independent Toast Lifecycle & Background Controls
+- [x] Start real download with main window hidden; verify Download Toast appears and updates real-time metrics.
+- [x] Test Pause, Resume, and Cancel from Toast while main window is hidden.
+- [x] Verify closing Toast does not terminate TORI.
+
+#### Milestone 3: Tray Menu Controls & Exit Behavior
+- [x] Verify `Open TORI` restores, unminimizes, and focuses main window.
+- [x] Verify `Pause All` and `Resume All` update active/paused downloads in backend.
+- [x] Verify `Exit TORI` without active downloads exits immediately.
+- [x] Verify `Exit TORI` with active downloads presents warning dialog, pauses downloads upon confirmation, and exits cleanly.
+
+#### Milestone 4: Desktop API Reachability & Lifecycle Log Audit
+- [x] Verify `127.0.0.1:6800` remains reachable and authenticated via token while main window is hidden.
+- [x] Review lifecycle log `%APPDATA%\tori-download-manager\logs\lifecycle.log` to confirm proper event sequence and zero unhandled panics or crashes.
+
+#### Milestone 5: NSIS Installer Packaging Currency Audit
+- [x] Inspect existing NSIS installer in `target/release/bundle/nsis/` against current release binary hashes (`6DD6E67C...`).
+- [x] Report currency status and package new NSIS installer containing verified Gate 13.3.1 binaries.
+
+#### Milestone 6: Regression Verification & Final QA Report
+- [x] Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
+- [x] Run `verify_production_release.ps1` and dedicated Gate 13.3.1 QA harness.
+- [x] Deliver `docs/reports/GATE13_3_1_FINAL_LIFECYCLE_QA.md` and commit.

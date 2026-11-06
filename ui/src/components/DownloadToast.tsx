@@ -492,8 +492,15 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
     };
   }, []);
 
-  const handleDismiss = useCallback(
-    async (id: string) => {
+  const handleCancelOrDismiss = useCallback(
+    async (id: string, isTerminal: boolean) => {
+      if (!isTerminal) {
+        try {
+          await invoke('cancel_download', { id });
+        } catch (err) {
+          console.error('Failed to cancel download from toast:', err);
+        }
+      }
       dismissedIdsRef.current.add(id);
       setActiveIds((prev) => {
         const next = prev.filter((x) => x !== id);
@@ -504,6 +511,13 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
       });
     },
     []
+  );
+
+  const handleDismiss = useCallback(
+    async (id: string) => {
+      handleCancelOrDismiss(id, true);
+    },
+    [handleCancelOrDismiss]
   );
 
   const completedTimersRef = useRef<Record<string, number>>({});
@@ -1043,10 +1057,10 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
 
               <button
                 className="cx"
-                title="Dismiss"
+                title={isComplete || isFailed ? 'Dismiss' : 'Cancel'}
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleDismiss(id);
+                  handleCancelOrDismiss(id, isComplete || isFailed);
                 }}
               >
                 <svg viewBox="0 0 10 10">

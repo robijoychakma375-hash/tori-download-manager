@@ -320,8 +320,14 @@ pub async fn window_close(
         "WINDOW_CLOSE_COMMAND",
         &format!("label={}, close_to_tray={}", window.label(), close_to_tray),
     );
-    if window.label() == "main" && close_to_tray {
-        window.hide().map_err(|e| e.to_string())
+    if window.label() == "main" {
+        if close_to_tray {
+            window.hide().map_err(|e| e.to_string())
+        } else {
+            let app = window.app_handle().clone();
+            app.exit(0);
+            Ok(())
+        }
     } else {
         window.close().map_err(|e| e.to_string())
     }

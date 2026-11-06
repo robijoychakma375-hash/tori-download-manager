@@ -161,9 +161,13 @@ pub fn run() {
                     "CLOSE_REQUESTED",
                     &format!("label={}, close_to_tray={}", window.label(), close_to_tray),
                 );
-                if window.label() == "main" && close_to_tray {
-                    api.prevent_close();
-                    let _ = window.hide();
+                if window.label() == "main" {
+                    if close_to_tray {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    } else {
+                        app_handle.exit(0);
+                    }
                 }
             }
         })
