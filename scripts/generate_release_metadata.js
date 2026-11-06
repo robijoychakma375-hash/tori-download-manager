@@ -44,7 +44,14 @@ function getSigningPassword(keyPath) {
 function ensureSignature(targetFile, keyPath) {
   const sigFile = `${targetFile}.sig`;
   if (fs.existsSync(sigFile)) {
-    return fs.readFileSync(sigFile, 'utf8').trim();
+    const targetStat = fs.statSync(targetFile);
+    const sigStat = fs.statSync(sigFile);
+    if (sigStat.mtimeMs >= targetStat.mtimeMs) {
+      return fs.readFileSync(sigFile, 'utf8').trim();
+    }
+    // Stale signature file from previous build: delete and re-sign
+    console.log(`[SIGN] Stale signature detected for ${path.basename(targetFile)} (sig mtime < installer mtime); re-signing...`);
+    fs.unlinkSync(sigFile);
   }
 
   if (!keyPath || !fs.existsSync(keyPath)) {

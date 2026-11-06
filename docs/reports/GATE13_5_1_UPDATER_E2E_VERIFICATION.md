@@ -96,8 +96,8 @@ All testing was executed in isolated local sandboxes without publishing to exter
 - `[PASS]` `latest.json` `windows-x86_64` signature matches `.sig` file byte-for-byte
 - `[PASS]` `latest.json` download URL points to verified GitHub Releases asset
 - `[PASS]` `target/release/SHA256SUMS.txt` exists
-- `[PASS]` `SHA256SUMS.txt` records exact SHA-256 for NSIS installer (`011AFF7D60258F39A024F6EFE5EE27BB5B894471B2181472D0ED22C5883EC701`)
-- `[PASS]` `SHA256SUMS.txt` records exact SHA-256 for main EXE (`7589D97E95674B3A1747C115286E710840FADD3444A836366136EBAD2E52E5EF`)
+- `[PASS]` `SHA256SUMS.txt` records exact SHA-256 for NSIS installer (`CB0F4522F004549AB20EB3505B8CE6DF770912913F135A66B0CEFCAE257357D9`)
+- `[PASS]` `SHA256SUMS.txt` records exact SHA-256 for main EXE (`B9E0A19FD73FB42D69DDD1D89C7A258F3549209DCF87FC0024BE792B66C7E70C`)
 
 #### Group 3: Signing Key Safety & Operational Security (7/7 Passed)
 - `[PASS]` Private key safely isolated outside repo at `%USERPROFILE%\.tori-keys\tori-updater.key`
@@ -185,3 +185,4 @@ All milestones for Gate 13.5.1 are complete, and all instructions for the websit
 - **GitHub Releases** is the source for official downloads and updater metadata.
 - **GitHub Issues** is the feedback and bug reporting channel.
 - The updater has been end-to-end verified across cryptographic, filesystem, runtime, and failure scenarios.
+
