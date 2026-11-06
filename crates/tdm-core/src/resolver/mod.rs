@@ -7,7 +7,8 @@ pub mod pipeline;
 pub mod ssrf;
 
 pub use discovery::{
-    find_js_runtime, find_streamlink, find_yt_dlp, get_resolver_status, get_yt_dlp_version,
+    find_ffmpeg, find_ffprobe, find_js_runtime, find_streamlink, find_yt_dlp, get_resolver_status,
+    get_yt_dlp_version,
 };
 pub use downloader::download_managed_media;
 pub use extractor::{clean_ytdlp_error, execute_yt_dlp_dump, execute_yt_dlp_playlist_dump};

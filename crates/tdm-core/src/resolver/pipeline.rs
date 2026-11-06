@@ -110,7 +110,7 @@ impl MediaResolver {
 
     /// Probes direct media URLs via HTTP HEAD/GET.
     async fn probe_direct_media(&self, url: &str) -> Result<MediaMetadata> {
-        let resp = self
+        let resp = match self
             .client
             .head(url)
             .header(
@@ -119,7 +119,20 @@ impl MediaResolver {
             )
             .send()
             .await
-            .map_err(EngineError::Http)?;
+        {
+            Ok(r) if r.status().is_success() => r,
+            _ => self
+                .client
+                .get(url)
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TORI/2.0",
+                )
+                .header(reqwest::header::RANGE, "bytes=0-1024")
+                .send()
+                .await
+                .map_err(EngineError::Http)?,
+        };
 
         let _status = resp.status();
         let headers = resp.headers().clone();
@@ -140,7 +153,14 @@ impl MediaResolver {
         let content_length = headers
             .get(reqwest::header::CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok());
+            .and_then(|v| v.parse::<u64>().ok())
+            .or_else(|| {
+                headers
+                    .get(reqwest::header::CONTENT_RANGE)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.rsplit('/').next())
+                    .and_then(|v| v.parse::<u64>().ok())
+            });
 
         let filename = extract_filename(url, &headers);
         let ext = filename.rsplit('.').next().unwrap_or("mp4").to_lowercase();

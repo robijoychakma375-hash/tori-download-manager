@@ -66,7 +66,7 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
                 if path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .map(|s| s.contains("Gyan.FFmpeg"))
+                    .map(|s| s.to_lowercase().contains("ffmpeg"))
                     .unwrap_or(false)
                 {
                     // Scan subdirectories for bin\ffmpeg.exe
@@ -144,7 +144,7 @@ pub fn find_ffprobe() -> Option<PathBuf> {
                 if path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .map(|s| s.contains("Gyan.FFmpeg"))
+                    .map(|s| s.to_lowercase().contains("ffmpeg"))
                     .unwrap_or(false)
                 {
                     if let Ok(sub_entries) = fs::read_dir(&path) {

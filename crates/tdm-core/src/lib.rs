@@ -16,9 +16,9 @@ pub use engine::{
 pub use error::{EngineError, Result};
 pub use live::{detect_live_protocol, LiveProtocol, LiveRecordingOptions};
 pub use resolver::{
-    deduplicate_and_rank_formats, extract_html_media_candidates, find_streamlink, probe_streamlink,
-    DiscoveryOrchestrator, DiscoveryStrategy, DownloadCapability, FilesizeType, MediaCandidate,
-    MediaMetadata, MediaResolver, PlaylistItem, PlaylistMetadata, ResolveRequest,
-    ResolvedMediaFormat, ResolverStatus,
+    deduplicate_and_rank_formats, extract_html_media_candidates, find_ffmpeg, find_ffprobe,
+    find_streamlink, find_yt_dlp, probe_streamlink, DiscoveryOrchestrator, DiscoveryStrategy,
+    DownloadCapability, FilesizeType, MediaCandidate, MediaMetadata, MediaResolver, PlaylistItem,
+    PlaylistMetadata, ResolveRequest, ResolvedMediaFormat, ResolverStatus,
 };
 pub use types::{ChunkRecord, DownloadJob, DownloadProgress, JobState, JobType, Priority};
