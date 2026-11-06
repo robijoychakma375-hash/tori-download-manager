@@ -169,14 +169,13 @@ async fn test_multi_strategy_orchestrator_candidate_handoff() {
         url: "https://example.org/stream-page".to_string(),
         force_refresh: false,
         candidates: vec![
-            "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
-                .to_string(),
+            "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4".to_string(),
         ],
-        page_title: Some("For Bigger Blazes Sample Video".to_string()),
+        page_title: Some("MDN Flower Sample Video".to_string()),
         thumbnail_url: Some("https://example.org/poster.jpg".to_string()),
     };
 
-    // The probe should successfully hit Google Cloud Storage sample video via direct probe
+    // The probe should successfully hit MDN sample video via direct probe
     let resolved = orchestrator.resolve_multi_strategy(&resolver, &req).await;
     assert!(
         resolved.is_ok(),
@@ -186,7 +185,7 @@ async fn test_multi_strategy_orchestrator_candidate_handoff() {
 
     let meta = resolved.unwrap();
     assert_eq!(meta.extractor, "browser_candidate");
-    assert_eq!(meta.title, "For Bigger Blazes Sample Video");
+    assert_eq!(meta.title, "MDN Flower Sample Video");
     assert!(!meta.formats.is_empty(), "Must have at least one format");
     assert_eq!(
         meta.formats[0].download_capability,

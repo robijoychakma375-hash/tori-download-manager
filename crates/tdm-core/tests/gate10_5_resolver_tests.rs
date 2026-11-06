@@ -445,3 +445,150 @@ fn test_parse_ytdlp_playlist_metadata_unit() {
     );
     assert_eq!(parsed.items[1].index, 2);
 }
+
+#[tokio::test]
+async fn test_html_candidate_discrimination_track_and_iframe() {
+    let sample_html = r#"
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Media Extraction Test Page</title>
+            <meta property="og:video" content="https://example.com/og_stream.mp4">
+        </head>
+        <body>
+            <video controls poster="https://example.com/poster.jpg">
+                <source src="https://example.com/video_720p.mp4" type="video/mp4">
+                <track src="https://example.com/subtitles_en.vtt" kind="subtitles" srclang="en" label="English">
+                <track src="https://example.com/captions_es.srt" kind="captions" srclang="es" label="Spanish">
+            </video>
+            <!-- Platform video embed: should be preserved -->
+            <iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" width="560" height="315"></iframe>
+            <!-- Non-media web frame: MUST be ignored -->
+            <iframe src="https://ads.doubleclick.net/widget/banner.html" width="300" height="250"></iframe>
+            <iframe src="https://example.com/comments/iframe.php" width="100%"></iframe>
+        </body>
+        </html>
+    "#;
+
+    let scraped = tdm_core::resolver::extract_html_media_candidates(
+        sample_html,
+        "https://example.com/article/1",
+    );
+
+    // Title and poster extracted
+    assert_eq!(scraped.title.as_deref(), Some("Media Extraction Test Page"));
+    assert_eq!(
+        scraped.thumbnail_url.as_deref(),
+        Some("https://example.com/poster.jpg")
+    );
+
+    // Check media candidate URLs
+    let urls = scraped.media_urls;
+    println!("Scraped candidate URLs: {:?}", urls);
+
+    // 1. OG video tag preserved
+    assert!(urls.contains(&"https://example.com/og_stream.mp4".to_string()));
+    // 2. HTML5 video source preserved
+    assert!(urls.contains(&"https://example.com/video_720p.mp4".to_string()));
+    // 3. YouTube embed iframe preserved
+    assert!(urls.contains(&"https://www.youtube.com/embed/dQw4w9WgXcQ".to_string()));
+
+    // 4. Subtitle and caption <track> MUST NOT be in media_urls
+    assert!(!urls.contains(&"https://example.com/subtitles_en.vtt".to_string()));
+    assert!(!urls.contains(&"https://example.com/captions_es.srt".to_string()));
+
+    // 5. Arbitrary non-media iframes MUST NOT be in media_urls
+    assert!(!urls.contains(&"https://ads.doubleclick.net/widget/banner.html".to_string()));
+    assert!(!urls.contains(&"https://example.com/comments/iframe.php".to_string()));
+}
+
+#[tokio::test]
+async fn test_media_discrimination_and_mime_validation() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let mut buf = [0u8; 1024];
+            let n = socket.read(&mut buf).await.unwrap_or(0);
+            let req_str = String::from_utf8_lossy(&buf[..n]);
+
+            let (content_type, body_text) = if req_str.contains("/subtitle.vtt") {
+                ("text/vtt", "WEBVTT\n\n00:01.000 --> 00:04.000\nHello world")
+            } else if req_str.contains("/document.pdf") {
+                ("application/pdf", "%PDF-1.4...")
+            } else if req_str.contains("/image.jpg") {
+                ("image/jpeg", "JPEG_BINARY_DATA...")
+            } else if req_str.contains("/archive.zip") {
+                ("application/zip", "PK...")
+            } else if req_str.contains("/audio.mp3") {
+                ("audio/mpeg", "ID3...")
+            } else {
+                ("video/mp4", "ftypisom...")
+            };
+
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\n\
+                Content-Type: {}\r\n\
+                Content-Length: {}\r\n\
+                Accept-Ranges: bytes\r\n\
+                Connection: close\r\n\r\n{}",
+                content_type,
+                body_text.len(),
+                body_text
+            );
+            let _ = socket.write_all(resp.as_bytes()).await;
+            let _ = socket.shutdown().await;
+        }
+    });
+
+    let resolver = MediaResolver::new();
+
+    // 1. Non-media types must be rejected
+    let res_vtt = resolver
+        .probe_direct_media(&format!("http://127.0.0.1:{}/subtitle.vtt", port))
+        .await;
+    assert!(
+        res_vtt.is_err(),
+        "Subtitle VTT must be rejected as non-media"
+    );
+
+    let res_pdf = resolver
+        .probe_direct_media(&format!("http://127.0.0.1:{}/document.pdf", port))
+        .await;
+    assert!(res_pdf.is_err(), "PDF must be rejected as non-media");
+
+    let res_img = resolver
+        .probe_direct_media(&format!("http://127.0.0.1:{}/image.jpg", port))
+        .await;
+    assert!(res_img.is_err(), "Image must be rejected as non-media");
+
+    let res_zip = resolver
+        .probe_direct_media(&format!("http://127.0.0.1:{}/archive.zip", port))
+        .await;
+    assert!(
+        res_zip.is_err(),
+        "ZIP archive must be rejected as non-media"
+    );
+
+    // 2. Audio and Video media must be accepted
+    let res_mp4 = resolver
+        .probe_direct_media(&format!("http://127.0.0.1:{}/video.mp4", port))
+        .await;
+    assert!(res_mp4.is_ok(), "Video MP4 must be accepted");
+    let meta_mp4 = res_mp4.unwrap();
+    assert!(meta_mp4.formats[0].has_video);
+    assert_eq!(meta_mp4.formats[0].container, "mp4");
+
+    let res_mp3 = resolver
+        .probe_direct_media(&format!("http://127.0.0.1:{}/audio.mp3", port))
+        .await;
+    assert!(res_mp3.is_ok(), "Audio MP3 must be accepted");
+    let meta_mp3 = res_mp3.unwrap();
+    assert!(!meta_mp3.formats[0].has_video);
+    assert!(meta_mp3.formats[0].has_audio);
+    assert_eq!(meta_mp3.formats[0].resolution_label, "Audio");
+}

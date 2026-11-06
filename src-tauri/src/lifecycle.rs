@@ -119,7 +119,13 @@ pub fn install_panic_hook() {
 
 #[cfg(windows)]
 mod mem_trim {
+    use std::collections::HashSet;
     use std::mem::size_of;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static LAST_TRIM_TIME_MS: AtomicU64 = AtomicU64::new(0);
+    const TRIM_COOLDOWN_MS: u64 = 4000; // 4 seconds minimum between trims to prevent page fault thrashing
 
     #[repr(C)]
     struct ProcessEntry32W {
@@ -154,39 +160,85 @@ mod mem_trim {
     const PROCESS_SET_QUOTA: u32 = 0x0100;
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
+    fn get_process_name(raw: &[u16; 260]) -> String {
+        let len = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
+        String::from_utf16_lossy(&raw[..len]).to_lowercase()
+    }
+
     pub fn trim_working_set_tree() {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let last = LAST_TRIM_TIME_MS.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last) < TRIM_COOLDOWN_MS {
+            // Rate-limited: skip trim to avoid excessive page fault thrashing during rapid events
+            return;
+        }
+        LAST_TRIM_TIME_MS.store(now_ms, Ordering::Relaxed);
+
         unsafe {
-            // 1. Trim main process
+            // 1. Trim main TORI process
             let current_handle = GetCurrentProcess();
             let _ = SetProcessWorkingSetSize(current_handle, usize::MAX, usize::MAX);
 
-            // 2. Trim child processes (WebView2 renderers, GPU, network utilities)
+            // 2. Discover TORI's child process tree (including WebView2 browser, GPU, network, and renderer processes)
             let current_pid = GetCurrentProcessId();
             let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
             if snapshot != -1 && snapshot != 0 {
+                let mut all_procs: Vec<(u32, u32, String)> = Vec::new();
                 let mut entry: ProcessEntry32W = std::mem::zeroed();
                 entry.dw_size = size_of::<ProcessEntry32W>() as u32;
 
                 if Process32FirstW(snapshot, &mut entry) != 0 {
                     loop {
-                        if entry.th32_parent_process_id == current_pid {
-                            let child_handle = OpenProcess(
-                                PROCESS_SET_QUOTA | PROCESS_QUERY_LIMITED_INFORMATION,
-                                0,
-                                entry.th32_process_id,
-                            );
-                            if child_handle != 0 && child_handle != -1 {
-                                let _ =
-                                    SetProcessWorkingSetSize(child_handle, usize::MAX, usize::MAX);
-                                CloseHandle(child_handle);
-                            }
-                        }
+                        let name = get_process_name(&entry.sz_exe_file);
+                        all_procs.push((entry.th32_process_id, entry.th32_parent_process_id, name));
                         if Process32NextW(snapshot, &mut entry) == 0 {
                             break;
                         }
                     }
                 }
                 CloseHandle(snapshot);
+
+                // Build verified TORI process tree:
+                // Start with current_pid, iteratively include children whose parent is already confirmed in the tree.
+                // Strictly require the executable name to be msedgewebview2.exe, tori-download-manager.exe, or tdm-*.exe.
+                // NEVER include foreign Edge instances (msedge.exe) or unrelated processes.
+                let mut tori_pids: HashSet<u32> = HashSet::new();
+                tori_pids.insert(current_pid);
+
+                let mut expanded = true;
+                while expanded {
+                    expanded = false;
+                    for (pid, parent_pid, name) in &all_procs {
+                        if tori_pids.contains(parent_pid)
+                            && !tori_pids.contains(pid)
+                            && (name == "msedgewebview2.exe"
+                                || name.starts_with("tdm-")
+                                || name == "tori-download-manager.exe")
+                        {
+                            tori_pids.insert(*pid);
+                            expanded = true;
+                        }
+                    }
+                }
+
+                // Trim all discovered child processes in TORI's tree
+                for pid in tori_pids {
+                    if pid == current_pid {
+                        continue;
+                    }
+                    let child_handle = OpenProcess(
+                        PROCESS_SET_QUOTA | PROCESS_QUERY_LIMITED_INFORMATION,
+                        0,
+                        pid,
+                    );
+                    if child_handle != 0 && child_handle != -1 {
+                        let _ = SetProcessWorkingSetSize(child_handle, usize::MAX, usize::MAX);
+                        CloseHandle(child_handle);
+                    }
+                }
             }
         }
     }

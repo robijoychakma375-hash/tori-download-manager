@@ -115,7 +115,7 @@ impl MediaResolver {
     }
 
     /// Probes direct media URLs via HTTP HEAD/GET.
-    pub(crate) async fn probe_direct_media(&self, url: &str) -> Result<MediaMetadata> {
+    pub async fn probe_direct_media(&self, url: &str) -> Result<MediaMetadata> {
         let resp = match self
             .client
             .head(url)
@@ -149,11 +149,11 @@ impl MediaResolver {
             .unwrap_or("")
             .to_lowercase();
 
-        // Route streaming manifests if indicated by Content-Type header
-        if content_type.contains("mpegurl") {
+        // Route streaming manifests if indicated by Content-Type header or URL
+        if content_type.contains("mpegurl") || url.contains(".m3u8") {
             return self.probe_direct_hls(url).await;
         }
-        if content_type.contains("dash+xml") {
+        if content_type.contains("dash+xml") || url.contains(".mpd") {
             return self.probe_direct_dash(url).await;
         }
 
@@ -161,6 +161,20 @@ impl MediaResolver {
         if content_type.starts_with("text/html") {
             return Err(EngineError::InvalidUrl(
                 "Target returned HTML webpage".to_string(),
+            ));
+        }
+
+        // Reject non-media MIME types: text documents, subtitles, pdfs, images, archives, application binaries
+        if content_type.starts_with("text/")
+            || content_type.starts_with("image/")
+            || content_type.contains("pdf")
+            || content_type.contains("zip")
+            || content_type.contains("json")
+            || content_type.contains("xml")
+        {
+            return Err(EngineError::InvalidUrl(
+                "Target is not a valid audio or video resource (rejected non-media MIME type)"
+                    .to_string(),
             ));
         }
 
@@ -177,14 +191,34 @@ impl MediaResolver {
             });
 
         let filename = extract_filename(url, &headers);
-        let ext = filename.rsplit('.').next().unwrap_or("mp4").to_lowercase();
+        let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
 
-        let is_audio = ext == "mp3"
-            || ext == "m4a"
-            || ext == "aac"
-            || ext == "flac"
-            || ext == "wav"
-            || ext == "ogg";
+        let is_video_mime = content_type.starts_with("video/");
+        let is_audio_mime = content_type.starts_with("audio/");
+
+        let is_video_ext = matches!(
+            ext.as_str(),
+            "mp4" | "m4v" | "webm" | "mkv" | "mov" | "avi" | "flv" | "wmv" | "ts" | "3gp" | "ogv"
+        );
+        let is_audio_ext = matches!(
+            ext.as_str(),
+            "mp3" | "m4a" | "aac" | "flac" | "wav" | "ogg" | "opus" | "weba" | "wma"
+        );
+
+        if !is_video_mime && !is_audio_mime && !is_video_ext && !is_audio_ext {
+            return Err(EngineError::InvalidUrl(
+                "Target is not a valid audio or video resource".to_string(),
+            ));
+        }
+
+        let is_audio = is_audio_mime || is_audio_ext;
+        let container = if !ext.is_empty() && (is_video_ext || is_audio_ext) {
+            ext
+        } else if is_audio {
+            "mp3".to_string()
+        } else {
+            "mp4".to_string()
+        };
 
         let format = ResolvedMediaFormat {
             format_id: "direct".to_string(),
@@ -206,7 +240,7 @@ impl MediaResolver {
                 Some("Original".to_string())
             },
             acodec: Some("Original".to_string()),
-            container: ext,
+            container,
             protocol: "https".to_string(),
             bitrate_kbps: None,
             has_video: !is_audio,

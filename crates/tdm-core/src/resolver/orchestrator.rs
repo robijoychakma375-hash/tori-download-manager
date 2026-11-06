@@ -109,20 +109,18 @@ pub fn extract_html_media_candidates(html: &str, base_url: &str) -> HtmlScrapedM
         }
     }
 
-    // 6. Subtitle & caption tracks: <track src="...">
-    for val in extract_all_attributes(html, "track", "src") {
-        if let Some(abs) = resolve_url(&val) {
-            if !found_media.contains(&abs) {
-                found_media.insert(abs.clone());
-                meta.media_urls.push(abs);
-            }
-        }
-    }
-
-    // 7. Embedded players: <iframe src="...">, <embed src="...">, <object data="...">
+    // 6. Embedded video players: <iframe src="...">, <embed src="...">, <object data="...">
+    // Only accept iframes that route to verified platform video embeds or direct media streams.
+    // Do NOT treat subtitle <track>, arbitrary ad/widget iframes, or non-media documents as video downloads.
     for val in extract_all_attributes(html, "iframe", "src") {
         if let Some(abs) = resolve_url(&val) {
-            if !found_media.contains(&abs) {
+            let lower_abs = abs.to_lowercase();
+            let is_platform = crate::resolver::pipeline::is_known_platform_domain(&abs);
+            let is_direct_media = lower_abs.contains(".mp4")
+                || lower_abs.contains(".webm")
+                || lower_abs.contains(".m3u8")
+                || lower_abs.contains(".mpd");
+            if (is_platform || is_direct_media) && !found_media.contains(&abs) {
                 found_media.insert(abs.clone());
                 meta.media_urls.push(abs);
             }
@@ -130,7 +128,13 @@ pub fn extract_html_media_candidates(html: &str, base_url: &str) -> HtmlScrapedM
     }
     for val in extract_all_attributes(html, "embed", "src") {
         if let Some(abs) = resolve_url(&val) {
-            if !found_media.contains(&abs) {
+            let lower_abs = abs.to_lowercase();
+            let is_platform = crate::resolver::pipeline::is_known_platform_domain(&abs);
+            let is_direct_media = lower_abs.contains(".mp4")
+                || lower_abs.contains(".webm")
+                || lower_abs.contains(".m3u8")
+                || lower_abs.contains(".mpd");
+            if (is_platform || is_direct_media) && !found_media.contains(&abs) {
                 found_media.insert(abs.clone());
                 meta.media_urls.push(abs);
             }
@@ -138,7 +142,13 @@ pub fn extract_html_media_candidates(html: &str, base_url: &str) -> HtmlScrapedM
     }
     for val in extract_all_attributes(html, "object", "data") {
         if let Some(abs) = resolve_url(&val) {
-            if !found_media.contains(&abs) {
+            let lower_abs = abs.to_lowercase();
+            let is_platform = crate::resolver::pipeline::is_known_platform_domain(&abs);
+            let is_direct_media = lower_abs.contains(".mp4")
+                || lower_abs.contains(".webm")
+                || lower_abs.contains(".m3u8")
+                || lower_abs.contains(".mpd");
+            if (is_platform || is_direct_media) && !found_media.contains(&abs) {
                 found_media.insert(abs.clone());
                 meta.media_urls.push(abs);
             }

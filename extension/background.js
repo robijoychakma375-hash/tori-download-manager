@@ -389,6 +389,16 @@ async function callDesktopApi(
     clearTimeout(timeoutId);
 
     const data = await res.json().catch(() => ({}));
+
+    // Auto-recovery: if 401 Unauthorized, token may be invalidated; attempt re-pairing once
+    if (res.status === 401 && !isRetry) {
+      console.warn('[TORI] 401 Unauthorized from desktop API. Attempting auto-pairing via Native Messaging...');
+      const pairRes = await autoPairWithDesktop();
+      if (pairRes && pairRes.ok && pairRes.token) {
+        return callDesktopApi(endpoint, method, body, customTimeout, port, pairRes.token, true);
+      }
+    }
+
     return {
       ok: res.ok,
       status: res.status,
@@ -416,15 +426,34 @@ async function callDesktopApi(
           try {
             const probeCtrl = new AbortController();
             const probeTimer = setTimeout(() => probeCtrl.abort(), 500);
-            const probeRes = await fetch(`http://127.0.0.1:${candPort}/api/v1/ping`, { signal: probeCtrl.signal });
+            const probeHeaders = {};
+            if (token) probeHeaders['X-Tori-Token'] = token;
+            const probeRes = await fetch(`http://127.0.0.1:${candPort}/api/v1/ping`, {
+              headers: probeHeaders,
+              signal: probeCtrl.signal,
+            });
             clearTimeout(probeTimer);
             if (probeRes.ok) {
               const probeData = await probeRes.json().catch(() => ({}));
-              if (probeData && probeData.name === 'TORI Download Manager') {
-                console.log(`[TORI] Discovered active desktop server on port ${candPort}`);
+              if (
+                probeData &&
+                probeData.status === 'ok' &&
+                probeData.name === 'TORI Download Manager' &&
+                probeData.engine_active === true
+              ) {
+                console.log(`[TORI] Discovered authoritative desktop server on port ${candPort} (authenticated: ${probeData.authenticated})`);
                 extSettings.port = candPort;
-                await chrome.storage.local.set({ tori_settings: extSettings });
-                return callDesktopApi(endpoint, method, body, customTimeout, candPort, token, true);
+                let activeToken = token;
+                if (!probeData.authenticated) {
+                  // Token expired or mismatched: pair via Native Messaging with local SQLite DB
+                  const pairRes = await autoPairWithDesktop();
+                  if (pairRes && pairRes.ok && pairRes.token) {
+                    activeToken = pairRes.token;
+                  }
+                } else {
+                  await chrome.storage.local.set({ tori_settings: extSettings });
+                }
+                return callDesktopApi(endpoint, method, body, customTimeout, candPort, activeToken, true);
               }
             }
           } catch (_) {}

@@ -201,3 +201,55 @@ Resolve remaining extension connection, memory efficiency, generic media discove
 - [x] Package final NSIS installer via `cargo tauri build --bundles nsis`.
 - [x] Produce `docs/reports/GATE13_4_CONNECTION_MEMORY_MEDIA_REPORT.md` and commit to Git.
 
+---
+
+# TORI Download Manager v2.0 — Milestone Plan: Gate 13.4.1
+## Final Memory and Connection Safety Verification
+
+### Objective
+Perform a rigorous, empirical release-readiness verification covering WebView2 and process tree memory behavior (working set, private bytes, commit size, paging, UI restoration latency), authoritative port discovery and security validation, media MIME type and stream classification accuracy, and verification of the NSIS-installed application package.
+
+---
+
+### Specific Measurable Milestones
+
+#### Milestone 1: WebView2 Memory Trimming Forensic Audit & Policy Optimization
+- [x] Measure complete process tree memory (TORI parent + WebView2 children) across all states: Private Bytes, Working Set, Commit Size.
+- [x] Profile page faults (soft vs hard faults) and UI restoration latency (ms to restore and render after tray minimization).
+- [x] Test 30 consecutive hide/restore cycles; verify zero cumulative Private Bytes leaks, no paging thrashing, and stable CPU.
+- [x] Add safe rate-limiting/cooldown to memory trimming (4-second debounce) so rapid window toggles or toast updates never trigger excessive page fault thrashing.
+- [x] Strictly restrict child process discovery to TORI's own process tree (verify no foreign Edge or WebView2 instances are affected).
+- [x] Honestly document that Working Set reduction reclaims physical resident RAM while Commit Size and Private Bytes represent virtual allocation.
+
+#### Milestone 2: Authoritative Port Auto-Discovery & Engine Identity Verification
+- [x] Ensure extension port sweep (6800–6803) strictly validates authoritative engine identity (`name: "TORI Download Manager"`, `version`, `port`, `authenticated: true`).
+- [x] Prevent silent connection to unrelated services or rogue localhost ports.
+- [x] Guarantee localhost-only binding and anti-DNS-rebinding protection.
+- [x] Validate proper reconnect behavior and token persistence after TORI restarts.
+- [x] Ensure no duplicate download jobs or cross-instance crosstalk.
+
+#### Milestone 3: Generic Media Stream Validation & MIME Discrimination
+- [x] Enforce strict MIME type and extension validation in `crates/tdm-core/src/resolver/pipeline.rs`:
+  - Require valid video MIME (`video/*`) or audio MIME (`audio/*`) or streaming manifest MIME (`application/x-mpegurl`, `application/dash+xml`) or recognized media extension (`.mp4`, `.webm`, `.mkv`, `.m4v`, `.mov`, `.mp3`, `.m4a`, `.aac`, `.flac`, `.wav`, `.ogg`, `.opus`, `.m3u8`, `.mpd`).
+  - Reject non-media responses (`text/html`, `text/vtt`, `application/pdf`, `image/*`, `application/zip`, etc.) from being presented as confirmed video downloads.
+- [x] In HTML candidate scraping, discriminate `<track>` (subtitles) and `<iframe>` (embed documents): do not push subtitles or iframe documents as direct video download streams; route iframe src to platform extractor if it is a supported video embed (e.g. YouTube/Vimeo embed), otherwise skip.
+- [x] Preserve SSRF validation and access restriction safeguards.
+
+#### Milestone 4: NSIS Installed Application End-to-End Verification
+- [x] Silently install latest NSIS package (`target/release/bundle/nsis/TORI Download Manager_2.0.0_x64-setup.exe`) to isolated staging folder.
+- [x] Test installed application execution under scrubbed system PATH:
+  - Background downloads persistence while main window is hidden.
+  - System tray restoration and menu actions.
+  - Toast Dismiss (`.cx`) vs Cancel Download in drawer.
+  - Browser extension connection, pairing, and reconnect after app restart.
+  - SQLite download history integrity and clean shutdown.
+- [x] Verify clean uninstallation preserves user SQLite data.
+
+#### Milestone 5: Full Regression Suite, Deliverables & Comprehensive Report
+- [x] Run `cargo fmt --all -- --check`.
+- [x] Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [x] Run `cargo test --workspace` and `cargo test -p tdm-native-host`.
+- [x] Run `npm --prefix ui run build` and `powershell -ExecutionPolicy Bypass -File scripts\verify_production_release.ps1`.
+- [x] Package final updated NSIS installer if any binaries were modified.
+- [x] Deliver `docs/reports/GATE13_4_1_RELEASE_RELIABILITY_AUDIT.md`.
+
