@@ -30,18 +30,20 @@ pub fn register_host(custom_extension_id: Option<&str>) -> std::io::Result<()> {
     let manifest_path = get_manifest_path();
 
     let ext_id = custom_extension_id.unwrap_or(DEFAULT_EXTENSION_ID);
-    let allowed_origins = serde_json::json!([
+    let mut origins = vec![
         format!("chrome-extension://{}/", ext_id),
-        "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm/",
-        "chrome-extension://bflchfddfgkfglmjapohkjmldepflkbe/"
-    ]);
+        "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm/".to_string(),
+        "chrome-extension://bflchfddfgkfglmjapohkjmldepflkbe/".to_string(),
+    ];
+    origins.sort();
+    origins.dedup();
 
     let manifest_json = serde_json::json!({
         "name": HOST_NAME,
         "description": "TORI Download Manager Native Messaging Host",
         "path": exe_path.to_string_lossy(),
         "type": "stdio",
-        "allowed_origins": allowed_origins
+        "allowed_origins": origins
     });
 
     fs::write(

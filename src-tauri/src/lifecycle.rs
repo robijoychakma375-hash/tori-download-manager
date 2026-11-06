@@ -116,3 +116,84 @@ pub fn install_panic_hook() {
         default_hook(panic_info);
     }));
 }
+
+#[cfg(windows)]
+mod mem_trim {
+    use std::mem::size_of;
+
+    #[repr(C)]
+    struct ProcessEntry32W {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_process_id: u32,
+        th32_default_heap_id: usize,
+        th32_module_id: u32,
+        cnt_threads: u32,
+        th32_parent_process_id: u32,
+        pc_pri_class_base: i32,
+        dw_flags: u32,
+        sz_exe_file: [u16; 260],
+    }
+
+    extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn GetCurrentProcessId() -> u32;
+        fn SetProcessWorkingSetSize(
+            h_process: isize,
+            dw_minimum_working_set_size: usize,
+            dw_maximum_working_set_size: usize,
+        ) -> i32;
+        fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> isize;
+        fn Process32FirstW(h_snapshot: isize, lppe: *mut ProcessEntry32W) -> i32;
+        fn Process32NextW(h_snapshot: isize, lppe: *mut ProcessEntry32W) -> i32;
+        fn OpenProcess(dw_desired_access: u32, b_inherit_handle: i32, dw_process_id: u32) -> isize;
+        fn CloseHandle(h_object: isize) -> i32;
+    }
+
+    const TH32CS_SNAPPROCESS: u32 = 0x00000002;
+    const PROCESS_SET_QUOTA: u32 = 0x0100;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+    pub fn trim_working_set_tree() {
+        unsafe {
+            // 1. Trim main process
+            let current_handle = GetCurrentProcess();
+            let _ = SetProcessWorkingSetSize(current_handle, usize::MAX, usize::MAX);
+
+            // 2. Trim child processes (WebView2 renderers, GPU, network utilities)
+            let current_pid = GetCurrentProcessId();
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snapshot != -1 && snapshot != 0 {
+                let mut entry: ProcessEntry32W = std::mem::zeroed();
+                entry.dw_size = size_of::<ProcessEntry32W>() as u32;
+
+                if Process32FirstW(snapshot, &mut entry) != 0 {
+                    loop {
+                        if entry.th32_parent_process_id == current_pid {
+                            let child_handle = OpenProcess(
+                                PROCESS_SET_QUOTA | PROCESS_QUERY_LIMITED_INFORMATION,
+                                0,
+                                entry.th32_process_id,
+                            );
+                            if child_handle != 0 && child_handle != -1 {
+                                let _ =
+                                    SetProcessWorkingSetSize(child_handle, usize::MAX, usize::MAX);
+                                CloseHandle(child_handle);
+                            }
+                        }
+                        if Process32NextW(snapshot, &mut entry) == 0 {
+                            break;
+                        }
+                    }
+                }
+                CloseHandle(snapshot);
+            }
+        }
+    }
+}
+
+/// Trims physical working set memory of the current process and any child processes (e.g. WebView2).
+pub fn trim_memory() {
+    #[cfg(windows)]
+    mem_trim::trim_working_set_tree();
+}

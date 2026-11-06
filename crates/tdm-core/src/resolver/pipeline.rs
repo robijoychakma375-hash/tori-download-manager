@@ -34,17 +34,14 @@ impl MediaResolver {
         Self { client }
     }
 
-    /// Resolves media metadata using multi-strategy discovery orchestrator when candidates or context are present.
+    /// Resolves media metadata using multi-strategy discovery orchestrator across platform extractors,
+    /// candidate streams, and HTML media extraction fallback.
     pub async fn resolve_with_request(
         &self,
         req: &crate::resolver::models::ResolveRequest,
     ) -> Result<MediaMetadata> {
-        if req.candidates.is_empty() && req.page_title.is_none() && req.thumbnail_url.is_none() {
-            self.resolve(&req.url).await
-        } else {
-            let orchestrator = crate::resolver::orchestrator::DiscoveryOrchestrator::new();
-            orchestrator.resolve_multi_strategy(self, req).await
-        }
+        let orchestrator = crate::resolver::orchestrator::DiscoveryOrchestrator::new();
+        orchestrator.resolve_multi_strategy(self, req).await
     }
 
     /// Resolves media metadata for any direct URL, streaming manifest, or video platform webpage.
@@ -91,8 +88,17 @@ impl MediaResolver {
         } else {
             GENERIC_RESOLVER_TIMEOUT
         };
-        let json_val = execute_yt_dlp_dump(&target_url, Some(timeout)).await?;
-        self.parse_ytdlp_metadata(&target_url, &json_val)
+        match execute_yt_dlp_dump(&target_url, Some(timeout)).await {
+            Ok(json_val) => self.parse_ytdlp_metadata(&target_url, &json_val),
+            Err(e) => {
+                // Fallback: If yt-dlp fails (e.g. Unsupported URL or generic extractor failure),
+                // try probing the target URL directly as a media stream or manifest before failing.
+                if let Ok(direct_meta) = self.probe_direct_media(url_str).await {
+                    return Ok(direct_meta);
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Resolves metadata and item list for a media playlist (e.g. YouTube playlist, channel).
@@ -109,7 +115,7 @@ impl MediaResolver {
     }
 
     /// Probes direct media URLs via HTTP HEAD/GET.
-    async fn probe_direct_media(&self, url: &str) -> Result<MediaMetadata> {
+    pub(crate) async fn probe_direct_media(&self, url: &str) -> Result<MediaMetadata> {
         let resp = match self
             .client
             .head(url)
@@ -142,6 +148,14 @@ impl MediaResolver {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_lowercase();
+
+        // Route streaming manifests if indicated by Content-Type header
+        if content_type.contains("mpegurl") {
+            return self.probe_direct_hls(url).await;
+        }
+        if content_type.contains("dash+xml") {
+            return self.probe_direct_dash(url).await;
+        }
 
         // Reject HTML responses
         if content_type.starts_with("text/html") {
@@ -229,7 +243,7 @@ impl MediaResolver {
     }
 
     /// Probes direct HLS master or media playlists.
-    async fn probe_direct_hls(&self, url: &str) -> Result<MediaMetadata> {
+    pub(crate) async fn probe_direct_hls(&self, url: &str) -> Result<MediaMetadata> {
         let resp = self
             .client
             .get(url)
@@ -331,7 +345,7 @@ impl MediaResolver {
     }
 
     /// Probes direct DASH MPD manifests.
-    async fn probe_direct_dash(&self, url: &str) -> Result<MediaMetadata> {
+    pub(crate) async fn probe_direct_dash(&self, url: &str) -> Result<MediaMetadata> {
         let resp = self
             .client
             .get(url)

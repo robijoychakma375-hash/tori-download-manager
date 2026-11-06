@@ -156,6 +156,27 @@ pub fn locate_desktop_binary() -> Option<PathBuf> {
         return Some(cwd_cand);
     }
 
+    // 4. User profile LocalAppData installation (standard Tauri NSIS target)
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let nsis_user_cand = PathBuf::from(local_app_data)
+            .join("Programs")
+            .join("TORI Download Manager")
+            .join("tori-download-manager.exe");
+        if nsis_user_cand.exists() {
+            return Some(nsis_user_cand);
+        }
+    }
+
+    // 5. System Program Files installation
+    if let Ok(prog_files) = std::env::var("ProgramFiles") {
+        let nsis_sys_cand = PathBuf::from(prog_files)
+            .join("TORI Download Manager")
+            .join("tori-download-manager.exe");
+        if nsis_sys_cand.exists() {
+            return Some(nsis_sys_cand);
+        }
+    }
+
     None
 }
 
@@ -183,11 +204,14 @@ pub async fn ensure_engine_running() -> bool {
         if let Ok(pipe) = std::env::var("TORI_IPC_PIPE") {
             cmd.env("TORI_IPC_PIPE", pipe);
         }
+        if let Ok(lb) = std::env::var("TORI_ALLOW_LOOPBACK") {
+            cmd.env("TORI_ALLOW_LOOPBACK", lb);
+        }
         let _ = cmd.spawn();
 
-        // Wait up to 1500ms for Named Pipe to become ready
+        // Wait up to 3000ms for Named Pipe to become ready
         let start = std::time::Instant::now();
-        while start.elapsed() < Duration::from_millis(1500) {
+        while start.elapsed() < Duration::from_millis(3000) {
             tokio::time::sleep(Duration::from_millis(50)).await;
             if try_connect_engine().is_ok() {
                 return true;

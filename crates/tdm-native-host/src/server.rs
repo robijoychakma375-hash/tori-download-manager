@@ -1152,6 +1152,28 @@ async fn handle_show_window(
     })))
 }
 
+async fn handle_hide_window(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let config = state.config.read().await;
+    if !check_auth(&headers, None, &config.token) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"status": "error"})),
+        ));
+    }
+
+    state
+        .manager
+        .event_bus()
+        .emit(tdm_core::DownloadEvent::HideWindow);
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "message": "Window hide request emitted"
+    })))
+}
+
 async fn handle_events(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -1187,6 +1209,9 @@ async fn handle_events(
                 }
                 tdm_core::DownloadEvent::ShowWindow => {
                     yield Ok(Event::default().event("show_window").data("{}"));
+                }
+                tdm_core::DownloadEvent::HideWindow => {
+                    yield Ok(Event::default().event("hide_window").data("{}"));
                 }
                 tdm_core::DownloadEvent::OpenProgressWindow { id } => {
                     let payload = serde_json::json!({ "id": id });
@@ -1275,6 +1300,7 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
             post(handle_delete_download),
         )
         .route("/api/v1/window/show", post(handle_show_window))
+        .route("/api/v1/window/hide", post(handle_hide_window))
         .route("/api/v1/events", get(handle_events))
         .route("/api/v1/media/status", get(handle_media_status))
         .route("/api/v1/media/resolve", post(handle_media_resolve))

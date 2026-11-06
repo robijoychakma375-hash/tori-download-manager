@@ -348,14 +348,21 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
     };
   }, [fetchJob]);
 
-  // Active reconciliation polling while active downloads exist
+  const jobsRef = useRef<Record<string, DownloadJob>>(jobs);
+  jobsRef.current = jobs;
+
+  // Active reconciliation polling while active downloads exist (stable 2.5s cadence)
   useEffect(() => {
-    const activeRunning = activeIds.some(
-      (id) => jobs[id] && ['downloading', 'probing', 'pausing', 'verifying'].includes(jobs[id].state)
-    );
-    if (!activeRunning) return;
+    if (activeIds.length === 0) return;
 
     const interval = setInterval(async () => {
+      const activeRunning = activeIds.some(
+        (id) =>
+          jobsRef.current[id] &&
+          ['downloading', 'probing', 'pausing', 'verifying'].includes(jobsRef.current[id].state)
+      );
+      if (!activeRunning) return;
+
       try {
         const all = await invoke<DownloadJob[]>('list_downloads');
         if (all) {
@@ -374,10 +381,10 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
       } catch {
         // ignore
       }
-    }, 1500);
+    }, 2500);
 
     return () => clearInterval(interval);
-  }, [activeIds, jobs]);
+  }, [activeIds]);
 
   const handleToggleExpand = useCallback(async (id: string) => {
     setExpanded((prev) => {
@@ -492,32 +499,33 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
     };
   }, []);
 
-  const handleCancelOrDismiss = useCallback(
-    async (id: string, isTerminal: boolean) => {
-      if (!isTerminal) {
-        try {
-          await invoke('cancel_download', { id });
-        } catch (err) {
-          console.error('Failed to cancel download from toast:', err);
-        }
+  // Dismiss notification card (removes from toast view, hides toast window if no more items,
+  // NEVER cancels or stops active downloads)
+  const handleDismiss = useCallback((id: string) => {
+    dismissedIdsRef.current.add(id);
+    setActiveIds((prev) => {
+      const next = prev.filter((x) => x !== id);
+      if (next.length === 0) {
+        invoke('hide_toast_window').catch(() => {});
       }
-      dismissedIdsRef.current.add(id);
-      setActiveIds((prev) => {
-        const next = prev.filter((x) => x !== id);
-        if (next.length === 0) {
-          invoke('hide_toast_window').catch(() => {});
-        }
-        return next;
-      });
-    },
-    []
-  );
+      return next;
+    });
+  }, []);
 
-  const handleDismiss = useCallback(
-    async (id: string) => {
-      handleCancelOrDismiss(id, true);
+  // Explicit cancel action with user confirmation
+  const handleCancelDownload = useCallback(
+    async (job: DownloadJob) => {
+      const name = job.filename || (job as any).file_name || 'this download';
+      const confirmed = window.confirm(`Are you sure you want to cancel "${name}"?`);
+      if (!confirmed) return;
+      try {
+        await invoke('cancel_download', { id: job.id });
+        handleDismiss(job.id);
+      } catch (err) {
+        console.error('Failed to cancel download from toast:', err);
+      }
     },
-    [handleCancelOrDismiss]
+    [handleDismiss]
   );
 
   const completedTimersRef = useRef<Record<string, number>>({});
@@ -659,7 +667,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
 
   // Adjust window bounds whenever container size or contents change
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || activeIds.length === 0) return;
 
     const updateBounds = () => {
       if (!containerRef.current) return;
@@ -1057,10 +1065,10 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
 
               <button
                 className="cx"
-                title={isComplete || isFailed ? 'Dismiss' : 'Cancel'}
+                title="Dismiss notification"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleCancelOrDismiss(id, isComplete || isFailed);
+                  handleDismiss(id);
                 }}
               >
                 <svg viewBox="0 0 10 10">
@@ -1105,6 +1113,23 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
                     {connCount} · {isResumable ? 'resumable' : 'non-resumable'}
                   </b>
                 </div>
+                {!isComplete && !isFailed && (
+                  <div className="toast-drawer-actions">
+                    <button
+                      type="button"
+                      className="toast-action-cancel"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCancelDownload(job);
+                      }}
+                    >
+                      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" style={{ marginRight: '6px' }}>
+                        <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z" />
+                      </svg>
+                      Cancel Download
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

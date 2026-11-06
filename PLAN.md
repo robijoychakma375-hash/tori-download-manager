@@ -150,3 +150,54 @@ Verify and stress-test the complete application lifecycle across all edge cases:
 - [x] Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
 - [x] Run `verify_production_release.ps1` and dedicated Gate 13.3.1 QA harness.
 - [x] Deliver `docs/reports/GATE13_3_1_FINAL_LIFECYCLE_QA.md` and commit.
+
+---
+
+# TORI Download Manager v2.0 — Milestone Plan: Gate 13.4
+## Extension Connection, WebView2 Performance & Media Reliability
+
+### Objective
+Resolve remaining extension connection, memory efficiency, generic media discovery, and toast interaction issues before preparing TORI Download Manager v2.0 for its first public GitHub release. Maintain 100% fidelity to `design/tori-final/` design tokens, architecture, and production stability.
+
+---
+
+### Specific Measurable Milestones
+
+#### Milestone 1: Extension Connection Reliability & Auto-Recovery
+- [x] Diagnose and eliminate root causes of `"Could not connect to TORI Desktop at 127.0.0.1:6800"`:
+  - Add candidate port auto-discovery (6800-6803) in `callDesktopApi` when preferred port fails.
+  - Fix MV3 service worker cold-start: ensure `extSettings` is loaded from `chrome.storage.local` before outbound requests dispatch.
+  - Implement auto-pairing on first request if key is absent or invalidated.
+  - Add Native Messaging desktop auto-launch on media resolution when desktop is offline.
+  - Verify seamless communication while TORI is hidden in the Windows System Tray.
+- [x] Test Native Messaging host registration, installed binary paths, and registry keys for Chrome & Edge.
+
+#### Milestone 2: Download Toast Button Semantics Decoupling
+- [x] Audit and decouple Toast Dismiss (`.cx` button) from Cancel Download in `ui/src/components/DownloadToast.tsx`.
+- [x] Ensure clicking `.cx` dismisses the floating toast card/window while the active download continues running in the background.
+- [x] Provide explicit "Cancel Download" action in the expanded card drawer with user confirmation.
+- [x] Verify existing design tokens, typography, and SVG assets in `design/tori-final/` are strictly preserved.
+
+#### Milestone 3: Generic Media Resolver & Stream Interception Reliability
+- [x] Ensure yt-dlp extractor failures on generic webpages do not suppress valid DOM, network, or HTML candidates.
+- [x] Enhance `orchestrator.rs` and `pipeline.rs`: probe candidates via HTTP HEAD/GET and manifest inspectors instead of immediately invoking yt-dlp on raw stream URLs.
+- [x] Add `<iframe>` embed player discovery to HTML candidate extraction.
+- [x] Verify detection and downloading of HLS `.m3u8`, DASH `.mpd`, direct MP4/WebM, audio, and subtitle streams.
+
+#### Milestone 4: WebView2 & Process Memory Profile & Optimization
+- [x] Benchmark memory across 7 defined states: Startup, Idle Main, Hidden to Tray, Toast Visible, 1 Active Download, 4 Active Downloads, 10 Repeated Hide/Restore cycles.
+- [x] Profile `tori-download-manager.exe` and `msedgewebview2` processes (Working Set & Private Bytes).
+- [x] Implement memory trimming on tray minimization (`SetProcessWorkingSetSize` Windows API working set trimming).
+- [x] Audit and optimize React intervals, subscriptions, and hidden window activity.
+- [x] Document reproducible before and after memory benchmarks.
+
+#### Milestone 5: Full Regression, NSIS Packaging & Release Report
+- [x] Run `cargo fmt --all -- --check`.
+- [x] Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [x] Run `cargo test --workspace`.
+- [x] Run `npm --prefix ui run build` and `cargo tauri build --no-bundle`.
+- [x] Run `powershell -ExecutionPolicy Bypass -File scripts\verify_production_release.ps1`.
+- [x] Execute comprehensive automated test harness for Gate 13.4 (`scripts/verify_gate13_4_qa.js`: 12/12 PASS).
+- [x] Package final NSIS installer via `cargo tauri build --bundles nsis`.
+- [x] Produce `docs/reports/GATE13_4_CONNECTION_MEMORY_MEDIA_REPORT.md` and commit to Git.
+

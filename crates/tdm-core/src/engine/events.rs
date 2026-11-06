@@ -11,6 +11,7 @@ pub enum DownloadEvent {
         error: Option<String>,
     },
     ShowWindow,
+    HideWindow,
     OpenProgressWindow {
         id: String,
     },

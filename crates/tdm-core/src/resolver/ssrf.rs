@@ -22,13 +22,18 @@ pub async fn validate_safe_media_url(raw_url: &str) -> Result<Url> {
         .host_str()
         .ok_or_else(|| EngineError::InvalidUrl("Missing host in URL".into()))?;
 
-    // Check literal localhost hostnames
+    let allow_loopback = std::env::var("TORI_ALLOW_LOOPBACK")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    // Check literal localhost hostnames (unless explicitly allowed in integration test harness)
     let lower_host = host_str.to_lowercase();
-    if lower_host == "localhost"
-        || lower_host.ends_with(".localhost")
-        || lower_host == "broadcasthost"
-        || lower_host.ends_with(".local")
-        || lower_host.ends_with(".internal")
+    if !allow_loopback
+        && (lower_host == "localhost"
+            || lower_host.ends_with(".localhost")
+            || lower_host == "broadcasthost"
+            || lower_host.ends_with(".local")
+            || lower_host.ends_with(".internal"))
     {
         return Err(EngineError::InvalidUrl(format!(
             "Target host '{}' is a restricted local or internal domain name.",
@@ -42,7 +47,7 @@ pub async fn validate_safe_media_url(raw_url: &str) -> Result<Url> {
 
     // If host is a direct IP address:
     if let Ok(ip) = host_str.parse::<IpAddr>() {
-        if is_restricted_ip(&ip) {
+        if !allow_loopback && is_restricted_ip(&ip) {
             return Err(EngineError::InvalidUrl(format!(
                 "Target IP address '{}' is in a restricted local or private network range.",
                 ip
@@ -54,13 +59,15 @@ pub async fn validate_safe_media_url(raw_url: &str) -> Result<Url> {
             EngineError::Other(format!("DNS resolution failed for '{}': {}", host_str, e))
         })?;
 
-        for addr in addrs {
-            let ip = addr.ip();
-            if is_restricted_ip(&ip) {
-                return Err(EngineError::InvalidUrl(format!(
-                    "Target hostname '{}' resolved to restricted IP '{}' (SSRF protection).",
-                    host_str, ip
-                )));
+        if !allow_loopback {
+            for addr in addrs {
+                let ip = addr.ip();
+                if is_restricted_ip(&ip) {
+                    return Err(EngineError::InvalidUrl(format!(
+                        "Target hostname '{}' resolved to restricted IP '{}' (SSRF protection).",
+                        host_str, ip
+                    )));
+                }
             }
         }
     }

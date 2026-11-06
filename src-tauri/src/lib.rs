@@ -108,6 +108,12 @@ pub fn run() {
                                 let _ = window.set_focus();
                             }
                         }
+                        tdm_core::DownloadEvent::HideWindow => {
+                            if let Some(window) = bus_app_handle.get_webview_window("main") {
+                                let _ = window.hide();
+                                lifecycle::trim_memory();
+                            }
+                        }
                         tdm_core::DownloadEvent::OpenProgressWindow { id } => {
                             let app = bus_app_handle.clone();
                             let m = mgr.clone();
@@ -141,6 +147,7 @@ pub fn run() {
             if is_minimized {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.minimize();
+                    lifecycle::trim_memory();
                 }
             }
 
@@ -165,6 +172,7 @@ pub fn run() {
                     if close_to_tray {
                         api.prevent_close();
                         let _ = window.hide();
+                        lifecycle::trim_memory();
                     } else {
                         app_handle.exit(0);
                     }

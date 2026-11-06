@@ -322,7 +322,9 @@ pub async fn window_close(
     );
     if window.label() == "main" {
         if close_to_tray {
-            window.hide().map_err(|e| e.to_string())
+            let res = window.hide().map_err(|e| e.to_string());
+            crate::lifecycle::trim_memory();
+            res
         } else {
             let app = window.app_handle().clone();
             app.exit(0);
@@ -906,6 +908,7 @@ pub async fn update_toast_bounds(
 pub async fn hide_toast_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("progress_toast") {
         let _ = win.hide();
+        crate::lifecycle::trim_memory();
     }
     Ok(())
 }

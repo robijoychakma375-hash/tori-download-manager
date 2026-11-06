@@ -42,11 +42,24 @@ let extSettings = {
   types: ['zip', 'rar', '7z', 'iso', 'exe', 'dmg', 'pdf', 'mp4', 'mp3'],
 };
 
-chrome.storage.local.get(['tori_settings'], (res) => {
-  if (res.tori_settings) {
-    extSettings = { ...extSettings, ...res.tori_settings };
+let settingsLoadPromise = null;
+
+function ensureSettingsLoaded() {
+  if (!settingsLoadPromise) {
+    settingsLoadPromise = new Promise((resolve) => {
+      chrome.storage.local.get(['tori_settings'], (res) => {
+        if (res.tori_settings) {
+          extSettings = { ...extSettings, ...res.tori_settings };
+        }
+        resolve(extSettings);
+      });
+    });
   }
-});
+  return settingsLoadPromise;
+}
+
+// Initial settings load on service worker start
+ensureSettingsLoaded();
 
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.tori_settings?.newValue) {
@@ -282,71 +295,6 @@ function getEndpointTimeout(endpoint, customTimeout = null) {
 }
 
 /**
- * Localhost HTTP API client with endpoint-aware timeout and authentication
- */
-async function callDesktopApi(
-  endpoint,
-  method = 'GET',
-  body = null,
-  customTimeout = null,
-  customPort = null,
-  customToken = null
-) {
-  const port = customPort || extSettings.port || 6800;
-  const token = customToken !== null && customToken !== undefined ? customToken : (extSettings.key || '');
-  const url = `http://127.0.0.1:${port}${endpoint}`;
-  const headers = {
-    'X-Tori-Token': token,
-  };
-  if (body && (method === 'POST' || method === 'PUT')) {
-    headers['Content-Type'] = 'application/json';
-  }
-
-  const timeoutDuration = getEndpointTimeout(endpoint, customTimeout);
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
-
-  try {
-    const res = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    const data = await res.json().catch(() => ({}));
-    return {
-      ok: res.ok,
-      status: res.status,
-      data,
-    };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    let errorMsg = err.message;
-    let code = 'NETWORK_ERROR';
-    if (err.name === 'AbortError') {
-      code = 'TIMEOUT';
-      if (endpoint.startsWith('/api/v1/media/resolve')) {
-        errorMsg = `Media resolution timed out (${Math.round(timeoutDuration / 1000)}s). The server or platform took too long to respond.`;
-      } else if (endpoint.startsWith('/api/v1/ping') || endpoint.startsWith('/api/v1/status')) {
-        errorMsg = 'Desktop health check timed out (4s). Is TORI running?';
-      } else {
-        errorMsg = `Request timed out after ${Math.round(timeoutDuration / 1000)}s`;
-      }
-    } else if (err.message && err.message.includes('Failed to fetch')) {
-      errorMsg = 'Could not connect to TORI Desktop at 127.0.0.1:' + port + '. Is TORI running?';
-    }
-    return {
-      ok: false,
-      status: 0,
-      code,
-      error: errorMsg,
-    };
-  }
-}
-
-/**
  * Native Messaging helper with timeout and graceful error reporting
  */
 async function sendNativeMessage(payload) {
@@ -390,6 +338,116 @@ async function autoPairWithDesktop() {
     return { ok: false, error: res?.message || 'Native host did not return pairing token' };
   } catch (err) {
     return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Localhost HTTP API client with endpoint-aware timeout, auto-recovery, and authentication
+ */
+async function callDesktopApi(
+  endpoint,
+  method = 'GET',
+  body = null,
+  customTimeout = null,
+  customPort = null,
+  customToken = null,
+  isRetry = false
+) {
+  await ensureSettingsLoaded();
+
+  let port = customPort || extSettings.port || 6800;
+  let token = customToken !== null && customToken !== undefined ? customToken : (extSettings.key || '');
+
+  // Proactive auto-pairing if key is empty and this endpoint requires auth
+  if (!token && !endpoint.startsWith('/api/v1/ping')) {
+    const pairRes = await autoPairWithDesktop();
+    if (pairRes.ok && pairRes.token) {
+      token = pairRes.token;
+      if (!customPort && pairRes.port) port = pairRes.port;
+    }
+  }
+
+  const url = `http://127.0.0.1:${port}${endpoint}`;
+  const headers = {
+    'X-Tori-Token': token,
+  };
+  if (body && (method === 'POST' || method === 'PUT')) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const timeoutDuration = getEndpointTimeout(endpoint, customTimeout);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const data = await res.json().catch(() => ({}));
+    return {
+      ok: res.ok,
+      status: res.status,
+      data,
+    };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    let errorMsg = err.message;
+    let code = 'NETWORK_ERROR';
+    if (err.name === 'AbortError') {
+      code = 'TIMEOUT';
+      if (endpoint.startsWith('/api/v1/media/resolve')) {
+        errorMsg = `Media resolution timed out (${Math.round(timeoutDuration / 1000)}s). The server or platform took too long to respond.`;
+      } else if (endpoint.startsWith('/api/v1/ping') || endpoint.startsWith('/api/v1/status')) {
+        errorMsg = 'Desktop health check timed out (4s). Is TORI running?';
+      } else {
+        errorMsg = `Request timed out after ${Math.round(timeoutDuration / 1000)}s`;
+      }
+    } else if (err.message && err.message.includes('Failed to fetch')) {
+      // Auto-recovery: if connection failed on the default/configured port, try candidate ports or auto-launch
+      if (!isRetry && !customPort) {
+        // 1. Probe candidate ports (6800-6803)
+        const candidates = [6800, 6801, 6802, 6803].filter((p) => p !== port);
+        for (const candPort of candidates) {
+          try {
+            const probeCtrl = new AbortController();
+            const probeTimer = setTimeout(() => probeCtrl.abort(), 500);
+            const probeRes = await fetch(`http://127.0.0.1:${candPort}/api/v1/ping`, { signal: probeCtrl.signal });
+            clearTimeout(probeTimer);
+            if (probeRes.ok) {
+              const probeData = await probeRes.json().catch(() => ({}));
+              if (probeData && probeData.name === 'TORI Download Manager') {
+                console.log(`[TORI] Discovered active desktop server on port ${candPort}`);
+                extSettings.port = candPort;
+                await chrome.storage.local.set({ tori_settings: extSettings });
+                return callDesktopApi(endpoint, method, body, customTimeout, candPort, token, true);
+              }
+            }
+          } catch (_) {}
+        }
+
+        // 2. If candidate ports failed, attempt to launch / wake TORI via Native Messaging
+        console.log('[TORI] Desktop unreachable on candidate ports. Attempting auto-launch via Native Messaging...');
+        const launchRes = await autoPairWithDesktop();
+        if (launchRes && launchRes.ok) {
+          // Allow desktop engine HTTP listener a brief moment to bind
+          await new Promise((r) => setTimeout(r, 600));
+          const newPort = launchRes.port || extSettings.port || 6800;
+          return callDesktopApi(endpoint, method, body, customTimeout, newPort, launchRes.token || token, true);
+        }
+      }
+      errorMsg = 'Could not connect to TORI Desktop at 127.0.0.1:' + port + '. Is TORI running?';
+    }
+    return {
+      ok: false,
+      status: 0,
+      code,
+      error: errorMsg,
+    };
   }
 }
 
@@ -836,26 +894,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'PING_DESKTOP') {
     const start = Date.now();
     let targetPort = message.port || extSettings.port || 6800;
-    const targetKey = message.key !== undefined ? message.key : (extSettings.key || '');
+    let targetKey = message.key !== undefined ? message.key : (extSettings.key || '');
 
     (async () => {
       let httpRes = await callDesktopApi('/api/v1/status', 'GET', null, 2000, targetPort, targetKey);
 
-      // If connection to targetPort failed, probe candidate ports to discover active desktop port
-      if (!httpRes.ok && httpRes.status === 0) {
-        const candidates = [6800, 6801, 6802, 6803].filter((p) => p !== targetPort);
-        for (const candPort of candidates) {
-          try {
-            const probeRes = await callDesktopApi('/api/v1/ping', 'GET', null, 500, candPort);
-            if (probeRes.ok && probeRes.data && probeRes.data.name === 'TORI Download Manager') {
-              console.log(`[TORI] Discovered active desktop server on port ${candPort}`);
-              targetPort = candPort;
-              extSettings.port = candPort;
-              chrome.storage.local.set({ tori_settings: extSettings });
-              httpRes = await callDesktopApi('/api/v1/status', 'GET', null, 2000, candPort, targetKey);
-              break;
-            }
-          } catch (_) {}
+      // If unauthenticated or token mismatch, attempt auto-pairing recovery
+      if (httpRes.status === 401 || (httpRes.ok && httpRes.data && !httpRes.data.authenticated)) {
+        const pairRes = await autoPairWithDesktop();
+        if (pairRes.ok && pairRes.token) {
+          targetPort = pairRes.port || targetPort;
+          targetKey = pairRes.token;
+          httpRes = await callDesktopApi('/api/v1/status', 'GET', null, 2000, targetPort, targetKey);
         }
       }
 

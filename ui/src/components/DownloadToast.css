@@ -451,3 +451,35 @@ html.toast-mode #root {
   cursor: default;
 }
 
+.toast-drawer-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--bline);
+}
+
+.toast-action-cancel {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--mut);
+  background: color-mix(in srgb, var(--txt) 5%, transparent);
+  border: 1px solid var(--bline);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.toast-action-cancel:hover {
+  background: color-mix(in srgb, #ff453a 15%, transparent);
+  border-color: #ff453a;
+  color: #ff453a;
+}
+
+

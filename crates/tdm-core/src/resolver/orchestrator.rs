@@ -87,12 +87,14 @@ pub fn extract_html_media_candidates(html: &str, base_url: &str) -> HtmlScrapedM
         }
     }
 
-    // 4. HTML5 <video src="..."> attributes
-    for val in extract_all_attributes(html, "video", "src") {
-        if let Some(abs) = resolve_url(&val) {
-            if !found_media.contains(&abs) {
-                found_media.insert(abs.clone());
-                meta.media_urls.push(abs);
+    // 4. HTML5 <video src="..."> and <audio src="..."> attributes
+    for tag in ["video", "audio"] {
+        for val in extract_all_attributes(html, tag, "src") {
+            if let Some(abs) = resolve_url(&val) {
+                if !found_media.contains(&abs) {
+                    found_media.insert(abs.clone());
+                    meta.media_urls.push(abs);
+                }
             }
         }
     }
@@ -107,7 +109,43 @@ pub fn extract_html_media_candidates(html: &str, base_url: &str) -> HtmlScrapedM
         }
     }
 
-    // 6. JSON-LD Schema.org VideoObject parsing
+    // 6. Subtitle & caption tracks: <track src="...">
+    for val in extract_all_attributes(html, "track", "src") {
+        if let Some(abs) = resolve_url(&val) {
+            if !found_media.contains(&abs) {
+                found_media.insert(abs.clone());
+                meta.media_urls.push(abs);
+            }
+        }
+    }
+
+    // 7. Embedded players: <iframe src="...">, <embed src="...">, <object data="...">
+    for val in extract_all_attributes(html, "iframe", "src") {
+        if let Some(abs) = resolve_url(&val) {
+            if !found_media.contains(&abs) {
+                found_media.insert(abs.clone());
+                meta.media_urls.push(abs);
+            }
+        }
+    }
+    for val in extract_all_attributes(html, "embed", "src") {
+        if let Some(abs) = resolve_url(&val) {
+            if !found_media.contains(&abs) {
+                found_media.insert(abs.clone());
+                meta.media_urls.push(abs);
+            }
+        }
+    }
+    for val in extract_all_attributes(html, "object", "data") {
+        if let Some(abs) = resolve_url(&val) {
+            if !found_media.contains(&abs) {
+                found_media.insert(abs.clone());
+                meta.media_urls.push(abs);
+            }
+        }
+    }
+
+    // 8. JSON-LD Schema.org VideoObject parsing
     for json_chunk in extract_json_ld_blocks(html) {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_chunk) {
             extract_video_urls_from_json(&parsed, &mut |raw, title, thumb| {
@@ -474,6 +512,8 @@ impl DiscoveryOrchestrator {
         req: &ResolveRequest,
     ) -> Result<MediaMetadata> {
         let raw_url = req.url.trim();
+        let safe_url = crate::resolver::ssrf::validate_safe_media_url(raw_url).await?;
+        let raw_url = safe_url.as_str();
 
         // 1. If explicit browser candidates were provided (from DOM or network request interception),
         // probe them first before falling back to heavy scraping!
@@ -486,7 +526,17 @@ impl DiscoveryOrchestrator {
             if cand_trim.is_empty() || cand_trim.starts_with("blob:") {
                 continue;
             }
-            if let Ok(meta) = resolver.resolve(cand_trim).await {
+            let res = if cand_trim.contains(".m3u8") {
+                resolver.probe_direct_hls(cand_trim).await
+            } else if cand_trim.contains(".mpd") {
+                resolver.probe_direct_dash(cand_trim).await
+            } else {
+                match resolver.probe_direct_media(cand_trim).await {
+                    Ok(m) => Ok(m),
+                    Err(_) => resolver.resolve(cand_trim).await,
+                }
+            };
+            if let Ok(meta) = res {
                 if discovered_title.is_none()
                     && !meta.title.is_empty()
                     && meta.title != "Direct Download"
@@ -517,17 +567,21 @@ impl DiscoveryOrchestrator {
             });
         }
 
-        // 3. Try standard resolver pipeline (handles platform domains, direct media extensions, HLS, DASH, yt-dlp)
-        match resolver.resolve(raw_url).await {
-            Ok(meta) => return Ok(meta),
-            Err(e) => {
-                // If it's a DRM protected platform, do not attempt generic bypasses
-                let err_msg = e.to_string();
-                if err_msg.contains("DRM")
-                    || err_msg.contains("protected")
-                    || err_msg.contains("plex.tv")
-                {
-                    return Err(e);
+        let is_platform = crate::resolver::pipeline::is_known_platform_domain(raw_url);
+
+        // 3. For known platform domains (YouTube, TikTok, Facebook, etc.), try standard platform resolver pipeline first
+        if is_platform {
+            match resolver.resolve(raw_url).await {
+                Ok(meta) => return Ok(meta),
+                Err(e) => {
+                    // If it's a DRM protected platform, do not attempt generic bypasses
+                    let err_msg = e.to_string();
+                    if err_msg.contains("DRM")
+                        || err_msg.contains("protected")
+                        || err_msg.contains("plex.tv")
+                    {
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -554,9 +608,35 @@ impl DiscoveryOrchestrator {
                     }
 
                     for media_url in scraped.media_urls {
-                        if let Ok(meta) = resolver.resolve(&media_url).await {
+                        let res = if media_url.contains(".m3u8") {
+                            resolver.probe_direct_hls(&media_url).await
+                        } else if media_url.contains(".mpd") {
+                            resolver.probe_direct_dash(&media_url).await
+                        } else {
+                            match resolver.probe_direct_media(&media_url).await {
+                                Ok(m) => Ok(m),
+                                Err(_) => resolver.resolve(&media_url).await,
+                            }
+                        };
+                        if let Ok(meta) = res {
                             discovered_formats.extend(meta.formats);
                         }
+                    }
+                }
+            }
+        }
+
+        // 5. If not a platform domain and HTML scraping found no direct media, fall back to yt-dlp
+        if !is_platform && discovered_formats.is_empty() {
+            match resolver.resolve(raw_url).await {
+                Ok(meta) => return Ok(meta),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    if err_msg.contains("DRM")
+                        || err_msg.contains("protected")
+                        || err_msg.contains("plex.tv")
+                    {
+                        return Err(e);
                     }
                 }
             }

@@ -73,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 DownloadEvent::ShowWindow => {}
+                DownloadEvent::HideWindow => {}
                 DownloadEvent::OpenProgressWindow { .. } => {}
             }
         }
