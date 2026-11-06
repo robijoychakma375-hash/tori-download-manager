@@ -470,5 +470,24 @@ async fn test_server_media_endpoints() {
     assert_eq!(dl_json["status"], "ok");
     assert!(dl_json["job_id"].is_string());
 
+    // 5. POST /api/v1/media/download with duplicate active URL -> returns already_exists
+    let dup_resp = client
+        .post(format!("{}/api/v1/media/download", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &token)
+        .json(&serde_json::json!({
+            "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+            "format_id": "18",
+            "filename": "test_bunny.mp4",
+            "destination": temp_dir.path().to_str().unwrap()
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dup_resp.status(), 200);
+    let dup_json: serde_json::Value = dup_resp.json().await.unwrap();
+    assert_eq!(dup_json["status"], "already_exists");
+    assert_eq!(dup_json["job_id"], dl_json["job_id"]);
+
     shutdown.cancel();
 }

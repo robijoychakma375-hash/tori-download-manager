@@ -743,6 +743,23 @@ async fn handle_create_media_download(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(raw_url);
 
+    // Duplicate check for media download
+    if let Ok(jobs) = state.db.list_jobs() {
+        if let Some(existing) = jobs.iter().find(|j| {
+            (j.url == raw_url || j.url == target_media_url)
+                && (j.state != tdm_core::JobState::Failed
+                    && j.state != tdm_core::JobState::Cancelled)
+        }) {
+            return Ok(Json(CreateDownloadResp {
+                status: "already_exists".to_string(),
+                job_id: Some(existing.id.clone()),
+                filename: Some(existing.filename.clone()),
+                state: Some(format!("{:?}", existing.state).to_lowercase()),
+                message: Some("Media download already exists in TORI".to_string()),
+            }));
+        }
+    }
+
     match state
         .manager
         .create_managed_media_download(

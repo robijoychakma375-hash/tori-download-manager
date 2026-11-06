@@ -32,8 +32,8 @@ $pathsToCheck = @(
     "F:\Program Files",
     "C:\tools",
     "C:\ProgramData\chocolatey",
-    "C:\Users\ritud\scoop",
-    "C:\Users\ritud\AppData\Local\Programs"
+    "$env:USERPROFILE\scoop",
+    "$env:LOCALAPPDATA\Programs"
 )
 
 foreach ($p in $pathsToCheck) {

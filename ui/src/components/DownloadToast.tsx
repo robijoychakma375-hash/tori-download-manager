@@ -174,11 +174,11 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
         resolved_url: null,
         filename: isUnknownDemo ? 'live_event_stream.mp4' : 'Firefox 61.0.2.dmg',
         target_path: isUnknownDemo
-          ? 'C:\\Users\\ritud\\Downloads\\Tori\\Video'
-          : 'C:\\Users\\ritud\\Downloads\\Tori\\Programs',
+          ? 'C:\\Downloads\\Tori\\Video'
+          : 'C:\\Downloads\\Tori\\Programs',
         temp_path: isUnknownDemo
-          ? 'C:\\Users\\ritud\\Downloads\\Tori\\Video\\live_event_stream.mp4.tdm-part'
-          : 'C:\\Users\\ritud\\Downloads\\Tori\\Programs\\Firefox 61.0.2.dmg.tdm-part',
+          ? 'C:\\Downloads\\Tori\\Video\\live_event_stream.mp4.tdm-part'
+          : 'C:\\Downloads\\Tori\\Programs\\Firefox 61.0.2.dmg.tdm-part',
         total_bytes: isUnknownDemo ? null : 57968590,
         downloaded_bytes: isUnknownDemo
           ? 48900000

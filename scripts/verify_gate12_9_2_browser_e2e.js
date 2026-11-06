@@ -118,8 +118,43 @@ async function run() {
   const edgeExe = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
   assert(fs.existsSync(edgeExe), `Microsoft Edge executable exists at ${edgeExe}`);
 
-  const ffprobePath = 'C:\\Users\\ritud\\AppData\\Local\\Microsoft\\WinGet\\Packages\\yt-dlp.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-N-126374-g089a48eb36-win64-gpl\\bin\\ffprobe.exe';
-  assert(fs.existsSync(ffprobePath), `FFprobe executable verified at ${ffprobePath}`);
+  // Locate ffprobe dynamically
+  function findProbeBinary() {
+    const localAppData = process.env.LOCALAPPDATA || '';
+    const sidecarProbe = path.join(localAppData, 'tori-download-manager', 'bin', 'ffprobe.exe');
+    if (fs.existsSync(sidecarProbe)) return sidecarProbe;
+
+    const wingetDir = path.join(localAppData, 'Microsoft', 'WinGet', 'Packages');
+    if (fs.existsSync(wingetDir)) {
+      try {
+        const entries = fs.readdirSync(wingetDir);
+        for (const ent of entries) {
+          if (ent.toLowerCase().includes('ffmpeg')) {
+            const sub = path.join(wingetDir, ent);
+            if (fs.statSync(sub).isDirectory()) {
+              for (const subEnt of fs.readdirSync(sub)) {
+                const cand = path.join(sub, subEnt, 'bin', 'ffprobe.exe');
+                if (fs.existsSync(cand)) return cand;
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    try {
+      const whereOut = execSync('where.exe ffprobe', { encoding: 'utf8' }).trim().split('\r\n')[0];
+      if (whereOut && fs.existsSync(whereOut)) return whereOut;
+    } catch (_) {}
+
+    for (const cand of ['C:\\ffmpeg\\bin\\ffprobe.exe', 'C:\\Program Files\\ffmpeg\\bin\\ffprobe.exe']) {
+      if (fs.existsSync(cand)) return cand;
+    }
+    return null;
+  }
+
+  const ffprobePath = findProbeBinary();
+  assert(ffprobePath && fs.existsSync(ffprobePath), `FFprobe executable verified at ${ffprobePath}`);
 
   // --- Step 1: Start / Verify TORI Desktop Server ---
   console.log('\n--- Step 1: Desktop Engine Health & Token Authentication ---');
@@ -391,6 +426,17 @@ async function run() {
   const samplePublicMediaUrl = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
   const samplePublicPosterUrl = 'https://interactive-examples.mdn.mozilla.net/media/cc0-images/grapefruit-slice-332-332.jpg';
 
+  // Clean up any stale test job for this URL before running test
+  try {
+    const listRes = await makeRequest({ port: activePort, path: '/api/v1/downloads', method: 'GET', headers: { 'X-Tori-Token': authToken } });
+    const jobs = listRes.data?.jobs || (Array.isArray(listRes.data) ? listRes.data : []);
+    for (const j of jobs) {
+      if (j.url === samplePublicMediaUrl || j.filename === dlFilename) {
+        await makeRequest({ port: activePort, path: `/api/v1/downloads/${j.id}/delete`, method: 'POST', headers: { 'X-Tori-Token': authToken } });
+      }
+    }
+  } catch (_) {}
+
   // Trigger media resolution via extension messaging
   const resolveRes = await optionsClient.send('Runtime.evaluate', {
     expression: `
@@ -449,10 +495,33 @@ async function run() {
     returnByValue: true,
   });
 
+  // Verify duplicate prevention from repeated clicks
+  const dupHandoffRes = await optionsClient.send('Runtime.evaluate', {
+    expression: `
+      new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          action: 'START_MEDIA_DOWNLOAD',
+          url: '${samplePublicMediaUrl}',
+          direct_stream_url: '${chosenFormat?.direct_stream_url || samplePublicMediaUrl}',
+          format_id: '${chosenFormat?.format_id || 'direct'}',
+          filename: '${dlFilename}',
+          destination: '${targetDownloadDir.replace(/\\/g, '\\\\')}',
+          priority: 'high',
+          thumbnail_url: '${samplePublicPosterUrl}',
+        }, (res) => resolve(res));
+      })
+    `,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+
   optionsClient.close();
 
   const handoffVal = handoffRes.value || handoffRes.result?.value;
   assert(handoffVal?.status === 'ok' && handoffVal?.job_id, `Browser-to-desktop handoff created job ID: ${handoffVal?.job_id}`);
+
+  const dupVal = dupHandoffRes.value || dupHandoffRes.result?.value;
+  assert(dupVal?.status === 'already_exists', `Repeated click deduplication verified: returned already_exists (matched job ${dupVal?.job_id})`);
 
   // --- Step 6: Monitor Download Completion & Validate with FFprobe ---
   console.log('\n--- Step 6: Monitoring Download Completion & Output Verification ---');

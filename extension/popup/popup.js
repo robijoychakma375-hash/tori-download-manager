@@ -631,10 +631,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     mediaList.querySelectorAll('button[data-idx]').forEach((btn) => {
       btn.addEventListener('click', () => {
+        if (btn.disabled) return;
         const idx = parseInt(btn.dataset.idx, 10);
         const target = items[idx];
         if (!target) return;
 
+        btn.disabled = true;
         btn.textContent = 'Sending…';
         const currentUrl = (tab && tab.url) || window.location.href;
         const isManaged = isManagedPlatform(currentUrl) || isTransientCdnUrl(target.url);
@@ -669,6 +671,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               btn.textContent = 'Active';
               showToast('Already in download queue');
             } else {
+              btn.disabled = false;
               btn.textContent = 'Retry';
               showToast(dlRes?.message || 'Download failed', true);
             }

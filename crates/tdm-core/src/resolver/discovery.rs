@@ -19,16 +19,18 @@ pub fn find_yt_dlp() -> Option<PathBuf> {
         }
     }
 
-    // 2. Check application directory & sidecar bin
+    // 2. Check application directory & sidecar bin / resources
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let p1 = dir.join("yt-dlp.exe");
-            if p1.exists() {
-                return Some(p1);
-            }
-            let p2 = dir.join("bin").join("yt-dlp.exe");
-            if p2.exists() {
-                return Some(p2);
+            for cand in [
+                dir.join("yt-dlp.exe"),
+                dir.join("bin").join("yt-dlp.exe"),
+                dir.join("resources").join("yt-dlp.exe"),
+                dir.join("resources").join("bin").join("yt-dlp.exe"),
+            ] {
+                if cand.exists() {
+                    return Some(cand);
+                }
             }
         }
     }

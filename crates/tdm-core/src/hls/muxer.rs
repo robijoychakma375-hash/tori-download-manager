@@ -35,13 +35,15 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
     // App directory and user runtime locations
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let p1 = dir.join("ffmpeg.exe");
-            if p1.exists() {
-                return Some(p1);
-            }
-            let p2 = dir.join("bin").join("ffmpeg.exe");
-            if p2.exists() {
-                return Some(p2);
+            for cand in [
+                dir.join("ffmpeg.exe"),
+                dir.join("bin").join("ffmpeg.exe"),
+                dir.join("resources").join("ffmpeg.exe"),
+                dir.join("resources").join("bin").join("ffmpeg.exe"),
+            ] {
+                if cand.exists() {
+                    return Some(cand);
+                }
             }
         }
     }
@@ -113,13 +115,15 @@ pub fn find_ffprobe() -> Option<PathBuf> {
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let p1 = dir.join("ffprobe.exe");
-            if p1.exists() {
-                return Some(p1);
-            }
-            let p2 = dir.join("bin").join("ffprobe.exe");
-            if p2.exists() {
-                return Some(p2);
+            for cand in [
+                dir.join("ffprobe.exe"),
+                dir.join("bin").join("ffprobe.exe"),
+                dir.join("resources").join("ffprobe.exe"),
+                dir.join("resources").join("bin").join("ffprobe.exe"),
+            ] {
+                if cand.exists() {
+                    return Some(cand);
+                }
             }
         }
     }
