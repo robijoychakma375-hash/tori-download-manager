@@ -133,3 +133,4 @@ All four core package descriptors are strictly synchronized to release version `
 1. Commit the recovered `PLAN.md` updates.
 2. Formulate an isolated sandbox test harness to perform the real Windows update verification (v1.0.0 -> temporary signed v1.0.1) using a local loopback server without touching production user data or publishing to GitHub.
 3. Await user confirmation on the release identity fields above.
+

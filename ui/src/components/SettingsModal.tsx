@@ -36,6 +36,9 @@ const TABS: NavTab[] = [
   { key: 'about', label: 'About' },
 ];
 
+// Official website URL (hidden until public website is launched and verified)
+const OFFICIAL_WEBSITE_URL: string | null = null;
+
 const renderTabIcon = (key: TabKey) => {
   switch (key) {
     case 'appearance':
@@ -910,8 +913,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Developed by TORI Download Manager Team
               </div>
 
-              {/* Verified Links */}
-              <div className="row" style={{ justifyContent: 'center', gap: 16, marginTop: 8, fontSize: 12 }}>
+              {/* Verified Project Links */}
+              <div className="row" style={{ justifyContent: 'center', gap: 12, marginTop: 8, fontSize: 12, flexWrap: 'wrap' }}>
                 <span
                   style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}
                   onClick={() => openExternalUrl('https://github.com/tori-download-manager/tori-download-manager')}
@@ -923,8 +926,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}
                   onClick={() => openExternalUrl('https://github.com/tori-download-manager/tori-download-manager/releases')}
                 >
-                  Releases & Notes
+                  Releases & Downloads
                 </span>
+                <span style={{ color: 'var(--mut)' }}>•</span>
+                <span
+                  style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}
+                  onClick={() => openExternalUrl('https://github.com/tori-download-manager/tori-download-manager/issues')}
+                >
+                  Issues & Feedback
+                </span>
+                {OFFICIAL_WEBSITE_URL && (
+                  <>
+                    <span style={{ color: 'var(--mut)' }}>•</span>
+                    <span
+                      style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'underline' }}
+                      onClick={() => openExternalUrl(OFFICIAL_WEBSITE_URL)}
+                    >
+                      Official Website
+                    </span>
+                  </>
+                )}
               </div>
 
               <p className="mut" style={{ margin: '12px 0 16px', lineHeight: '18px', fontSize: 12 }}>

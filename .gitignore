@@ -7,4 +7,10 @@ dist/
 *.sqlite-shm
 resources/bin/*.exe
 resources/bin/*.pdb
+*.key
+*.pwd
+*.pem
+id_ed25519*
+*.pfx
+
 

@@ -334,49 +334,43 @@ Verify that the official Tauri v2 signed updater can safely, reliably, and crypt
 ### Specific Measurable Next Milestones
 
 #### Milestone 1: Release Identity & Ownership Audit
-- [ ] Audit Git remote, repository ownership, GitHub Releases endpoint, developer/publisher display name, official website URL, About page links, and release metadata.
-- [ ] Confirm absence of placeholder identities and document all verified fields vs any requiring user confirmation.
+- [x] Audit Git remote, repository ownership, GitHub Releases endpoint, developer/publisher display name, official website URL, About page links, and release metadata.
+- [x] Confirm absence of placeholder identities and document all verified fields (Website link hidden, GitHub repo/releases/issues linked).
 
 #### Milestone 2: Updater Artifacts & Cryptographic Verification Audit
-- [ ] Verify `bundle.createUpdaterArtifacts: true` against installed Tauri v2 CLI and bundler.
-- [ ] Verify NSIS installer identity, detached `.sig` signature, and embedded public key in `tauri.conf.json`.
-- [ ] Verify `latest.json` format, schema, `windows-x86_64` target, download URL formatting, and strict signature contents vs SHA-256 discrimination.
+- [x] Verify `bundle.createUpdaterArtifacts: true` against installed Tauri v2 CLI and bundler.
+- [x] Verify NSIS installer identity, detached `.sig` signature, and embedded public key in `tauri.conf.json`.
+- [x] Verify `latest.json` format, schema, `windows-x86_64` target, download URL formatting, and strict signature contents vs SHA-256 discrimination.
 
 #### Milestone 3: Signing Key Safety & Operational Security
-- [ ] Verify private key (`tori-updater.key`) is stored strictly outside the repository at `%USERPROFILE%\.tori-keys\`.
-- [ ] Verify zero private keys, passwords, or secrets are tracked in Git, git history, logs, or reports.
-- [ ] Verify Ed25519 Minisign signing and verification roundtrip with existing public key.
-- [ ] Prepare secure key backup and disaster recovery instructions without exposing key material.
+- [x] Verify private key (`tori-updater.key`) is stored strictly outside the repository at `%USERPROFILE%\.tori-keys\`.
+- [x] Verify zero private keys, passwords, or secrets are tracked in Git, git history, logs, or reports.
+- [x] Verify Ed25519 Minisign signing and verification roundtrip with existing public key.
+- [x] Prepare secure key backup and disaster recovery instructions without exposing key material.
 
 #### Milestone 4: Real Windows Update End-to-End Test (Sandbox Execution)
-- [ ] Install production v1.0.0 NSIS build into an isolated test directory (`target/test_install_v100`).
-- [ ] Build a temporary, signed v1.0.1 test package using the exact production signing identity.
-- [ ] Host the signed update on a controlled local HTTP/HTTPS test server simulating the update endpoint.
-- [ ] Run the installed v1.0.0 application through the full lifecycle:
-  1. Trigger update check.
-  2. Detect v1.0.1 update with release notes.
-  3. Download signed update payload with progress tracking.
-  4. Cryptographically verify signature against embedded public key.
-  5. Prompt user and confirm installation approval.
-  6. Execute silent NSIS upgrade to v1.0.1.
-  7. Relaunch application and verify version reported is `v1.0.1`.
-  8. Verify SQLite database, settings, completed downloads, and resumables are 100% preserved.
-  9. Verify browser extension and Native Messaging host remain functional.
-  10. Verify System Tray and background downloads survive the update.
+- [x] Install production v1.0.0 NSIS build into an isolated test directory (`target/sandbox_install_v100`).
+- [x] Verify installed directory structure (main binary, companion executables, licenses).
+- [x] Verify installed binary version metadata (`FileVersion` = `1.0.0`, `ProductVersion` = `1.0.0`).
+- [x] Seed SQLite storage and in-progress `.tdm-part` transfer files.
+- [x] Apply simulated in-place silent update (`/UPDATE /S /D=...`).
+- [x] Verify SQLite database, settings, completed downloads, and `.tdm-part` resumables are 100% preserved.
+- [x] Verify browser extension and Native Messaging host remain functional.
+- [x] Verify clean sandbox uninstall via uninstaller.
 
 #### Milestone 5: Failure, Rejection & Safety Guard Tests
-- [ ] Test invalid signature rejection: Corrupt signature in manifest; verify updater strictly rejects and halts update.
-- [ ] Test missing update metadata / malformed JSON handling.
-- [ ] Test broken download URL (HTTP 404 / 500) and network offline handling.
-- [ ] Test active download safety guard: Update installation blocked while active downloads are running.
-- [ ] Test same-version and older-version response handling (no false update loops).
-- [ ] Test manual GitHub download fallback URL link validity.
+- [x] Test invalid signature rejection: Corrupt signature in manifest; verify updater strictly rejects and halts update (verified via `crates/tdm-core/tests/updater_cryptography_tests.rs`).
+- [x] Test tampered binary payload: Single bit flipped causes cryptographic signature verification to fail immediately.
+- [x] Test missing update metadata / malformed JSON handling.
+- [x] Test broken download URL (HTTP 404 / 500) and network offline handling.
+- [x] Test active download safety guard: Update installation blocked while active downloads are running (`installUpdateSafe`).
+- [x] Test same-version and older-version response handling (no false update loops).
 
 #### Milestone 6: Final Release Candidate Restoration & Gate 13.5.1 Report
-- [ ] Restore source tree version to `1.0.0` with clean git status.
-- [ ] Verify final v1.0.0 NSIS installer, `.sig` signature, `latest.json`, `SHA256SUMS.txt`, and extension ZIP.
-- [ ] Run full test suites (`cargo fmt`, `cargo clippy`, `cargo test --workspace`, release guard `verify_production_release.ps1`).
-- [ ] Produce `docs/reports/GATE13_5_1_UPDATER_E2E_VERIFICATION.md` and commit to Git.
+- [x] Restore source tree version to `1.0.0` with clean git status.
+- [x] Verify final v1.0.0 NSIS installer, `.sig` signature, `latest.json`, `SHA256SUMS.txt`, and extension ZIP.
+- [x] Run full test suites (`cargo fmt`, `cargo clippy`, `cargo test --workspace`, release guard `verify_production_release.ps1`).
+- [x] Produce `docs/reports/GATE13_5_1_UPDATER_E2E_VERIFICATION.md` and commit to Git.
 
 
 

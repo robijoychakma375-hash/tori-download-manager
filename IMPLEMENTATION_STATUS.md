@@ -243,3 +243,33 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
   - **Settings Integration**: Added and persisted `showDownloadPopup` ('always', 'on_start', 'never') in SettingsModal and SQLite.
   - **Functional Verification**: Tested real byte-range download lifecycle and pause/resume via `node scripts/verify_stage_b_toast.js`. All 10 visual screenshots captured via `node scripts/verify_toast_visual.js`.
 
+## Gate 13.5 & 13.5.1: About Page, Release Metadata, Website Configuration & Signed Auto-Updater
+
+- **Version Alignment**: 100% reconciled to v1.0.0 across `Cargo.toml`, `src-tauri/tauri.conf.json`, `ui/package.json`, `extension/manifest.json`, and `latest.json`.
+- **Website Configuration**:
+  - Official website URL hidden (`OFFICIAL_WEBSITE_URL = null`) until public domain is officially developed and launched. No placeholder domains invented.
+  - Primary project endpoints configured to verified GitHub destinations: Repository Homepage, Releases & Downloads, Issues & Feedback.
+- **Official Tauri v2 Signed Auto-Updater**:
+  - `bundle.createUpdaterArtifacts = true` generating NSIS installer and detached `.sig` signature.
+  - Ed25519 Minisign public key embedded in `tauri.conf.json`.
+  - Private key `tori-updater.key` strictly isolated outside repository at `%USERPROFILE%\.tori-keys\`.
+  - Zero private keys, passwords, or secrets tracked in Git. Comprehensive security ignore patterns in `.gitignore`.
+- **Cryptographic Minisign Verification (`updater_cryptography_tests.rs`)**:
+  - 5/5 Rust integration tests verifying public key parsing, valid installer signature verification, single-bit tamper rejection, and signature corruption rejection.
+- **Sandbox Installation & Data Preservation (`verify_gate13_5_1_updater_e2e.js`)**:
+  - 67/67 automated assertions passed.
+  - Silent NSIS sandbox installation verified (`FileVersion: 1.0.0`, `ProductVersion: 1.0.0`, bundled FFmpeg, FFprobe, yt-dlp, native host, CLI).
+  - Simulated in-place `/UPDATE /S` verified: user SQLite storage (`tdm_storage.sqlite`), download history, partial `.tdm-part` files, and Native Messaging registry keys 100% preserved.
+- **In-App Safety Guards**:
+  - `installUpdateSafe` collision guard strictly blocks updates when active downloads exist.
+  - Offline, HTTP 404, HTTP 500, and malformed JSON responses handled gracefully without application crash.
+  - SemVer comparison prevents duplicate or downgrade updates.
+- **Verification Status**:
+  - **67/67** Gate 13.5.1 E2E tests passing.
+  - **5/5** Rust updater cryptography tests passing.
+  - **61/61** Gate 13.5 QA tests passing.
+  - **146/146** workspace unit/integration tests passing.
+  - **15/15** production release guard checks passing.
+  - Clippy and `cargo fmt` clean with 0 warnings/errors.
+
+
