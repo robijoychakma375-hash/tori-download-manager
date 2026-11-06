@@ -8,9 +8,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: tdm-cli <url> [output_dir]");
-        std::process::exit(1);
+    if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
+        println!("TORI Download Manager CLI v{}", env!("CARGO_PKG_VERSION"));
+        println!("Usage: tdm-cli <url> [output_dir]");
+        return Ok(());
     }
 
     let url = &args[1];
