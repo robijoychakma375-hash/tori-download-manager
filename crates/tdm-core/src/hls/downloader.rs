@@ -35,6 +35,7 @@ pub async fn download_hls_vod(
     // 1. Fetch initial playlist
     let mut req = client.get(&job.url).header(ACCEPT_ENCODING, "identity");
     req = crate::engine::referer::apply_referer(req, job.referer.as_deref(), &job.url);
+    req = crate::engine::user_agent::apply_user_agent(req, job.user_agent.as_deref());
     let raw_manifest = req
         .send()
         .await
@@ -67,6 +68,7 @@ pub async fn download_hls_vod(
                 job.referer.as_deref(),
                 &selected_variant.uri,
             );
+            req = crate::engine::user_agent::apply_user_agent(req, job.user_agent.as_deref());
             let variant_manifest = req
                 .send()
                 .await
@@ -99,6 +101,10 @@ pub async fn download_hls_vod(
                             a_req,
                             job.referer.as_deref(),
                             audio_uri,
+                        );
+                        a_req = crate::engine::user_agent::apply_user_agent(
+                            a_req,
+                            job.user_agent.as_deref(),
                         );
                         if let Ok(resp) = a_req.send().await {
                             if let Ok(txt) = resp.text().await {
@@ -176,6 +182,7 @@ pub async fn download_hls_vod(
                 req = req.header(RANGE, format!("bytes={}-{}", start, start + len - 1));
             }
             req = crate::engine::referer::apply_referer(req, job.referer.as_deref(), &init_seg.uri);
+            req = crate::engine::user_agent::apply_user_agent(req, job.user_agent.as_deref());
             let bytes = req
                 .send()
                 .await
@@ -290,6 +297,10 @@ pub async fn download_hls_vod(
                             job.referer.as_deref(),
                             &k.uri,
                         );
+                        k_req = crate::engine::user_agent::apply_user_agent(
+                            k_req,
+                            job.user_agent.as_deref(),
+                        );
                         let resp = k_req.send().await.map_err(EngineError::Http)?;
                         let bytes = resp.bytes().await.map_err(EngineError::Http)?;
                         if bytes.len() != 16 {
@@ -322,6 +333,7 @@ pub async fn download_hls_vod(
             req = req.header(RANGE, format!("bytes={}-{}", offset, offset + len - 1));
         }
         req = crate::engine::referer::apply_referer(req, job.referer.as_deref(), &seg.uri);
+        req = crate::engine::user_agent::apply_user_agent(req, job.user_agent.as_deref());
 
         let resp = req.send().await.map_err(EngineError::Http)?;
         let status = resp.status();

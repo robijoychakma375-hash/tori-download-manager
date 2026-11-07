@@ -8,6 +8,7 @@ pub mod planner;
 pub mod probe;
 pub mod referer;
 pub mod thumbnail;
+pub mod user_agent;
 pub mod worker;
 pub mod writer;
 
@@ -22,4 +23,5 @@ pub use thumbnail::{
     backfill_missing_thumbnails, ensure_cached_thumbnail, extract_thumbnail_from_video,
     get_thumbnail_cache_dir,
 };
+pub use user_agent::{apply_user_agent, sanitize_and_validate_user_agent, DEFAULT_USER_AGENT};
 pub use writer::PartFileWriter;

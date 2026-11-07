@@ -312,6 +312,7 @@ async fn test_gate12_5_real_public_facebook_video_extraction_download_and_ffprob
         chunk_count: 1,
         thumbnail_url: None,
         referer: None,
+        user_agent: None,
         error_message: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
@@ -700,6 +701,7 @@ async fn test_gate12_5_2_thumbnail_caching_and_ffmpeg_backfill() {
                     chunk_count: 1,
                     thumbnail_url: None, // Missing thumbnail
                     referer: None,
+                    user_agent: None,
                     error_message: None,
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),

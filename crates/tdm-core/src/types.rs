@@ -170,6 +170,8 @@ pub struct DownloadJob {
     pub thumbnail_url: Option<String>,
     #[serde(default)]
     pub referer: Option<String>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -18,6 +18,8 @@ pub struct NativeMessage {
     pub job_id: Option<String>,
     #[serde(default)]
     pub referer: Option<String>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

@@ -67,6 +67,7 @@ async fn download_segment_with_retry(
     out_path: &Path,
     cancel_token: &CancellationToken,
     referer: Option<&str>,
+    user_agent: Option<&str>,
 ) -> Result<u64> {
     let max_retries = 3;
     let mut attempt = 0;
@@ -81,6 +82,7 @@ async fn download_segment_with_retry(
             req = req.header(RANGE, format!("bytes={}-{}", start, end));
         }
         req = crate::engine::referer::apply_referer(req, referer, &seg.uri);
+        req = crate::engine::user_agent::apply_user_agent(req, user_agent);
 
         match req.send().await {
             Ok(resp) => {
@@ -144,6 +146,7 @@ pub async fn download_dash_vod(
     // 1. Fetch MPD manifest
     let mut req = client.get(&job.url).header(ACCEPT_ENCODING, "identity");
     req = crate::engine::referer::apply_referer(req, job.referer.as_deref(), &job.url);
+    req = crate::engine::user_agent::apply_user_agent(req, job.user_agent.as_deref());
     let raw_manifest = req
         .send()
         .await
@@ -297,6 +300,7 @@ pub async fn download_dash_vod(
                 &p,
                 cancel_token,
                 job.referer.as_deref(),
+                job.user_agent.as_deref(),
             )
             .await?;
             total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
@@ -332,6 +336,7 @@ pub async fn download_dash_vod(
             &seg_path,
             cancel_token,
             job.referer.as_deref(),
+            job.user_agent.as_deref(),
         )
         .await?;
         total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
@@ -362,6 +367,7 @@ pub async fn download_dash_vod(
                     &p,
                     cancel_token,
                     job.referer.as_deref(),
+                    job.user_agent.as_deref(),
                 )
                 .await?;
                 total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
@@ -394,6 +400,7 @@ pub async fn download_dash_vod(
                 &a_path,
                 cancel_token,
                 job.referer.as_deref(),
+                job.user_agent.as_deref(),
             )
             .await?;
             total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);

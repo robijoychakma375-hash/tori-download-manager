@@ -295,5 +295,69 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
   - Live in-app update unverified until repository exists and hosts public release assets.
   - Local cryptographic verification, tamper rejection, active download guards, and offline resilience 100% verified.
 
+## Gate 14.4.1: IPC Origin Validation Security Fix
+
+- **Status**: **VERIFIED**
+- **Changes**:
+  - Replaced unsafe origin checking in `crates/tdm-native-host/src/server.rs` with strict origin validation `is_allowed_origin()`.
+  - Enforced exact scheme matching (`chrome-extension://`, `edge-extension://`, `tauri://`, `http://tauri.localhost`).
+  - Required non-empty extension ID list; rejected unauthorized extension IDs, HTTP/HTTPS web origins, spoofed sub-domains, and wildcards.
+  - Test suites: `cargo test -p tdm-native-host --lib server::tests` (9 tests passed), `server_tests.rs` (7 tests passed).
+
+## Gate 14.4.2: MV3 Media Candidate Persistence Fix
+
+- **Status**: **VERIFIED**
+- **Changes**:
+  - Implemented session persistence in `extension/background.js` using `chrome.storage.session` to retain detected media candidate metadata across Chrome MV3 service worker restarts.
+  - Tab navigation and tab closure lifecycles cleanly clear stored metadata.
+  - Test suite: `node scripts/verify_gate14_4_2_mv3_persistence.js` (31 tests passed).
+
+## Gate 14.4.3: HLS/DASH Manifest Eviction Protection
+
+- **Status**: **VERIFIED**
+- **Changes**:
+  - Implemented priority-aware candidate eviction in `extension/background.js`: streaming manifests (`.m3u8`, `.mpd`) receive priority protection against segment inundation within the 50-item cache.
+  - Test suite: `node scripts/verify_gate14_4_3_manifest_protection.js` (35 tests passed).
+
+## Gate 14.4.4: Intelligent Media Segment Classification
+
+- **Status**: **VERIFIED**
+- **Changes**:
+  - Added safe segment classification (`is_segment`) in `extension/background.js` and `extension/content.js`.
+  - Filtered out raw TS, M4S, and chunk fragments from the popup presentation UI while preserving them for download assembly and keeping standalone media files available.
+  - Test suite: `node scripts/verify_gate14_4_4_segment_classification.js` (40 tests passed).
+
+## Gate 14.4.5: Secure Per-Download Referer Support
+
+- **Status**: **VERIFIED**
+- **Changes**:
+  - Added optional, secure per-download Referer propagation across Extension → IPC → Rust Download Engine.
+  - Enforced strict-origin-when-cross-origin, query token/fragment stripping, credential sanitization, CRLF injection defense, and downgrade protection.
+  - Test suite: `node scripts/verify_gate14_4_5_referer_support.js` (12 tests passed), `cargo test -p tdm-native-host --test referer_tests` (1 test passed).
+
+## Gate 14.4.6: Secure Per-Download User-Agent Support
+
+- **Status**: **VERIFIED**
+- **Feature**: Optional browser User-Agent header propagation from Browser Extension through IPC to Rust Download Engine (HTTP probe, chunk/stream downloads, HLS manifests/segments, DASH manifests/segments).
+- **Core Verification Commands**:
+  - Rust unit tests: `cargo test -p tdm-core --lib user_agent` (6 passed, 0 failed).
+  - Rust integration tests: `cargo test -p tdm-native-host --test user_agent_tests` (1 passed, containing 9 e2e download verification scenarios).
+  - All native-host tests: `cargo test -p tdm-native-host` (25 passed, 0 failed).
+  - JS QA harness: `node scripts/verify_gate14_4_6_user_agent_support.js` (15 passed, 0 failed).
+  - Clippy: `cargo clippy --workspace --all-targets -- -D warnings` (clean, 0 warnings).
+  - Formatting: `cargo fmt --all -- --check` (clean, 0 diffs).
+  - Frontend build: `npm --prefix ui run build` (built cleanly in 418ms).
+- **Observed Results**:
+  - Valid browser User-Agent transmitted on every outgoing request when provided.
+  - Reqwest default User-Agent (`DEFAULT_USER_AGENT`) safely preserved when User-Agent omitted.
+  - Strict validation: CRLF (`\r`, `\n`), ASCII control characters (0-31, 127), and lengths > 1024 chars rejected.
+  - Isolated concurrency: Concurrent downloads with different User-Agents do not cross-contaminate.
+  - HLS & DASH: Master playlists, media playlists, TS segments, MPD manifests, init segments, and M4S media segments receive matching User-Agent.
+  - Referer preservation: Both Referer and User-Agent propagate simultaneously without mutual interference.
+- **Known Limitations**:
+  - Does not implement cookie/auth token interception (explicitly out of scope per security guidelines).
+  - Does not bypass anti-bot challenges or decrypt DRM (strictly prohibited per AGENTS.md rules).
+
+
 
 

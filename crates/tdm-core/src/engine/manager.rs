@@ -351,14 +351,30 @@ impl DownloadManager {
         priority: Priority,
         referer: Option<String>,
     ) -> Result<DownloadJob> {
+        self.create_download_with_all_options(url, destination_dir, priority, referer, None)
+            .await
+    }
+
+    pub async fn create_download_with_all_options<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        destination_dir: P,
+        priority: Priority,
+        referer: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<DownloadJob> {
         let clean_referer = referer
             .as_deref()
             .and_then(|r| crate::engine::referer::sanitize_and_validate_referer(r, url));
+        let clean_user_agent = user_agent
+            .as_deref()
+            .and_then(crate::engine::user_agent::sanitize_and_validate_user_agent);
 
-        let probe = crate::engine::probe::probe_url_with_referer(
+        let probe = crate::engine::probe::probe_url_with_options(
             &self.client,
             url,
             clean_referer.as_deref(),
+            clean_user_agent.as_deref(),
         )
         .await?;
 
@@ -454,6 +470,7 @@ impl DownloadManager {
             updated_at: chrono::Utc::now(),
             thumbnail_url: extract_thumbnail_from_url(url),
             referer: clean_referer,
+            user_agent: clean_user_agent,
         };
 
         self.db.insert_job(&job)?;
@@ -500,9 +517,37 @@ impl DownloadManager {
         thumbnail_url: Option<String>,
         referer: Option<String>,
     ) -> Result<DownloadJob> {
+        self.create_managed_media_download_with_options(
+            url,
+            format_id,
+            filename,
+            destination_dir,
+            priority,
+            thumbnail_url,
+            referer,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_managed_media_download_with_options<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        format_id: &str,
+        filename: &str,
+        destination_dir: P,
+        priority: Priority,
+        thumbnail_url: Option<String>,
+        referer: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<DownloadJob> {
         let clean_referer = referer
             .as_deref()
             .and_then(|r| crate::engine::referer::sanitize_and_validate_referer(r, url));
+        let clean_user_agent = user_agent
+            .as_deref()
+            .and_then(crate::engine::user_agent::sanitize_and_validate_user_agent);
 
         let dir = destination_dir.as_ref();
         if !dir.exists() {
@@ -562,6 +607,7 @@ impl DownloadManager {
             updated_at: chrono::Utc::now(),
             thumbnail_url: thumb,
             referer: clean_referer,
+            user_agent: clean_user_agent,
         };
 
         self.db.insert_job(&job)?;
@@ -950,10 +996,11 @@ impl DownloadManager {
 
         if initial_written > 0 && job.is_resumable {
             // Re-probe to check ETag or Last-Modified match
-            if let Ok(probe) = crate::engine::probe::probe_url_with_referer(
+            if let Ok(probe) = crate::engine::probe::probe_url_with_options(
                 &client,
                 &job.url,
                 job.referer.as_deref(),
+                job.user_agent.as_deref(),
             )
             .await
             {
@@ -1084,6 +1131,7 @@ impl DownloadManager {
                 let etag_c = job.etag.clone();
                 let lm_c = job.last_modified.clone();
                 let referer_c = job.referer.clone();
+                let user_agent_c = job.user_agent.clone();
                 let writer_c = writer.clone();
                 let db_c = db.clone();
                 let cancel_c = cancel_token.clone();
@@ -1106,6 +1154,7 @@ impl DownloadManager {
                         Some(&limiter_c),
                         Some(max_retries),
                         referer_c.as_deref(),
+                        user_agent_c.as_deref(),
                         |written| {
                             counter_c.fetch_add(written, Ordering::Relaxed);
                         },
@@ -1188,6 +1237,7 @@ impl DownloadManager {
                         let etag_c = job.etag.clone();
                         let lm_c = job.last_modified.clone();
                         let referer_c = job.referer.clone();
+                        let user_agent_c = job.user_agent.clone();
                         let writer_c = writer.clone();
                         let db_c = db.clone();
                         let cancel_c = cancel_token.clone();
@@ -1210,6 +1260,7 @@ impl DownloadManager {
                                 Some(&limiter_c),
                                 Some(max_retries),
                                 referer_c.as_deref(),
+                                user_agent_c.as_deref(),
                                 |written| {
                                     counter_c.fetch_add(written, Ordering::Relaxed);
                                 },
@@ -1288,6 +1339,7 @@ impl DownloadManager {
                                     let etag_c = job.etag.clone();
                                     let lm_c = job.last_modified.clone();
                                     let referer_c = job.referer.clone();
+                                    let user_agent_c = job.user_agent.clone();
                                     let writer_c = writer.clone();
                                     let db_c = db.clone();
                                     let cancel_c = cancel_token.clone();
@@ -1310,6 +1362,7 @@ impl DownloadManager {
                                             Some(&limiter_c),
                                             Some(max_retries),
                                             referer_c.as_deref(),
+                                            user_agent_c.as_deref(),
                                             |written| {
                                                 counter_c.fetch_add(written, Ordering::Relaxed);
                                             },
@@ -1349,6 +1402,7 @@ impl DownloadManager {
                 Some(&rate_limiter),
                 Some(max_retries),
                 job.referer.as_deref(),
+                job.user_agent.as_deref(),
                 |written| {
                     counter.fetch_add(written, Ordering::Relaxed);
                 },

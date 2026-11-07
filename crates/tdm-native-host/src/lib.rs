@@ -316,8 +316,19 @@ pub async fn handle_message(
                 .as_deref()
                 .and_then(|r| tdm_core::sanitize_and_validate_referer(r, trimmed_url));
 
+            let clean_user_agent = msg
+                .user_agent
+                .as_deref()
+                .and_then(tdm_core::sanitize_and_validate_user_agent);
+
             match manager
-                .create_download_with_options(trimmed_url, &dest_dir, priority, clean_referer)
+                .create_download_with_all_options(
+                    trimmed_url,
+                    &dest_dir,
+                    priority,
+                    clean_referer,
+                    clean_user_agent,
+                )
                 .await
             {
                 Ok(job) => {

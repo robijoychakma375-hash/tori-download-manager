@@ -395,6 +395,7 @@ async fn test_matrix_live_udp_packet_recording() {
         updated_at: chrono::Utc::now(),
         thumbnail_url: None,
         referer: None,
+        user_agent: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -487,6 +488,7 @@ async fn test_matrix_live_tcp_mkv_recording() {
         updated_at: chrono::Utc::now(),
         thumbnail_url: None,
         referer: None,
+        user_agent: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -608,6 +610,7 @@ async fn test_matrix_live_hls_sliding_recording() {
         updated_at: chrono::Utc::now(),
         thumbnail_url: None,
         referer: None,
+        user_agent: None,
     };
     db.insert_job(&job).unwrap();
 

@@ -338,6 +338,28 @@ function deriveSafeReferer(pageUrl, targetUrl) {
   return pUrl.origin + pUrl.pathname;
 }
 
+/**
+ * Obtains and sanitizes the browser runtime's User-Agent string.
+ * Rejects CRLF, ASCII control characters, and lengths exceeding 1024 characters.
+ */
+function getSafeUserAgent(customUserAgent) {
+  let ua = null;
+  if (typeof customUserAgent === 'string' && customUserAgent.trim()) {
+    ua = customUserAgent.trim();
+  } else if (typeof navigator !== 'undefined' && navigator && navigator.userAgent) {
+    ua = navigator.userAgent.trim();
+  }
+
+  if (!ua || ua.length > 1024) return null;
+
+  for (let i = 0; i < ua.length; i++) {
+    const code = ua.charCodeAt(i);
+    if (code <= 31 || code === 127) return null;
+  }
+
+  return ua;
+}
+
 function normalizePlatformUrl(rawUrl) {
   if (!rawUrl) return { url: '', videoId: '', isSpecific: false, platform: 'unknown' };
   try {
@@ -1367,6 +1389,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const lower = rawUrl.toLowerCase();
     const sourcePageUrl = message.page_url || message.referer || sender.tab?.url;
     const safeReferer = deriveSafeReferer(sourcePageUrl, rawUrl);
+    const safeUserAgent = getSafeUserAgent(message.user_agent);
 
     if (lower.includes('watch.plex.tv') || lower.includes('plex.tv')) {
       sendResponse({
@@ -1387,6 +1410,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           destination: message.destination,
           priority: message.priority || 'normal',
           referer: safeReferer,
+          user_agent: safeUserAgent,
         }).then((httpRes) => {
           if (httpRes.ok && httpRes.data) {
             sendResponse(httpRes.data);
@@ -1431,6 +1455,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       priority: message.priority || 'normal',
       thumbnail_url: message.thumbnail_url || null,
       referer: safeReferer,
+      user_agent: safeUserAgent,
     }).then(async (httpRes) => {
       if (httpRes.ok && httpRes.data) {
         sendResponse(httpRes.data);
@@ -1448,6 +1473,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           destination: message.destination,
           priority: message.priority || 'normal',
           referer: safeReferer,
+          user_agent: safeUserAgent,
         });
         sendResponse(nmRes);
       }
@@ -1682,6 +1708,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const targetUrl = norm.url || rawUrl;
     const sourcePageUrl = message.page_url || message.referer || sender.tab?.url;
     const safeReferer = deriveSafeReferer(sourcePageUrl, targetUrl);
+    const safeUserAgent = getSafeUserAgent(message.user_agent);
 
     callDesktopApi('/api/v1/media/download', 'POST', {
       url: targetUrl,
@@ -1692,6 +1719,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       thumbnail_url: message.thumbnail_url || null,
       direct_stream_url: message.direct_stream_url || null,
       referer: safeReferer,
+      user_agent: safeUserAgent,
     }).then((httpRes) => {
       if (httpRes.ok && httpRes.data) {
         sendResponse(httpRes.data);

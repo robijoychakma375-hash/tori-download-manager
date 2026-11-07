@@ -1351,6 +1351,7 @@ function normalizePlatformUrl(rawUrl) {
                 correlation_id: correlationId,
                 page_url: window.location.href,
                 thumbnail_url: pageThumb,
+                user_agent: navigator.userAgent,
               }
             : {
                 action: 'START_DOWNLOAD',
@@ -1360,6 +1361,7 @@ function normalizePlatformUrl(rawUrl) {
                 correlation_id: correlationId,
                 page_url: window.location.href,
                 thumbnail_url: pageThumb,
+                user_agent: navigator.userAgent,
               };
 
           chrome.runtime.sendMessage(reqPayload, (res) => {
@@ -1420,6 +1422,7 @@ function normalizePlatformUrl(rawUrl) {
             correlation_id: correlationId,
             page_url: window.location.href,
             thumbnail_url: pageThumb,
+            user_agent: navigator.userAgent,
           }
         : {
             action: 'START_DOWNLOAD',
@@ -1429,6 +1432,7 @@ function normalizePlatformUrl(rawUrl) {
             correlation_id: correlationId,
             page_url: window.location.href,
             thumbnail_url: pageThumb,
+            user_agent: navigator.userAgent,
           };
 
       chrome.runtime.sendMessage(reqPayload, (res) => {

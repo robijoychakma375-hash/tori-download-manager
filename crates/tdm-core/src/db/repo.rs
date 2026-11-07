@@ -35,8 +35,8 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at, thumbnail_url, referer
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                created_at, updated_at, thumbnail_url, referer, user_agent
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 job.id,
                 job.url,
@@ -58,6 +58,7 @@ impl Database {
                 job.updated_at.to_rfc3339(),
                 job.thumbnail_url,
                 job.referer,
+                job.user_agent,
             ],
         )?;
         Ok(())
@@ -212,7 +213,7 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at, thumbnail_url, referer
+                created_at, updated_at, thumbnail_url, referer, user_agent
              FROM downloads WHERE id = ?1",
         )?;
 
@@ -251,6 +252,7 @@ impl Database {
                         .unwrap_or_else(|_| Utc::now()),
                     thumbnail_url: row.get(18).ok().flatten(),
                     referer: row.get(19).ok().flatten(),
+                    user_agent: row.get(20).ok().flatten(),
                 })
             })
             .optional()?;
@@ -265,7 +267,7 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at, thumbnail_url, referer
+                created_at, updated_at, thumbnail_url, referer, user_agent
              FROM downloads
              WHERE state = 'queued'
              ORDER BY
@@ -314,6 +316,7 @@ impl Database {
                         .unwrap_or_else(|_| chrono::Utc::now()),
                     thumbnail_url: row.get(18).ok().flatten(),
                     referer: row.get(19).ok().flatten(),
+                    user_agent: row.get(20).ok().flatten(),
                 })
             })
             .optional()?;
@@ -328,7 +331,7 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at, thumbnail_url, referer
+                created_at, updated_at, thumbnail_url, referer, user_agent
              FROM downloads
              ORDER BY created_at DESC",
         )?;
@@ -367,6 +370,7 @@ impl Database {
                     .unwrap_or_else(|_| Utc::now()),
                 thumbnail_url: row.get(18).ok().flatten(),
                 referer: row.get(19).ok().flatten(),
+                user_agent: row.get(20).ok().flatten(),
             })
         })?;
 

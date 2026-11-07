@@ -10,9 +10,10 @@ pub mod types;
 
 pub use db::Database;
 pub use engine::{
-    apply_referer, sanitize_and_validate_referer, sanitize_filename, AdaptiveConfig,
-    AdaptiveScheduler, ConcurrencyGovernor, DownloadEvent, DownloadManager, EventBus,
-    GovernorConfig, PartFileWriter, SplitPlan,
+    apply_referer, apply_user_agent, sanitize_and_validate_referer,
+    sanitize_and_validate_user_agent, sanitize_filename, AdaptiveConfig, AdaptiveScheduler,
+    ConcurrencyGovernor, DownloadEvent, DownloadManager, EventBus, GovernorConfig, PartFileWriter,
+    SplitPlan, DEFAULT_USER_AGENT,
 };
 pub use error::{EngineError, Result};
 pub use live::{detect_live_protocol, LiveProtocol, LiveRecordingOptions};

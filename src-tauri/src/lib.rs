@@ -41,6 +41,7 @@ pub fn run() {
                     priority: None,
                     job_id: None,
                     referer: None,
+                    user_agent: None,
                 };
                 let _ = tdm_native_host::ipc::forward_to_persistent_engine(&msg).await;
             });

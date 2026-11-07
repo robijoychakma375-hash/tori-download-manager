@@ -18,13 +18,22 @@ pub struct ProbeResult {
 }
 
 pub async fn probe_url(client: &Client, raw_url: &str) -> Result<ProbeResult> {
-    probe_url_with_referer(client, raw_url, None).await
+    probe_url_with_options(client, raw_url, None, None).await
 }
 
 pub async fn probe_url_with_referer(
     client: &Client,
     raw_url: &str,
     referer: Option<&str>,
+) -> Result<ProbeResult> {
+    probe_url_with_options(client, raw_url, referer, None).await
+}
+
+pub async fn probe_url_with_options(
+    client: &Client,
+    raw_url: &str,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
 ) -> Result<ProbeResult> {
     let trimmed = raw_url.trim();
 
@@ -125,6 +134,7 @@ pub async fn probe_url_with_referer(
     // Attempt 1: HEAD request
     let mut head_req = client.head(raw_url).header(ACCEPT_ENCODING, "identity");
     head_req = crate::engine::referer::apply_referer(head_req, referer, raw_url);
+    head_req = crate::engine::user_agent::apply_user_agent(head_req, user_agent);
     let head_response = head_req.send().await;
 
     let mut can_use_head = false;
@@ -188,6 +198,7 @@ pub async fn probe_url_with_referer(
             .header(RANGE, "bytes=0-0")
             .header(ACCEPT_ENCODING, "identity");
         req = crate::engine::referer::apply_referer(req, referer, probe_target_url);
+        req = crate::engine::user_agent::apply_user_agent(req, user_agent);
 
         match req.send().await {
             Ok(resp)

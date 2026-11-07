@@ -606,6 +606,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             correlation_id: correlationId,
             page_url: tab.url,
             thumbnail_url: meta.thumbnail_url || null,
+            user_agent: navigator.userAgent,
           },
           (dlRes) => {
             b.disabled = false;
@@ -668,6 +669,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               priority: 'high',
               page_url: currentUrl,
               thumbnail_url: target.thumbnail_url || null,
+              user_agent: navigator.userAgent,
             }
           : {
               action: 'START_DOWNLOAD',
@@ -676,6 +678,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               priority: 'high',
               page_url: currentUrl,
               thumbnail_url: target.thumbnail_url || null,
+              user_agent: navigator.userAgent,
             };
 
         chrome.runtime.sendMessage(
