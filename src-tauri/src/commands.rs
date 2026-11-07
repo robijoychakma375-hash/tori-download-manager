@@ -43,6 +43,7 @@ pub async fn create_download(
     url: String,
     destination: Option<String>,
     priority: Option<String>,
+    referer: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<DownloadJob, String> {
     let dest_dir = state
@@ -54,23 +55,28 @@ pub async fn create_download(
         None => tdm_core::Priority::Normal,
     };
 
+    let clean_referer = referer
+        .as_deref()
+        .and_then(|r| tdm_core::sanitize_and_validate_referer(r, &url));
+
     let job = if is_media_portal_url(&url) {
         state
             .manager
-            .create_managed_media_download(
+            .create_managed_media_download_with_referer(
                 &url,
                 "best",
                 "media_download.mp4",
                 &dest_dir,
                 prio,
                 None,
+                clean_referer,
             )
             .await
             .map_err(|e| e.to_string())?
     } else {
         state
             .manager
-            .create_download_with_priority(&url, &dest_dir, prio)
+            .create_download_with_options(&url, &dest_dir, prio, clean_referer)
             .await
             .map_err(|e| e.to_string())?
     };

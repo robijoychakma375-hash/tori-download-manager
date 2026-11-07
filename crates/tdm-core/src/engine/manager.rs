@@ -17,7 +17,7 @@ use crate::engine::events::{DownloadEvent, EventBus};
 use crate::engine::governor::{ConcurrencyGovernor, GovernorConfig};
 use crate::engine::limiter::BandwidthLimiter;
 use crate::engine::planner::plan_chunks;
-use crate::engine::probe::{probe_url, sanitize_filename};
+use crate::engine::probe::sanitize_filename;
 use crate::engine::worker::{download_chunk_with_options, download_stream_with_options};
 use crate::engine::writer::PartFileWriter;
 use crate::error::{EngineError, Result};
@@ -340,7 +340,27 @@ impl DownloadManager {
         destination_dir: P,
         priority: Priority,
     ) -> Result<DownloadJob> {
-        let probe = probe_url(&self.client, url).await?;
+        self.create_download_with_options(url, destination_dir, priority, None)
+            .await
+    }
+
+    pub async fn create_download_with_options<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        destination_dir: P,
+        priority: Priority,
+        referer: Option<String>,
+    ) -> Result<DownloadJob> {
+        let clean_referer = referer
+            .as_deref()
+            .and_then(|r| crate::engine::referer::sanitize_and_validate_referer(r, url));
+
+        let probe = crate::engine::probe::probe_url_with_referer(
+            &self.client,
+            url,
+            clean_referer.as_deref(),
+        )
+        .await?;
 
         let dir = destination_dir.as_ref();
         if !dir.exists() {
@@ -433,6 +453,7 @@ impl DownloadManager {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             thumbnail_url: extract_thumbnail_from_url(url),
+            referer: clean_referer,
         };
 
         self.db.insert_job(&job)?;
@@ -456,6 +477,33 @@ impl DownloadManager {
         priority: Priority,
         thumbnail_url: Option<String>,
     ) -> Result<DownloadJob> {
+        self.create_managed_media_download_with_referer(
+            url,
+            format_id,
+            filename,
+            destination_dir,
+            priority,
+            thumbnail_url,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_managed_media_download_with_referer<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        format_id: &str,
+        filename: &str,
+        destination_dir: P,
+        priority: Priority,
+        thumbnail_url: Option<String>,
+        referer: Option<String>,
+    ) -> Result<DownloadJob> {
+        let clean_referer = referer
+            .as_deref()
+            .and_then(|r| crate::engine::referer::sanitize_and_validate_referer(r, url));
+
         let dir = destination_dir.as_ref();
         if !dir.exists() {
             fs::create_dir_all(dir)?;
@@ -513,6 +561,7 @@ impl DownloadManager {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             thumbnail_url: thumb,
+            referer: clean_referer,
         };
 
         self.db.insert_job(&job)?;
@@ -901,7 +950,13 @@ impl DownloadManager {
 
         if initial_written > 0 && job.is_resumable {
             // Re-probe to check ETag or Last-Modified match
-            if let Ok(probe) = probe_url(&client, &job.url).await {
+            if let Ok(probe) = crate::engine::probe::probe_url_with_referer(
+                &client,
+                &job.url,
+                job.referer.as_deref(),
+            )
+            .await
+            {
                 let mut etag_changed = false;
                 if let (Some(expected_etag), Some(new_etag)) = (&job.etag, &probe.etag) {
                     if expected_etag != new_etag {
@@ -1028,6 +1083,7 @@ impl DownloadManager {
                 let url_c = job.resolved_url.clone().unwrap_or_else(|| job.url.clone());
                 let etag_c = job.etag.clone();
                 let lm_c = job.last_modified.clone();
+                let referer_c = job.referer.clone();
                 let writer_c = writer.clone();
                 let db_c = db.clone();
                 let cancel_c = cancel_token.clone();
@@ -1049,6 +1105,7 @@ impl DownloadManager {
                         Some(progress),
                         Some(&limiter_c),
                         Some(max_retries),
+                        referer_c.as_deref(),
                         |written| {
                             counter_c.fetch_add(written, Ordering::Relaxed);
                         },
@@ -1130,6 +1187,7 @@ impl DownloadManager {
                         let url_c = job.resolved_url.clone().unwrap_or_else(|| job.url.clone());
                         let etag_c = job.etag.clone();
                         let lm_c = job.last_modified.clone();
+                        let referer_c = job.referer.clone();
                         let writer_c = writer.clone();
                         let db_c = db.clone();
                         let cancel_c = cancel_token.clone();
@@ -1151,6 +1209,7 @@ impl DownloadManager {
                                 Some(progress),
                                 Some(&limiter_c),
                                 Some(max_retries),
+                                referer_c.as_deref(),
                                 |written| {
                                     counter_c.fetch_add(written, Ordering::Relaxed);
                                 },
@@ -1228,6 +1287,7 @@ impl DownloadManager {
                                         job.resolved_url.clone().unwrap_or_else(|| job.url.clone());
                                     let etag_c = job.etag.clone();
                                     let lm_c = job.last_modified.clone();
+                                    let referer_c = job.referer.clone();
                                     let writer_c = writer.clone();
                                     let db_c = db.clone();
                                     let cancel_c = cancel_token.clone();
@@ -1249,6 +1309,7 @@ impl DownloadManager {
                                             Some(progress),
                                             Some(&limiter_c),
                                             Some(max_retries),
+                                            referer_c.as_deref(),
                                             |written| {
                                                 counter_c.fetch_add(written, Ordering::Relaxed);
                                             },
@@ -1287,6 +1348,7 @@ impl DownloadManager {
                 &cancel_token,
                 Some(&rate_limiter),
                 Some(max_retries),
+                job.referer.as_deref(),
                 |written| {
                     counter.fetch_add(written, Ordering::Relaxed);
                 },

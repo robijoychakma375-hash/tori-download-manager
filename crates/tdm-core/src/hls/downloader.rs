@@ -33,9 +33,9 @@ pub async fn download_hls_vod(
     tracing::info!("[HLS Downloader] Starting HLS VOD download for {}", job.url);
 
     // 1. Fetch initial playlist
-    let raw_manifest = client
-        .get(&job.url)
-        .header(ACCEPT_ENCODING, "identity")
+    let mut req = client.get(&job.url).header(ACCEPT_ENCODING, "identity");
+    req = crate::engine::referer::apply_referer(req, job.referer.as_deref(), &job.url);
+    let raw_manifest = req
         .send()
         .await
         .map_err(EngineError::Http)?
@@ -59,9 +59,15 @@ pub async fn download_hls_vod(
                 selected_variant.uri
             );
 
-            let variant_manifest = client
+            let mut req = client
                 .get(&selected_variant.uri)
-                .header(ACCEPT_ENCODING, "identity")
+                .header(ACCEPT_ENCODING, "identity");
+            req = crate::engine::referer::apply_referer(
+                req,
+                job.referer.as_deref(),
+                &selected_variant.uri,
+            );
+            let variant_manifest = req
                 .send()
                 .await
                 .map_err(EngineError::Http)?
@@ -88,7 +94,13 @@ pub async fn download_hls_vod(
                     .find(|r| &r.group_id == group_id && r.uri.is_some())
                 {
                     if let Some(ref audio_uri) = rendition.uri {
-                        if let Ok(resp) = client.get(audio_uri).send().await {
+                        let mut a_req = client.get(audio_uri);
+                        a_req = crate::engine::referer::apply_referer(
+                            a_req,
+                            job.referer.as_deref(),
+                            audio_uri,
+                        );
+                        if let Ok(resp) = a_req.send().await {
                             if let Ok(txt) = resp.text().await {
                                 if let Ok(ParsedPlaylist::Media(am)) =
                                     parse_playlist(&txt, audio_uri)
@@ -163,6 +175,7 @@ pub async fn download_hls_vod(
                 let start = offset.unwrap_or(0);
                 req = req.header(RANGE, format!("bytes={}-{}", start, start + len - 1));
             }
+            req = crate::engine::referer::apply_referer(req, job.referer.as_deref(), &init_seg.uri);
             let bytes = req
                 .send()
                 .await
@@ -271,7 +284,13 @@ pub async fn download_hls_vod(
                 let key_bytes = match key_cache.get(&k.uri) {
                     Some(kb) => *kb,
                     None => {
-                        let resp = client.get(&k.uri).send().await.map_err(EngineError::Http)?;
+                        let mut k_req = client.get(&k.uri);
+                        k_req = crate::engine::referer::apply_referer(
+                            k_req,
+                            job.referer.as_deref(),
+                            &k.uri,
+                        );
+                        let resp = k_req.send().await.map_err(EngineError::Http)?;
                         let bytes = resp.bytes().await.map_err(EngineError::Http)?;
                         if bytes.len() != 16 {
                             return Err(EngineError::Other(format!(
@@ -302,6 +321,7 @@ pub async fn download_hls_vod(
             let offset = opt_offset.unwrap_or(0);
             req = req.header(RANGE, format!("bytes={}-{}", offset, offset + len - 1));
         }
+        req = crate::engine::referer::apply_referer(req, job.referer.as_deref(), &seg.uri);
 
         let resp = req.send().await.map_err(EngineError::Http)?;
         let status = resp.status();

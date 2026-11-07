@@ -53,6 +53,7 @@ where
         progress_atomic,
         None,
         None,
+        None,
         on_bytes_written,
     )
     .await
@@ -72,6 +73,7 @@ pub async fn download_chunk_with_options<F>(
     progress_atomic: Option<Arc<AtomicU64>>,
     limiter: Option<&Arc<crate::engine::limiter::BandwidthLimiter>>,
     max_retries: Option<u32>,
+    referer: Option<&str>,
     mut on_bytes_written: F,
 ) -> Result<()>
 where
@@ -107,6 +109,7 @@ where
             .get(url)
             .header(RANGE, &range_header_val)
             .header(ACCEPT_ENCODING, "identity");
+        req = crate::engine::referer::apply_referer(req, referer, url);
 
         // Standards-compliant If-Range: strong ETag or Last-Modified
         if let Some(tag) = etag {
@@ -338,6 +341,7 @@ where
         cancel_token,
         None,
         None,
+        None,
         on_bytes_written,
     )
     .await
@@ -353,6 +357,7 @@ pub async fn download_stream_with_options<F>(
     cancel_token: &CancellationToken,
     limiter: Option<&Arc<crate::engine::limiter::BandwidthLimiter>>,
     max_retries: Option<u32>,
+    referer: Option<&str>,
     mut on_bytes_written: F,
 ) -> Result<u64>
 where
@@ -374,6 +379,7 @@ where
         if total_written > 0 {
             req = req.header(RANGE, format!("bytes={}-", total_written));
         }
+        req = crate::engine::referer::apply_referer(req, referer, url);
 
         let resp = match req.send().await {
             Ok(r) => r,

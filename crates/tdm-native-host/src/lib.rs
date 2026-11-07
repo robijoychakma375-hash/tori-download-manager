@@ -311,8 +311,13 @@ pub async fn handle_message(
                 _ => Priority::Normal,
             };
 
+            let clean_referer = msg
+                .referer
+                .as_deref()
+                .and_then(|r| tdm_core::sanitize_and_validate_referer(r, trimmed_url));
+
             match manager
-                .create_download_with_priority(trimmed_url, &dest_dir, priority)
+                .create_download_with_options(trimmed_url, &dest_dir, priority, clean_referer)
                 .await
             {
                 Ok(job) => {

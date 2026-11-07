@@ -168,6 +168,8 @@ pub struct DownloadJob {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub thumbnail_url: Option<String>,
+    #[serde(default)]
+    pub referer: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

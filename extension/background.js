@@ -292,6 +292,52 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
+/**
+ * Derives a sanitized, policy-compliant Referer URL according to W3C strict-origin-when-cross-origin.
+ * Strips credentials, fragment, and query parameters to prevent token/session leakage.
+ * Rejects non-HTTP schemes and HTTPS->HTTP downgrades.
+ */
+function deriveSafeReferer(pageUrl, targetUrl) {
+  if (!pageUrl || typeof pageUrl !== 'string') return null;
+  const pTrim = pageUrl.trim();
+  if (!pTrim || pTrim.length > 4096) return null;
+
+  // Strict check: no control characters or CRLF
+  for (let i = 0; i < pTrim.length; i++) {
+    const code = pTrim.charCodeAt(i);
+    if (code <= 31 || code === 127) return null;
+  }
+
+  let pUrl, tUrl;
+  try {
+    pUrl = new URL(pTrim);
+  } catch {
+    return null;
+  }
+
+  if (pUrl.protocol !== 'http:' && pUrl.protocol !== 'https:') {
+    return null;
+  }
+
+  if (targetUrl && typeof targetUrl === 'string') {
+    try {
+      tUrl = new URL(targetUrl.trim());
+      // Strict downgrade protection: HTTPS -> HTTP emits no referer
+      if (pUrl.protocol === 'https:' && tUrl.protocol === 'http:') {
+        return null;
+      }
+      // Strict cross-origin: if origins differ, emit origin only
+      if (pUrl.origin !== tUrl.origin) {
+        return pUrl.origin + '/';
+      }
+    } catch {
+      return pUrl.origin + '/';
+    }
+  }
+
+  return pUrl.origin + pUrl.pathname;
+}
+
 function normalizePlatformUrl(rawUrl) {
   if (!rawUrl) return { url: '', videoId: '', isSpecific: false, platform: 'unknown' };
   try {
@@ -1319,6 +1365,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'START_DOWNLOAD') {
     const rawUrl = (message.url || '').trim();
     const lower = rawUrl.toLowerCase();
+    const sourcePageUrl = message.page_url || message.referer || sender.tab?.url;
+    const safeReferer = deriveSafeReferer(sourcePageUrl, rawUrl);
 
     if (lower.includes('watch.plex.tv') || lower.includes('plex.tv')) {
       sendResponse({
@@ -1338,6 +1386,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           filename: message.filename,
           destination: message.destination,
           priority: message.priority || 'normal',
+          referer: safeReferer,
         }).then((httpRes) => {
           if (httpRes.ok && httpRes.data) {
             sendResponse(httpRes.data);
@@ -1381,6 +1430,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       destination: message.destination,
       priority: message.priority || 'normal',
       thumbnail_url: message.thumbnail_url || null,
+      referer: safeReferer,
     }).then(async (httpRes) => {
       if (httpRes.ok && httpRes.data) {
         sendResponse(httpRes.data);
@@ -1397,6 +1447,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           filename: message.filename,
           destination: message.destination,
           priority: message.priority || 'normal',
+          referer: safeReferer,
         });
         sendResponse(nmRes);
       }
@@ -1629,6 +1680,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     const norm = normalizePlatformUrl(rawUrl);
     const targetUrl = norm.url || rawUrl;
+    const sourcePageUrl = message.page_url || message.referer || sender.tab?.url;
+    const safeReferer = deriveSafeReferer(sourcePageUrl, targetUrl);
 
     callDesktopApi('/api/v1/media/download', 'POST', {
       url: targetUrl,
@@ -1638,6 +1691,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       priority: message.priority || 'normal',
       thumbnail_url: message.thumbnail_url || null,
       direct_stream_url: message.direct_stream_url || null,
+      referer: safeReferer,
     }).then((httpRes) => {
       if (httpRes.ok && httpRes.data) {
         sendResponse(httpRes.data);

@@ -604,6 +604,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             filename: safeFilename,
             priority: 'high',
             correlation_id: correlationId,
+            page_url: tab.url,
             thumbnail_url: meta.thumbnail_url || null,
           },
           (dlRes) => {

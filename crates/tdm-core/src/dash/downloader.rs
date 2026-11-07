@@ -66,6 +66,7 @@ async fn download_segment_with_retry(
     seg: &ResolvedDashSegment,
     out_path: &Path,
     cancel_token: &CancellationToken,
+    referer: Option<&str>,
 ) -> Result<u64> {
     let max_retries = 3;
     let mut attempt = 0;
@@ -79,6 +80,7 @@ async fn download_segment_with_retry(
         if let Some((start, end)) = seg.byterange {
             req = req.header(RANGE, format!("bytes={}-{}", start, end));
         }
+        req = crate::engine::referer::apply_referer(req, referer, &seg.uri);
 
         match req.send().await {
             Ok(resp) => {
@@ -140,9 +142,9 @@ pub async fn download_dash_vod(
     );
 
     // 1. Fetch MPD manifest
-    let raw_manifest = client
-        .get(&job.url)
-        .header(ACCEPT_ENCODING, "identity")
+    let mut req = client.get(&job.url).header(ACCEPT_ENCODING, "identity");
+    req = crate::engine::referer::apply_referer(req, job.referer.as_deref(), &job.url);
+    let raw_manifest = req
         .send()
         .await
         .map_err(EngineError::Http)?
@@ -289,7 +291,14 @@ pub async fn download_dash_vod(
 
         if !p.exists() || !validate_dash_segment(&p, exp_len, is_webm) {
             let _permit = governor.acquire_permit(&host);
-            let n = download_segment_with_retry(client, init_seg, &p, cancel_token).await?;
+            let n = download_segment_with_retry(
+                client,
+                init_seg,
+                &p,
+                cancel_token,
+                job.referer.as_deref(),
+            )
+            .await?;
             total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
         }
         video_init_path = Some(p);
@@ -317,7 +326,14 @@ pub async fn download_dash_vod(
         }
 
         let _permit = governor.acquire_permit(&host);
-        let n = download_segment_with_retry(client, seg, &seg_path, cancel_token).await?;
+        let n = download_segment_with_retry(
+            client,
+            seg,
+            &seg_path,
+            cancel_token,
+            job.referer.as_deref(),
+        )
+        .await?;
         total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
         completed_segments_count.fetch_add(1, Ordering::Relaxed);
 
@@ -340,7 +356,14 @@ pub async fn download_dash_vod(
 
             if !p.exists() || !validate_dash_segment(&p, exp_len, is_audio_webm) {
                 let _permit = governor.acquire_permit(&host);
-                let n = download_segment_with_retry(client, init_seg, &p, cancel_token).await?;
+                let n = download_segment_with_retry(
+                    client,
+                    init_seg,
+                    &p,
+                    cancel_token,
+                    job.referer.as_deref(),
+                )
+                .await?;
                 total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
             }
             audio_init_path = Some(p);
@@ -365,7 +388,14 @@ pub async fn download_dash_vod(
             }
 
             let _permit = governor.acquire_permit(&host);
-            let n = download_segment_with_retry(client, seg, &a_path, cancel_token).await?;
+            let n = download_segment_with_retry(
+                client,
+                seg,
+                &a_path,
+                cancel_token,
+                job.referer.as_deref(),
+            )
+            .await?;
             total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
             completed_segments_count.fetch_add(1, Ordering::Relaxed);
 

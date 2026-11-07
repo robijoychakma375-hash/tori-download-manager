@@ -18,6 +18,14 @@ pub struct ProbeResult {
 }
 
 pub async fn probe_url(client: &Client, raw_url: &str) -> Result<ProbeResult> {
+    probe_url_with_referer(client, raw_url, None).await
+}
+
+pub async fn probe_url_with_referer(
+    client: &Client,
+    raw_url: &str,
+    referer: Option<&str>,
+) -> Result<ProbeResult> {
     let trimmed = raw_url.trim();
 
     // Magnet links
@@ -115,11 +123,9 @@ pub async fn probe_url(client: &Client, raw_url: &str) -> Result<ProbeResult> {
     }
 
     // Attempt 1: HEAD request
-    let head_response = client
-        .head(raw_url)
-        .header(ACCEPT_ENCODING, "identity")
-        .send()
-        .await;
+    let mut head_req = client.head(raw_url).header(ACCEPT_ENCODING, "identity");
+    head_req = crate::engine::referer::apply_referer(head_req, referer, raw_url);
+    let head_response = head_req.send().await;
 
     let mut can_use_head = false;
     let mut resolved_url = raw_url.to_string();
@@ -176,10 +182,12 @@ pub async fn probe_url(client: &Client, raw_url: &str) -> Result<ProbeResult> {
     // As mandated by RFC 9110 & TDM architecture: do not rely on Accept-Ranges alone.
     let mut range_attempts = 0;
     let range_probe = loop {
-        let req = client
-            .get(if can_use_head { &resolved_url } else { raw_url })
+        let probe_target_url = if can_use_head { &resolved_url } else { raw_url };
+        let mut req = client
+            .get(probe_target_url)
             .header(RANGE, "bytes=0-0")
             .header(ACCEPT_ENCODING, "identity");
+        req = crate::engine::referer::apply_referer(req, referer, probe_target_url);
 
         match req.send().await {
             Ok(resp)

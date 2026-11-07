@@ -62,6 +62,7 @@ pub struct CreateDownloadReq {
     pub priority: Option<String>,
     pub user_agent: Option<String>,
     pub thumbnail_url: Option<String>,
+    pub referer: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -93,6 +94,7 @@ pub struct CreateMediaDownloadReq {
     pub priority: Option<String>,
     pub thumbnail_url: Option<String>,
     pub direct_stream_url: Option<String>,
+    pub referer: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -518,9 +520,14 @@ async fn handle_create_download(
         _ => Priority::Normal,
     };
 
+    let clean_referer = payload
+        .referer
+        .as_deref()
+        .and_then(|r| tdm_core::sanitize_and_validate_referer(r, raw_url));
+
     match state
         .manager
-        .create_download_with_priority(raw_url, &dest_path, prio)
+        .create_download_with_options(raw_url, &dest_path, prio, clean_referer)
         .await
     {
         Ok(job) => {
@@ -781,15 +788,21 @@ async fn handle_create_media_download(
         }
     }
 
+    let clean_referer = payload
+        .referer
+        .as_deref()
+        .and_then(|r| tdm_core::sanitize_and_validate_referer(r, target_media_url));
+
     match state
         .manager
-        .create_managed_media_download(
+        .create_managed_media_download_with_referer(
             target_media_url,
             format_id,
             &initial_filename,
             &dest_path,
             prio,
             payload.thumbnail_url,
+            clean_referer,
         )
         .await
     {

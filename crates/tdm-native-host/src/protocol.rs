@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1 MB limit per Chrome spec
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct NativeMessage {
     pub action: String,
     #[serde(default)]
@@ -16,6 +16,8 @@ pub struct NativeMessage {
     pub priority: Option<String>,
     #[serde(default)]
     pub job_id: Option<String>,
+    #[serde(default)]
+    pub referer: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

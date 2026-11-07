@@ -21,6 +21,7 @@ async fn test_native_host_ping_pong() {
         destination: None,
         priority: None,
         job_id: None,
+        referer: None,
     };
 
     let resp = handle_message(msg, &manager, &db).await;
@@ -68,6 +69,7 @@ async fn test_native_host_show_window() {
         destination: None,
         priority: None,
         job_id: None,
+        referer: None,
     };
 
     let resp = handle_message(msg, &manager, &db).await;
@@ -120,6 +122,7 @@ async fn test_native_host_start_download_and_deduplication() {
         destination: Some(temp_dir.path().to_string_lossy().to_string()),
         priority: Some("high".to_string()),
         job_id: None,
+        referer: None,
     };
 
     let resp1 = handle_message(msg1, &manager, &db).await;
@@ -135,6 +138,7 @@ async fn test_native_host_start_download_and_deduplication() {
         destination: Some(temp_dir.path().to_string_lossy().to_string()),
         priority: Some("normal".to_string()),
         job_id: None,
+        referer: None,
     };
 
     let resp2 = handle_message(msg2, &manager, &db).await;
@@ -159,6 +163,7 @@ async fn test_native_host_invalid_urls_rejected() {
         destination: None,
         priority: None,
         job_id: None,
+        referer: None,
     };
     let resp_blob = handle_message(msg_blob, &manager, &db).await;
     assert_eq!(resp_blob.status, "error");
@@ -175,6 +180,7 @@ async fn test_native_host_invalid_urls_rejected() {
         destination: None,
         priority: None,
         job_id: None,
+        referer: None,
     };
     let resp_js = handle_message(msg_js, &manager, &db).await;
     assert_eq!(resp_js.status, "error");
@@ -194,6 +200,7 @@ async fn test_native_host_detect_capability() {
         destination: None,
         priority: None,
         job_id: None,
+        referer: None,
     };
 
     let resp = handle_message(msg, &manager, &db).await;
@@ -317,6 +324,7 @@ async fn test_native_host_process_e2e_stdin_stdout_download() {
         destination: None,
         priority: None,
         job_id: None,
+        referer: None,
     };
     write_message_async(&mut stdin, &ping_msg)
         .await
@@ -339,6 +347,7 @@ async fn test_native_host_process_e2e_stdin_stdout_download() {
         destination: Some(temp_dir.path().to_string_lossy().to_string()),
         priority: Some("high".to_string()),
         job_id: None,
+        referer: None,
     };
     write_message_async(&mut stdin, &start_msg)
         .await
@@ -360,6 +369,7 @@ async fn test_native_host_process_e2e_stdin_stdout_download() {
         destination: Some(temp_dir.path().to_string_lossy().to_string()),
         priority: Some("normal".to_string()),
         job_id: None,
+        referer: None,
     };
     write_message_async(&mut stdin, &dup_msg)
         .await
@@ -380,6 +390,7 @@ async fn test_native_host_process_e2e_stdin_stdout_download() {
         destination: None,
         priority: None,
         job_id: None,
+        referer: None,
     };
     write_message_async(&mut stdin, &cap_msg)
         .await
@@ -454,6 +465,7 @@ async fn test_native_host_ipc_persistent_engine() {
         destination: None,
         priority: None,
         job_id: None,
+        referer: None,
     };
     let ping_resp = forward_to_pipe(&test_pipe, &ping_msg)
         .await
@@ -497,6 +509,7 @@ async fn test_native_host_ipc_persistent_engine() {
         destination: Some(temp_dir.path().to_string_lossy().to_string()),
         priority: Some("high".to_string()),
         job_id: None,
+        referer: None,
     };
 
     let start_resp = forward_to_pipe(&test_pipe, &start_msg)
