@@ -21,6 +21,59 @@ const STREAMING_MIMES = [
   'application/dash+xml'
 ];
 
+/**
+ * Determines whether a detected media candidate is an HLS or DASH streaming manifest.
+ */
+function isManifestCandidate(candidate) {
+  if (!candidate) return false;
+  if (candidate.type === 'hls' || candidate.type === 'dash') {
+    return true;
+  }
+  const url = (candidate.url || '').toLowerCase();
+  if (url.includes('.m3u8') || url.includes('.mpd')) {
+    return true;
+  }
+  const mime = (candidate.content_type || '').toLowerCase();
+  if (
+    STREAMING_MIMES.includes(mime) ||
+    mime.includes('mpegurl') ||
+    mime.includes('dash+xml')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Prunes a candidate list to maxCount while giving higher retention priority to
+ * recognized HLS and DASH manifests over ordinary media fragments.
+ */
+function pruneCandidateList(list, maxCount = MAX_CANDIDATES_PER_TAB) {
+  if (!Array.isArray(list) || list.length <= maxCount) {
+    return list || [];
+  }
+
+  let excess = list.length - maxCount;
+  const pruned = [];
+
+  // First pass: evict oldest non-manifest candidates
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i];
+    if (excess > 0 && !isManifestCandidate(item)) {
+      excess--;
+    } else {
+      pruned.push(item);
+    }
+  }
+
+  // Second pass: if manifests alone exceed maxCount, apply bounded FIFO among manifests
+  if (pruned.length > maxCount) {
+    return pruned.slice(pruned.length - maxCount);
+  }
+
+  return pruned;
+}
+
 // In-memory cache for fast synchronous access
 const tabMediaCache = new Map();
 
@@ -68,7 +121,7 @@ async function restoreSessionStorage() {
       if (Array.isArray(value) && value.length > 0) {
         const existing = tabMediaCache.get(tabId) || [];
         if (existing.length === 0) {
-          tabMediaCache.set(tabId, value.slice(-MAX_CANDIDATES_PER_TAB));
+          tabMediaCache.set(tabId, pruneCandidateList(value, MAX_CANDIDATES_PER_TAB));
         } else {
           // Merge: preserved restored items + newly arrived items in this wake cycle (dedup by url)
           const seenUrls = new Set(value.map((c) => c.url));
@@ -79,10 +132,7 @@ async function restoreSessionStorage() {
               merged.push(item);
             }
           }
-          if (merged.length > MAX_CANDIDATES_PER_TAB) {
-            merged.splice(0, merged.length - MAX_CANDIDATES_PER_TAB);
-          }
-          tabMediaCache.set(tabId, merged);
+          tabMediaCache.set(tabId, pruneCandidateList(merged, MAX_CANDIDATES_PER_TAB));
         }
 
         // Restore badge count if enabled
@@ -899,10 +949,24 @@ async function recordCandidate(tabId, candidate) {
   }
 
   if (list.length >= MAX_CANDIDATES_PER_TAB) {
-    list.shift();
-  }
+    const isNewManifest = isManifestCandidate(candidate);
+    const nonManifestIdx = list.findIndex((item) => !isManifestCandidate(item));
 
-  list.push(candidate);
+    if (nonManifestIdx !== -1) {
+      // Evict oldest non-manifest candidate to protect manifests
+      list.splice(nonManifestIdx, 1);
+      list.push(candidate);
+    } else if (isNewManifest) {
+      // All 50 items are manifests; bounded FIFO among high-priority manifests
+      list.shift();
+      list.push(candidate);
+    } else {
+      // All 50 items are manifests; low-priority candidate cannot evict any manifest
+      return;
+    }
+  } else {
+    list.push(candidate);
+  }
   tabMediaCache.set(tabId, list);
   scheduleSessionWrite(tabId);
 
