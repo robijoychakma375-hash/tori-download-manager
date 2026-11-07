@@ -915,7 +915,14 @@ function normalizePlatformUrl(rawUrl) {
       });
 
       // 3. Tab candidates from background webRequest interception
-      tabMediaCandidates.forEach((tc) => {
+      const hasManifest = tabMediaCandidates.some(
+        (c) => c.type === 'hls' || c.type === 'dash' || (c.url && (c.url.includes('.m3u8') || c.url.includes('.mpd')))
+      );
+      const displayCandidates = hasManifest
+        ? tabMediaCandidates.filter((c) => !c.is_segment && c.type !== 'segment')
+        : tabMediaCandidates;
+
+      displayCandidates.forEach((tc) => {
         if (tc && tc.url) {
           addCandidate(tc.url, tc.format, tc.size_bytes, tc.content_type);
         }

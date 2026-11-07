@@ -9,7 +9,7 @@ const MAX_CANDIDATES_PER_TAB = 50;
 // Media format signatures
 const DIRECT_MEDIA_EXTS = [
   '.mp4', '.webm', '.mkv', '.mov', '.avi', '.flv', '.wmv', '.m4v',
-  '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.wav'
+  '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.wav', '.ts'
 ];
 
 const STREAMING_MANIFEST_EXTS = ['.m3u8', '.mpd'];
@@ -764,7 +764,96 @@ function isManagedPlatform(urlOrHost) {
 /**
  * Classify media item
  */
-function classifyMedia(url, mimeType) {
+function isMediaSegment(lowerUrl, lowerMime, headers = [], statusCode = 200, tabId = -1) {
+  // 1. Definite segment extensions
+  if (
+    lowerUrl.includes('.m4s') ||
+    lowerUrl.includes('.cmfv') ||
+    lowerUrl.includes('.cmfa')
+  ) {
+    const fmt = lowerUrl.includes('.m4s') ? 'M4S' : (lowerUrl.includes('.cmfv') ? 'CMFV' : 'CMFA');
+    return { isSegment: true, format: fmt };
+  }
+
+  // 2. Definite segment MIME types
+  if (
+    lowerMime.includes('iso.segment') ||
+    lowerMime.includes('application/vnd.apple.mpegurl.segment')
+  ) {
+    return { isSegment: true, format: 'SEGMENT' };
+  }
+
+  // 3. Segment URL path patterns (e.g. segment_1.ts, seg-10.ts, chunk_005.aac, frag-3.mp4, slice_12.ts)
+  const segmentPatternRegex = /(?:[/-]|_|\b)(?:segment|seg|chunk|fragment|frag|slice|part)[-_]?\d+/i;
+  const isNumberedSegment = segmentPatternRegex.test(lowerUrl);
+
+  // Initialization segments (init.mp4, init.m4s, etc.)
+  const isInitSegment = /(?:[/-]|_)init(?:[/-]|_|\.)(?:mp4|m4s|cmfv|cmfa|ts)/i.test(lowerUrl) || lowerUrl.endsWith('/init.mp4');
+
+  // Query parameter chunk index indicators: e.g. ?sq=1, ?segment=2, ?frag=3
+  const isQueryNumbered = /[?&](?:sq|segment|frag|chunk|slice|part)=\d+/i.test(lowerUrl);
+
+  // Byte-range query parameters: e.g. ?range=100-200 or ?bytestart=0&byteend=1000
+  const isQueryRange = /[?&](?:range|bytestart|byteend)=\d+/i.test(lowerUrl);
+
+  // Check HTTP byte range headers
+  let hasByteRangeHeader = false;
+  let isSmallRangeChunk = false;
+  let isFullMediaWithRanges = false;
+  if (Array.isArray(headers) && headers.length > 0) {
+    for (const h of headers) {
+      const hName = (h.name || '').toLowerCase();
+      if (hName === 'content-range') {
+        hasByteRangeHeader = true;
+        const m = (h.value || '').match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
+        if (m) {
+          const start = parseInt(m[1], 10);
+          const end = parseInt(m[2], 10);
+          const total = m[3] === '*' ? null : parseInt(m[3], 10);
+          const chunkSize = end - start;
+          if (total && total > 5 * 1024 * 1024) {
+            isFullMediaWithRanges = true;
+          } else if (chunkSize > 0 && chunkSize < 4 * 1024 * 1024) {
+            isSmallRangeChunk = true;
+          }
+        }
+      }
+    }
+  }
+
+  const hasTsExt = lowerUrl.includes('.ts');
+  const hasAacExt = lowerUrl.includes('.aac');
+  const hasMp4Ext = lowerUrl.includes('.mp4');
+
+  // If numbered segment pattern, init segment, or query chunk index:
+  if (isNumberedSegment || isInitSegment || isQueryNumbered) {
+    const fmt = hasTsExt ? 'TS (segment)' : (hasAacExt ? 'AAC (segment)' : (hasMp4Ext ? 'MP4 (segment)' : 'SEGMENT'));
+    return { isSegment: true, format: fmt };
+  }
+
+  // If byte-range streaming indicator:
+  if (!isFullMediaWithRanges) {
+    if (isQueryRange || (hasByteRangeHeader && isSmallRangeChunk && (hasTsExt || lowerUrl.includes('frag') || lowerUrl.includes('segment')))) {
+      const fmt = hasTsExt ? 'TS (segment)' : (hasMp4Ext ? 'MP4 (segment)' : 'SEGMENT');
+      return { isSegment: true, format: fmt };
+    }
+  }
+
+  // Tab manifest context check:
+  if (tabId > 0 && tabMediaCache.has(tabId)) {
+    const cached = tabMediaCache.get(tabId) || [];
+    const hasManifest = cached.some((c) => c.type === 'hls' || c.type === 'dash');
+    if (hasManifest) {
+      if (hasTsExt && (lowerMime.includes('mp2t') || lowerMime.includes('video/'))) {
+        return { isSegment: true, format: 'TS (segment)' };
+      }
+    }
+  }
+
+  return { isSegment: false, format: '' };
+}
+
+function classifyMedia(url, mimeType, headers = [], statusCode = 200, tabId = -1) {
   const lowerUrl = url.toLowerCase();
   const lowerMime = (mimeType || '').toLowerCase();
 
@@ -848,6 +937,7 @@ function classifyMedia(url, mimeType) {
     return {
       type: 'hls',
       format: 'm3u8',
+      is_segment: false,
       supported: true,
       notice: 'RFC 8216 HLS VOD stream with parallel segment downloading & FFmpeg container muxing',
     };
@@ -857,8 +947,21 @@ function classifyMedia(url, mimeType) {
     return {
       type: 'dash',
       format: 'DASH (mpd)',
+      is_segment: false,
       supported: true,
       notice: 'ISO/IEC 23009-1 MPEG-DASH VOD stream with parallel segment downloading & FFmpeg container muxing',
+    };
+  }
+
+  // Check streaming segments
+  const segCheck = isMediaSegment(lowerUrl, lowerMime, headers, statusCode, tabId);
+  if (segCheck.isSegment) {
+    return {
+      type: 'segment',
+      format: segCheck.format || 'SEGMENT',
+      is_segment: true,
+      supported: true,
+      notice: 'HLS/DASH media stream segment (partial chunk)',
     };
   }
 
@@ -883,6 +986,7 @@ function classifyMedia(url, mimeType) {
   return {
     type: 'direct',
     format: ext || 'MEDIA',
+    is_segment: false,
     supported: true,
     notice: 'Direct high-speed HTTP multi-range partitioned download',
   };
@@ -1036,6 +1140,12 @@ chrome.webRequest.onHeadersReceived.addListener(
         contentLength = parseInt(h.value || '0', 10) || 0;
       } else if (name === 'content-disposition') {
         contentDisposition = h.value || '';
+      } else if (name === 'content-range') {
+        const m = (h.value || '').match(/bytes\s+\d+-\d+\/(\d+)/i);
+        if (m) {
+          const total = parseInt(m[1], 10);
+          if (total > 0) contentLength = total;
+        }
       }
     }
 
@@ -1047,7 +1157,7 @@ chrome.webRequest.onHeadersReceived.addListener(
     const hasMediaExt = DIRECT_MEDIA_EXTS.some((e) => lowerUrl.includes(e)) || STREAMING_MANIFEST_EXTS.some((e) => lowerUrl.includes(e));
 
     if (isMediaMime || hasMediaExt) {
-      const classification = classifyMedia(url, contentType);
+      const classification = classifyMedia(url, contentType, details.responseHeaders, details.statusCode, details.tabId);
       const filename = parseContentDispositionFilename(contentDisposition) || extractFilenameFromUrl(url);
 
       recordCandidate(details.tabId, {
@@ -1058,6 +1168,7 @@ chrome.webRequest.onHeadersReceived.addListener(
         content_type: contentType,
         type: classification.type,
         format: classification.format,
+        is_segment: classification.is_segment === true,
         supported: classification.supported,
         notice: classification.notice,
         detected_at: new Date().toISOString(),
@@ -1085,11 +1196,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'RECORD_MEDIA_FROM_DOM') {
     if (tabId && message.candidate) {
-      const classification = classifyMedia(message.candidate.url, message.candidate.content_type);
+      const classification = classifyMedia(message.candidate.url, message.candidate.content_type, [], 200, tabId);
       recordCandidate(tabId, {
         ...message.candidate,
         type: classification.type,
         format: classification.format,
+        is_segment: classification.is_segment === true,
         supported: classification.supported,
         notice: classification.notice,
         detected_at: new Date().toISOString(),

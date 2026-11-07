@@ -188,6 +188,7 @@ const G = {
   Video: ['#ff453a', 'M9 6.5v11l9-5.5z'],
   Music: ['#ff375f', 'M9 18V6l10-2v12M7 20a2 2 0 100-4 2 2 0 000 4zM17 18a2 2 0 100-4 2 2 0 000 4z'],
   Compressed: ['#bf5af2', 'M12 3v10M10 6h4M10 9h4M8 13h8v6H8z'],
+  Segment: ['#ff9f0a', 'M4 6h16M4 12h16M4 18h16'],
   Other: ['#8e8e93', 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z'],
 };
 
@@ -392,11 +393,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 1000);
   }
 
+  function getDisplayCandidates(items) {
+    if (!Array.isArray(items) || items.length === 0) return [];
+    const hasManifest = items.some(
+      (c) => c.type === 'hls' || c.type === 'dash' || (c.url && (c.url.includes('.m3u8') || c.url.includes('.mpd')))
+    );
+    if (hasManifest) {
+      // If a manifest is available, prefer displaying the manifest instead of dozens of individual fragments
+      const nonSegments = items.filter((c) => !c.is_segment && c.type !== 'segment');
+      return nonSegments.length > 0 ? nonSegments : items;
+    }
+    // When no manifest is detected, preserve useful media candidates (including segments)
+    return items;
+  }
+
   function renderResolutionError(errMsg, tab) {
     stopResolutionPolling();
     // Check if background webRequest intercepted direct stream candidates for this tab
     chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
-      const items = res?.media || [];
+      const rawItems = res?.media || [];
+      const items = getDisplayCandidates(rawItems);
       if (items.length > 0) {
         mediaCountHeader.textContent = `Captured Streams · ${items.length}`;
         renderDirectItems(items, tab);
@@ -507,7 +523,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // 2. Fallback: check tab media cache from background
         chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
-          const items = res?.media || [];
+          const rawItems = res?.media || [];
+          const items = getDisplayCandidates(rawItems);
           mediaCountHeader.textContent = `Media on this page · ${items.length}`;
 
           if (items.length === 0) {
@@ -612,7 +629,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const isAudio =
           item.type === 'audio' ||
           (item.content_type && item.content_type.startsWith('audio/'));
-        const cat = isAudio ? 'Music' : 'Video';
+        const isSeg = item.is_segment || item.type === 'segment';
+        const cat = isAudio ? 'Music' : (isSeg ? 'Segment' : 'Video');
         const sizeStr = item.size_bytes ? ` · ${formatBytes(item.size_bytes)}` : '';
         const formatStr = item.format || 'MP4';
         const sub = `${formatStr}${sizeStr}`;
