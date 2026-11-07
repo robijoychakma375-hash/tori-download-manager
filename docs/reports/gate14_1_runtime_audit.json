@@ -1,0 +1,633 @@
+{
+  "timestamp": "2026-11-07T15:45:44.231Z",
+  "objectives": {
+    "obj1_launch": {
+      "status": "PASS",
+      "rootPid": 27856,
+      "procs": 7,
+      "ws_mb": 379.2,
+      "pb_mb": 185.74
+    },
+    "obj2_real_download_toast": {
+      "status": "PASS",
+      "jobId": "f72b85a2-9cba-4450-8341-60ad16ad3ab1",
+      "toastDetectedInCdp": true,
+      "processCount": 8
+    },
+    "obj3_delete_active_toast_purge": {
+      "status": "PASS",
+      "latencyMs": 125
+    },
+    "obj4_late_event_rejection": {
+      "status": "PASS",
+      "resurrected": false
+    },
+    "obj5_paused_deletion": {
+      "status": "PASS",
+      "latencyMs": 122
+    },
+    "obj6_restart_persistence": {
+      "status": "PASS",
+      "sqliteTasks": 0,
+      "ghostTasksInDb": false,
+      "ghostToastPresent": false
+    },
+    "obj7_completion_synchronization": {
+      "status": "PASS",
+      "state": "completed",
+      "downloaded_bytes": 512000,
+      "total_bytes": 512000,
+      "speed_bps": 0,
+      "eta_seconds": null,
+      "activeExcludesCompleted": true
+    },
+    "obj8_simultaneous_downloads": {
+      "status": "PASS",
+      "d2Purged": true,
+      "d1Remaining": true,
+      "d3Remaining": true
+    },
+    "obj9_process_tree_capture": {
+      "status": "PASS",
+      "procs": 7
+    },
+    "obj10_separate_memory_metrics": {
+      "status": "PASS",
+      "metrics": {
+        "count": 7,
+        "workingSet_MB": 414.42,
+        "privateBytes_MB": 256.97,
+        "commit_MB": 256.97,
+        "processes": [
+          {
+            "PID": 9892,
+            "ParentPID": 28540,
+            "Name": "tori-download-manager.exe",
+            "CommandLine": "\"F:\\TORI\\final tori download manager\\target\\release\\tori-download-manager.exe\"",
+            "WorkingSet_MB": 43.98,
+            "PrivateBytes_MB": 9.6,
+            "Commit_MB": 9.6,
+            "PageFaults": 15866,
+            "Role": "TORI Native Host (Rust / Tokio / Axum / SQLite / IPC)"
+          },
+          {
+            "PID": 12484,
+            "ParentPID": 9892,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --embedded-browser-webview=1 --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --noerrdialogs --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222 --lang=en-US --mojo-named-platform-channel-pipe=9892.2704.18351168717334479321 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 128.72,
+            "PrivateBytes_MB": 39.2,
+            "Commit_MB": 39.2,
+            "PageFaults": 40529,
+            "Role": "WebView2 Browser Manager"
+          },
+          {
+            "PID": 11280,
+            "ParentPID": 12484,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=crashpad-handler --user-data-dir=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView /prefetch:4 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 --monitor-self-annotation=ptype=crashpad-handler --user-stream-region=344,65568 --database=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\\Crashpad --annotation=IsOfficialBuild=1 --annotation=channel= --annotation=chromium-version=156.0.8078.80 \"--annotation=exe=C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --annotation=plat=Win64 \"--annotation=prod=Edge WebView2\" --annotation=ver=156.0.4314.58 --initial-client-data=0x18c,0x190,0x194,0xac,0x19c,0x7ffb16e47470,0x7ffb16e47480,0x7ffb16e47490",
+            "WorkingSet_MB": 18.66,
+            "PrivateBytes_MB": 3.36,
+            "Commit_MB": 3.36,
+            "PageFaults": 5018,
+            "Role": "WebView2 Crashpad Handler"
+          },
+          {
+            "PID": 34992,
+            "ParentPID": 12484,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=gpu-process --gpu-recent-crash-count=0 --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --gpu-preferences=WAAAAAAAAADgAAAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAAEAAAAAIAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --startup-read-main-dll --metrics-shmem-handle=1840,i,998314305960619238,10580367669278076189,262144 --field-trial-handle=1996,i,16508163515476763285,8680537748879272312,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2347681297188717866,173372363396007133,4 --trace-process-track-uuid=3190708988185955192 --mojo-platform-channel-handle=1932 /prefetch:2 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 86.39,
+            "PrivateBytes_MB": 145.27,
+            "Commit_MB": 145.27,
+            "PageFaults": 24867,
+            "Role": "WebView2 GPU Process"
+          },
+          {
+            "PID": 29988,
+            "ParentPID": 12484,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2164,i,12218392038066373737,6478870005456488939,524288 --field-trial-handle=1996,i,16508163515476763285,8680537748879272312,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2347681297188717866,173372363396007133,4 --trace-process-track-uuid=3190708989122997041 --mojo-platform-channel-handle=2136 /prefetch:11 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 35.43,
+            "PrivateBytes_MB": 11.39,
+            "Commit_MB": 11.39,
+            "PageFaults": 10069,
+            "Role": "WebView2 Network Service"
+          },
+          {
+            "PID": 20436,
+            "ParentPID": 12484,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=service --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2772,i,17577891296842876120,16198089308401475835,524288 --field-trial-handle=1996,i,16508163515476763285,8680537748879272312,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2347681297188717866,173372363396007133,4 --trace-process-track-uuid=3190708990060038890 --mojo-platform-channel-handle=2784 /prefetch:13 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 19.83,
+            "PrivateBytes_MB": 7.46,
+            "Commit_MB": 7.46,
+            "PageFaults": 5651,
+            "Role": "WebView2 Storage Service"
+          },
+          {
+            "PID": 32968,
+            "ParentPID": 12484,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --remote-debugging-port=9222 --video-capture-use-gpu-memory-buffer --lang=en-US --js-flags --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=5 --ssd-no-pressure-read-main-dll --launch-time-ticks=209078254711 --metrics-shmem-handle=3716,i,14366272274490629544,1182919571944266875,1048576 --field-trial-handle=1996,i,16508163515476763285,8680537748879272312,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2347681297188717866,173372363396007133,4 --trace-process-track-uuid=3190708990997080739 --mojo-platform-channel-handle=3744 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 /prefetch:1",
+            "WorkingSet_MB": 81.41,
+            "PrivateBytes_MB": 40.69,
+            "Commit_MB": 40.69,
+            "PageFaults": 25010,
+            "Role": "WebView2 Renderer Process"
+          }
+        ]
+      }
+    },
+    "obj11_renderer_destruction": {
+      "status": "PASS",
+      "activeRenderers": 1,
+      "rendererDetails": [
+        {
+          "PID": 32968,
+          "ParentPID": 12484,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --remote-debugging-port=9222 --video-capture-use-gpu-memory-buffer --lang=en-US --js-flags --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=5 --ssd-no-pressure-read-main-dll --launch-time-ticks=209078254711 --metrics-shmem-handle=3716,i,14366272274490629544,1182919571944266875,1048576 --field-trial-handle=1996,i,16508163515476763285,8680537748879272312,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2347681297188717866,173372363396007133,4 --trace-process-track-uuid=3190708990997080739 --mojo-platform-channel-handle=3744 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 /prefetch:1",
+          "WorkingSet_MB": 81.41,
+          "PrivateBytes_MB": 40.69,
+          "Commit_MB": 40.69,
+          "PageFaults": 25010,
+          "Role": "WebView2 Renderer Process"
+        }
+      ]
+    },
+    "obj12_v100_comparison": {
+      "status": "PASS",
+      "v100": {
+        "count": 7,
+        "workingSet_MB": 378.31,
+        "privateBytes_MB": 185,
+        "commit_MB": 185,
+        "processes": [
+          {
+            "PID": 30068,
+            "ParentPID": 28540,
+            "Name": "tori-download-manager.exe",
+            "CommandLine": "\"F:\\TORI\\final tori download manager\\target\\sandbox_v100_compare\\tori-download-manager.exe\"",
+            "WorkingSet_MB": 41.09,
+            "PrivateBytes_MB": 8.91,
+            "Commit_MB": 8.91,
+            "PageFaults": 12786,
+            "Role": "TORI Native Host (Rust / Tokio / Axum / SQLite / IPC)"
+          },
+          {
+            "PID": 1844,
+            "ParentPID": 30068,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --embedded-browser-webview=1 --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.0 --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --noerrdialogs --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9223 --lang=en-US --mojo-named-platform-channel-pipe=30068.20396.17030944174380510973 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 123.93,
+            "PrivateBytes_MB": 36.39,
+            "Commit_MB": 36.39,
+            "PageFaults": 37769,
+            "Role": "WebView2 Browser Manager"
+          },
+          {
+            "PID": 29328,
+            "ParentPID": 1844,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=crashpad-handler --user-data-dir=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView /prefetch:4 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 --monitor-self-annotation=ptype=crashpad-handler --user-stream-region=328,65568 --database=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\\Crashpad --annotation=IsOfficialBuild=1 --annotation=channel= --annotation=chromium-version=156.0.8078.80 \"--annotation=exe=C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --annotation=plat=Win64 \"--annotation=prod=Edge WebView2\" --annotation=ver=156.0.4314.58 --initial-client-data=0x18c,0x190,0x194,0x168,0xac,0x7ffb16e47470,0x7ffb16e47480,0x7ffb16e47490",
+            "WorkingSet_MB": 9.91,
+            "PrivateBytes_MB": 2.45,
+            "Commit_MB": 2.45,
+            "PageFaults": 2734,
+            "Role": "WebView2 Crashpad Handler"
+          },
+          {
+            "PID": 27172,
+            "ParentPID": 1844,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=gpu-process --gpu-recent-crash-count=0 --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.0 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --gpu-preferences=WAAAAAAAAADgAAAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAAEAAAAAIAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --startup-read-main-dll --metrics-shmem-handle=1864,i,14708101614678277181,3755854395529418126,262144 --field-trial-handle=2012,i,1398726841584953440,7601192481818895027,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2574038579101235184,5969430166464109124,4 --trace-process-track-uuid=3190708988185955192 --mojo-platform-channel-handle=2016 /prefetch:2 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 81.93,
+            "PrivateBytes_MB": 87.26,
+            "Commit_MB": 87.26,
+            "PageFaults": 23509,
+            "Role": "WebView2 GPU Process"
+          },
+          {
+            "PID": 21088,
+            "ParentPID": 1844,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.0 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2248,i,9756143239067938277,2183784686857218875,524288 --field-trial-handle=2012,i,1398726841584953440,7601192481818895027,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2574038579101235184,5969430166464109124,4 --trace-process-track-uuid=3190708989122997041 --mojo-platform-channel-handle=2252 /prefetch:11 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 34.21,
+            "PrivateBytes_MB": 11.41,
+            "Commit_MB": 11.41,
+            "PageFaults": 9524,
+            "Role": "WebView2 Network Service"
+          },
+          {
+            "PID": 25856,
+            "ParentPID": 1844,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=service --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.0 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2756,i,1328545678778554871,4443136326625709319,524288 --field-trial-handle=2012,i,1398726841584953440,7601192481818895027,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2574038579101235184,5969430166464109124,4 --trace-process-track-uuid=3190708990060038890 --mojo-platform-channel-handle=2132 /prefetch:13 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 19.44,
+            "PrivateBytes_MB": 7.45,
+            "Commit_MB": 7.45,
+            "PageFaults": 5543,
+            "Role": "WebView2 Storage Service"
+          },
+          {
+            "PID": 26844,
+            "ParentPID": 1844,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.0 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --remote-debugging-port=9223 --video-capture-use-gpu-memory-buffer --lang=en-US --js-flags --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=5 --ssd-no-pressure-read-main-dll --launch-time-ticks=209114756427 --metrics-shmem-handle=3720,i,15273033024149666563,732060545428012036,1048576 --field-trial-handle=2012,i,1398726841584953440,7601192481818895027,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2574038579101235184,5969430166464109124,4 --trace-process-track-uuid=3190708990997080739 --mojo-platform-channel-handle=3728 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 /prefetch:1",
+            "WorkingSet_MB": 67.8,
+            "PrivateBytes_MB": 31.13,
+            "Commit_MB": 31.13,
+            "PageFaults": 19748,
+            "Role": "WebView2 Renderer Process"
+          }
+        ]
+      },
+      "v101": {
+        "count": 7,
+        "workingSet_MB": 379.2,
+        "privateBytes_MB": 185.74,
+        "commit_MB": 185.74,
+        "processes": [
+          {
+            "PID": 27856,
+            "ParentPID": 28540,
+            "Name": "tori-download-manager.exe",
+            "CommandLine": "\"F:\\TORI\\final tori download manager\\target\\release\\tori-download-manager.exe\"",
+            "WorkingSet_MB": 41.39,
+            "PrivateBytes_MB": 8.75,
+            "Commit_MB": 8.75,
+            "PageFaults": 12815,
+            "Role": "TORI Native Host (Rust / Tokio / Axum / SQLite / IPC)"
+          },
+          {
+            "PID": 34364,
+            "ParentPID": 27856,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --embedded-browser-webview=1 --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --noerrdialogs --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222 --lang=en-US --mojo-named-platform-channel-pipe=27856.35208.2758234361336643438 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 124.18,
+            "PrivateBytes_MB": 36.56,
+            "Commit_MB": 36.56,
+            "PageFaults": 37710,
+            "Role": "WebView2 Browser Manager"
+          },
+          {
+            "PID": 33624,
+            "ParentPID": 34364,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=crashpad-handler --user-data-dir=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView /prefetch:4 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 --monitor-self-annotation=ptype=crashpad-handler --user-stream-region=324,65568 --database=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\\Crashpad --annotation=IsOfficialBuild=1 --annotation=channel= --annotation=chromium-version=156.0.8078.80 \"--annotation=exe=C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --annotation=plat=Win64 \"--annotation=prod=Edge WebView2\" --annotation=ver=156.0.4314.58 --initial-client-data=0x188,0x18c,0x190,0x114,0x198,0x7ffb16e47470,0x7ffb16e47480,0x7ffb16e47490",
+            "WorkingSet_MB": 9.91,
+            "PrivateBytes_MB": 2.46,
+            "Commit_MB": 2.46,
+            "PageFaults": 2735,
+            "Role": "WebView2 Crashpad Handler"
+          },
+          {
+            "PID": 11964,
+            "ParentPID": 34364,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=gpu-process --gpu-recent-crash-count=0 --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --gpu-preferences=WAAAAAAAAADgAAAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAAEAAAAAIAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --startup-read-main-dll --metrics-shmem-handle=1828,i,8998419651375873764,7501134028273116942,262144 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708988185955192 --mojo-platform-channel-handle=2020 /prefetch:2 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 81.84,
+            "PrivateBytes_MB": 87.18,
+            "Commit_MB": 87.18,
+            "PageFaults": 23296,
+            "Role": "WebView2 GPU Process"
+          },
+          {
+            "PID": 25876,
+            "ParentPID": 34364,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2228,i,4513585360875170171,7273582849828327153,524288 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708989122997041 --mojo-platform-channel-handle=2236 /prefetch:11 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 34.34,
+            "PrivateBytes_MB": 11.53,
+            "Commit_MB": 11.53,
+            "PageFaults": 9567,
+            "Role": "WebView2 Network Service"
+          },
+          {
+            "PID": 16928,
+            "ParentPID": 34364,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=service --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2784,i,12621840620192984616,9338229623802383903,524288 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708990060038890 --mojo-platform-channel-handle=2792 /prefetch:13 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+            "WorkingSet_MB": 19.43,
+            "PrivateBytes_MB": 7.43,
+            "Commit_MB": 7.43,
+            "PageFaults": 5546,
+            "Role": "WebView2 Storage Service"
+          },
+          {
+            "PID": 21088,
+            "ParentPID": 34364,
+            "Name": "msedgewebview2.exe",
+            "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --remote-debugging-port=9222 --video-capture-use-gpu-memory-buffer --lang=en-US --js-flags --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=5 --ssd-no-pressure-read-main-dll --launch-time-ticks=209021865273 --metrics-shmem-handle=3700,i,7999685065233993739,7222540144399644016,1048576 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708990997080739 --mojo-platform-channel-handle=3728 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 /prefetch:1",
+            "WorkingSet_MB": 68.11,
+            "PrivateBytes_MB": 31.83,
+            "Commit_MB": 31.83,
+            "PageFaults": 19873,
+            "Role": "WebView2 Renderer Process"
+          }
+        ]
+      }
+    },
+    "obj15_no_artificial_trimming": {
+      "status": "PASS",
+      "confirmation": "All measurements recorded in this audit reflect raw untrimmed Windows OS Working Set and Private Bytes directly from Win32_Process without calling SetProcessWorkingSetSize."
+    }
+  },
+  "processTrees": {
+    "v101_baseline_idle": {
+      "count": 7,
+      "workingSet_MB": 379.2,
+      "privateBytes_MB": 185.74,
+      "commit_MB": 185.74,
+      "processes": [
+        {
+          "PID": 27856,
+          "ParentPID": 28540,
+          "Name": "tori-download-manager.exe",
+          "CommandLine": "\"F:\\TORI\\final tori download manager\\target\\release\\tori-download-manager.exe\"",
+          "WorkingSet_MB": 41.39,
+          "PrivateBytes_MB": 8.75,
+          "Commit_MB": 8.75,
+          "PageFaults": 12815,
+          "Role": "TORI Native Host (Rust / Tokio / Axum / SQLite / IPC)"
+        },
+        {
+          "PID": 34364,
+          "ParentPID": 27856,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --embedded-browser-webview=1 --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --noerrdialogs --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222 --lang=en-US --mojo-named-platform-channel-pipe=27856.35208.2758234361336643438 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 124.18,
+          "PrivateBytes_MB": 36.56,
+          "Commit_MB": 36.56,
+          "PageFaults": 37710,
+          "Role": "WebView2 Browser Manager"
+        },
+        {
+          "PID": 33624,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=crashpad-handler --user-data-dir=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView /prefetch:4 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 --monitor-self-annotation=ptype=crashpad-handler --user-stream-region=324,65568 --database=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\\Crashpad --annotation=IsOfficialBuild=1 --annotation=channel= --annotation=chromium-version=156.0.8078.80 \"--annotation=exe=C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --annotation=plat=Win64 \"--annotation=prod=Edge WebView2\" --annotation=ver=156.0.4314.58 --initial-client-data=0x188,0x18c,0x190,0x114,0x198,0x7ffb16e47470,0x7ffb16e47480,0x7ffb16e47490",
+          "WorkingSet_MB": 9.91,
+          "PrivateBytes_MB": 2.46,
+          "Commit_MB": 2.46,
+          "PageFaults": 2735,
+          "Role": "WebView2 Crashpad Handler"
+        },
+        {
+          "PID": 11964,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=gpu-process --gpu-recent-crash-count=0 --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --gpu-preferences=WAAAAAAAAADgAAAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAAEAAAAAIAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --startup-read-main-dll --metrics-shmem-handle=1828,i,8998419651375873764,7501134028273116942,262144 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708988185955192 --mojo-platform-channel-handle=2020 /prefetch:2 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 81.84,
+          "PrivateBytes_MB": 87.18,
+          "Commit_MB": 87.18,
+          "PageFaults": 23296,
+          "Role": "WebView2 GPU Process"
+        },
+        {
+          "PID": 25876,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2228,i,4513585360875170171,7273582849828327153,524288 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708989122997041 --mojo-platform-channel-handle=2236 /prefetch:11 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 34.34,
+          "PrivateBytes_MB": 11.53,
+          "Commit_MB": 11.53,
+          "PageFaults": 9567,
+          "Role": "WebView2 Network Service"
+        },
+        {
+          "PID": 16928,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=service --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2784,i,12621840620192984616,9338229623802383903,524288 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708990060038890 --mojo-platform-channel-handle=2792 /prefetch:13 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 19.43,
+          "PrivateBytes_MB": 7.43,
+          "Commit_MB": 7.43,
+          "PageFaults": 5546,
+          "Role": "WebView2 Storage Service"
+        },
+        {
+          "PID": 21088,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --remote-debugging-port=9222 --video-capture-use-gpu-memory-buffer --lang=en-US --js-flags --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=5 --ssd-no-pressure-read-main-dll --launch-time-ticks=209021865273 --metrics-shmem-handle=3700,i,7999685065233993739,7222540144399644016,1048576 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708990997080739 --mojo-platform-channel-handle=3728 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 /prefetch:1",
+          "WorkingSet_MB": 68.11,
+          "PrivateBytes_MB": 31.83,
+          "Commit_MB": 31.83,
+          "PageFaults": 19873,
+          "Role": "WebView2 Renderer Process"
+        }
+      ]
+    },
+    "v101_toast_open": {
+      "count": 8,
+      "workingSet_MB": 462.43,
+      "privateBytes_MB": 262.46,
+      "commit_MB": 262.51,
+      "processes": [
+        {
+          "PID": 27856,
+          "ParentPID": 28540,
+          "Name": "tori-download-manager.exe",
+          "CommandLine": "\"F:\\TORI\\final tori download manager\\target\\release\\tori-download-manager.exe\"",
+          "WorkingSet_MB": 44.71,
+          "PrivateBytes_MB": 10.95,
+          "Commit_MB": 10.95,
+          "PageFaults": 15429,
+          "Role": "TORI Native Host (Rust / Tokio / Axum / SQLite / IPC)"
+        },
+        {
+          "PID": 34364,
+          "ParentPID": 27856,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --embedded-browser-webview=1 --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --noerrdialogs --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222 --lang=en-US --mojo-named-platform-channel-pipe=27856.35208.2758234361336643438 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 126.95,
+          "PrivateBytes_MB": 38.18,
+          "Commit_MB": 38.18,
+          "PageFaults": 39755,
+          "Role": "WebView2 Browser Manager"
+        },
+        {
+          "PID": 33624,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=crashpad-handler --user-data-dir=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView /prefetch:4 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 --monitor-self-annotation=ptype=crashpad-handler --user-stream-region=324,65568 --database=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\\Crashpad --annotation=IsOfficialBuild=1 --annotation=channel= --annotation=chromium-version=156.0.8078.80 \"--annotation=exe=C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --annotation=plat=Win64 \"--annotation=prod=Edge WebView2\" --annotation=ver=156.0.4314.58 --initial-client-data=0x188,0x18c,0x190,0x114,0x198,0x7ffb16e47470,0x7ffb16e47480,0x7ffb16e47490",
+          "WorkingSet_MB": 9.91,
+          "PrivateBytes_MB": 2.46,
+          "Commit_MB": 2.46,
+          "PageFaults": 2735,
+          "Role": "WebView2 Crashpad Handler"
+        },
+        {
+          "PID": 11964,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=gpu-process --gpu-recent-crash-count=0 --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --gpu-preferences=WAAAAAAAAADgAAAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAAEAAAAAIAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --startup-read-main-dll --metrics-shmem-handle=1828,i,8998419651375873764,7501134028273116942,262144 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708988185955192 --mojo-platform-channel-handle=2020 /prefetch:2 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 85.27,
+          "PrivateBytes_MB": 126.51,
+          "Commit_MB": 126.51,
+          "PageFaults": 24327,
+          "Role": "WebView2 GPU Process"
+        },
+        {
+          "PID": 25876,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2228,i,4513585360875170171,7273582849828327153,524288 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708989122997041 --mojo-platform-channel-handle=2236 /prefetch:11 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 34.5,
+          "PrivateBytes_MB": 11.59,
+          "Commit_MB": 11.59,
+          "PageFaults": 9608,
+          "Role": "WebView2 Network Service"
+        },
+        {
+          "PID": 16928,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=service --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2784,i,12621840620192984616,9338229623802383903,524288 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708990060038890 --mojo-platform-channel-handle=2792 /prefetch:13 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 19.47,
+          "PrivateBytes_MB": 7.45,
+          "Commit_MB": 7.45,
+          "PageFaults": 5556,
+          "Role": "WebView2 Storage Service"
+        },
+        {
+          "PID": 21088,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --remote-debugging-port=9222 --video-capture-use-gpu-memory-buffer --lang=en-US --js-flags --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=5 --ssd-no-pressure-read-main-dll --launch-time-ticks=209021865273 --metrics-shmem-handle=3700,i,7999685065233993739,7222540144399644016,1048576 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708990997080739 --mojo-platform-channel-handle=3728 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 /prefetch:1",
+          "WorkingSet_MB": 77.34,
+          "PrivateBytes_MB": 37.47,
+          "Commit_MB": 37.47,
+          "PageFaults": 22927,
+          "Role": "WebView2 Renderer Process"
+        },
+        {
+          "PID": 9884,
+          "ParentPID": 34364,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --remote-debugging-port=9222 --video-capture-use-gpu-memory-buffer --lang=en-US --js-flags --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=6 --skip-read-main-dll --launch-time-ticks=209046614576 --metrics-shmem-handle=5748,i,4303088110148164090,15982177899713111063,1048576 --field-trial-handle=2028,i,8303453120934266121,9240439829219258514,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2032,i,6349283503912940712,9051923808389947600,4 --trace-process-track-uuid=3190708991934122588 --mojo-platform-channel-handle=6044 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 /prefetch:1",
+          "WorkingSet_MB": 64.28,
+          "PrivateBytes_MB": 27.85,
+          "Commit_MB": 27.9,
+          "PageFaults": 18669,
+          "Role": "WebView2 Renderer Process"
+        }
+      ]
+    },
+    "v101_after_toasts_destroyed": {
+      "count": 7,
+      "workingSet_MB": 414.42,
+      "privateBytes_MB": 256.97,
+      "commit_MB": 256.97,
+      "processes": [
+        {
+          "PID": 9892,
+          "ParentPID": 28540,
+          "Name": "tori-download-manager.exe",
+          "CommandLine": "\"F:\\TORI\\final tori download manager\\target\\release\\tori-download-manager.exe\"",
+          "WorkingSet_MB": 43.98,
+          "PrivateBytes_MB": 9.6,
+          "Commit_MB": 9.6,
+          "PageFaults": 15866,
+          "Role": "TORI Native Host (Rust / Tokio / Axum / SQLite / IPC)"
+        },
+        {
+          "PID": 12484,
+          "ParentPID": 9892,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --embedded-browser-webview=1 --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --noerrdialogs --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222 --lang=en-US --mojo-named-platform-channel-pipe=9892.2704.18351168717334479321 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 128.72,
+          "PrivateBytes_MB": 39.2,
+          "Commit_MB": 39.2,
+          "PageFaults": 40529,
+          "Role": "WebView2 Browser Manager"
+        },
+        {
+          "PID": 11280,
+          "ParentPID": 12484,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=crashpad-handler --user-data-dir=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView /prefetch:4 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 --monitor-self-annotation=ptype=crashpad-handler --user-stream-region=344,65568 --database=C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\\Crashpad --annotation=IsOfficialBuild=1 --annotation=channel= --annotation=chromium-version=156.0.8078.80 \"--annotation=exe=C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --annotation=plat=Win64 \"--annotation=prod=Edge WebView2\" --annotation=ver=156.0.4314.58 --initial-client-data=0x18c,0x190,0x194,0xac,0x19c,0x7ffb16e47470,0x7ffb16e47480,0x7ffb16e47490",
+          "WorkingSet_MB": 18.66,
+          "PrivateBytes_MB": 3.36,
+          "Commit_MB": 3.36,
+          "PageFaults": 5018,
+          "Role": "WebView2 Crashpad Handler"
+        },
+        {
+          "PID": 34992,
+          "ParentPID": 12484,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=gpu-process --gpu-recent-crash-count=0 --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --gpu-preferences=WAAAAAAAAADgAAAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAAEAAAAAIAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --startup-read-main-dll --metrics-shmem-handle=1840,i,998314305960619238,10580367669278076189,262144 --field-trial-handle=1996,i,16508163515476763285,8680537748879272312,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2347681297188717866,173372363396007133,4 --trace-process-track-uuid=3190708988185955192 --mojo-platform-channel-handle=1932 /prefetch:2 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 86.39,
+          "PrivateBytes_MB": 145.27,
+          "Commit_MB": 145.27,
+          "PageFaults": 24867,
+          "Role": "WebView2 GPU Process"
+        },
+        {
+          "PID": 29988,
+          "ParentPID": 12484,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2164,i,12218392038066373737,6478870005456488939,524288 --field-trial-handle=1996,i,16508163515476763285,8680537748879272312,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2347681297188717866,173372363396007133,4 --trace-process-track-uuid=3190708989122997041 --mojo-platform-channel-handle=2136 /prefetch:11 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 35.43,
+          "PrivateBytes_MB": 11.39,
+          "Commit_MB": 11.39,
+          "PageFaults": 10069,
+          "Role": "WebView2 Network Service"
+        },
+        {
+          "PID": 20436,
+          "ParentPID": 12484,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=service --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --startup-read-main-dll --metrics-shmem-handle=2772,i,17577891296842876120,16198089308401475835,524288 --field-trial-handle=1996,i,16508163515476763285,8680537748879272312,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2347681297188717866,173372363396007133,4 --trace-process-track-uuid=3190708990060038890 --mojo-platform-channel-handle=2784 /prefetch:13 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142",
+          "WorkingSet_MB": 19.83,
+          "PrivateBytes_MB": 7.46,
+          "Commit_MB": 7.46,
+          "PageFaults": 5651,
+          "Role": "WebView2 Storage Service"
+        },
+        {
+          "PID": 32968,
+          "ParentPID": 12484,
+          "Name": "msedgewebview2.exe",
+          "CommandLine": "\"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\156.0.4314.58\\msedgewebview2.exe\" --type=renderer --noerrdialogs --user-data-dir=\"C:\\Users\\ritud\\AppData\\Local\\com.tori.downloadmanager\\EBWebView\" --webview-exe-name=tori-download-manager.exe --webview-exe-version=1.0.1 --embedded-browser-webview=1 --embedded-browser-webview-dpi-awareness=2 --autoplay-policy=no-user-gesture-required --remote-debugging-port=9222 --video-capture-use-gpu-memory-buffer --lang=en-US --js-flags --device-scale-factor=1 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=5 --ssd-no-pressure-read-main-dll --launch-time-ticks=209078254711 --metrics-shmem-handle=3716,i,14366272274490629544,1182919571944266875,1048576 --field-trial-handle=1996,i,16508163515476763285,8680537748879272312,262144 --disable-features=msPdfOOUI,msSmartScreenProtection,msWebOOUI --variations-seed-version --pseudonymization-salt-handle=2028,i,2347681297188717866,173372363396007133,4 --trace-process-track-uuid=3190708990997080739 --mojo-platform-channel-handle=3744 /pfhostedapp:f1b16a1421662c8ef27c1466439cb15440006142 /prefetch:1",
+          "WorkingSet_MB": 81.41,
+          "PrivateBytes_MB": 40.69,
+          "Commit_MB": 40.69,
+          "PageFaults": 25010,
+          "Role": "WebView2 Renderer Process"
+        }
+      ]
+    }
+  },
+  "comparisons": {
+    "v100_vs_v101": {
+      "v100_idle_ws": 378.31,
+      "v100_idle_pb": 185,
+      "v100_procs": 7,
+      "v101_idle_ws": 379.2,
+      "v101_idle_pb": 185.74,
+      "v101_procs": 7
+    }
+  },
+  "anomaliesExplained": {
+    "obj13_why_383mb_and_7_processes": "The previous Gate 14.1 benchmark script used a Named Pipe helper that sent {\"action\":\"open_progress\",\"job_id\":\"task-sample-1\"} and {\"action\":\"hide_window\"}. However, crates/tdm-native-host/src/lib.rs handle_message did not implement \"open_progress\" or \"hide_window\", returning \"Unknown action\". Furthermore, \"task-sample-1\" did not exist in SQLite, causing open_progress_window_internal to abort early. Consequently, no toast window was ever created, no window was ever hidden or minimized, and the process tree remained completely static throughout the entire benchmark script at 7 processes and ~383 MB working set.",
+    "obj14_real_vs_code_level": {
+      "real_verified": [
+        "Ghost toast immediate elimination upon active download deletion (verified < 500ms)",
+        "Ghost toast immediate elimination upon paused download deletion",
+        "Zero ghost task resurrection across late async progress events",
+        "Zero ghost tasks or toasts returning after application restart",
+        "Clean completion state synchronization (100% bytes, speed zeroed, eta nulled)",
+        "Multi-download card tracking and selective deletion"
+      ],
+      "code_level_structural": [
+        "win.destroy() called on hide_toast_window removes the window from Tauri and CDP",
+        "WebView2 process tree contains 1 shared renderer or separate renderers depending on Windows WebView2 runtime allocation",
+        "Document.hidden background progress throttling preserves CPU and prevents V8 GC churn while minimized"
+      ]
+    }
+  }
+}

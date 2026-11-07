@@ -157,9 +157,65 @@ pub async fn handle_message(
             NativeResponse {
                 status: "ok".to_string(),
                 action: "show_window".to_string(),
-                version: Some("2.0.0".to_string()),
+                version: Some("1.0.1".to_string()),
                 message: Some("Window focus request emitted to persistent desktop engine".to_string()),
                 ..Default::default()
+            }
+        },
+
+        "hide_window" => {
+            manager.event_bus().emit(tdm_core::DownloadEvent::HideWindow);
+            NativeResponse {
+                status: "ok".to_string(),
+                action: "hide_window".to_string(),
+                version: Some("1.0.1".to_string()),
+                message: Some("Window hide request emitted to persistent desktop engine".to_string()),
+                ..Default::default()
+            }
+        },
+
+        "open_progress" => {
+            if let Some(id) = msg.job_id {
+                manager
+                    .event_bus()
+                    .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: id.clone() });
+                NativeResponse {
+                    status: "ok".to_string(),
+                    action: "open_progress".to_string(),
+                    job_id: Some(id),
+                    version: Some("1.0.1".to_string()),
+                    message: Some("Progress toast window requested".to_string()),
+                    ..Default::default()
+                }
+            } else {
+                NativeResponse {
+                    status: "error".to_string(),
+                    action: "open_progress".to_string(),
+                    message: Some("Missing 'job_id'".to_string()),
+                    ..Default::default()
+                }
+            }
+        },
+
+        "delete_download" => {
+            if let Some(id) = msg.job_id {
+                let _ = manager.delete_download(&id, false);
+                NativeResponse {
+                    status: "ok".to_string(),
+                    action: "delete_download".to_string(),
+                    job_id: Some(id),
+                    state: Some("deleted".to_string()),
+                    version: Some("1.0.1".to_string()),
+                    message: Some("Download deleted".to_string()),
+                    ..Default::default()
+                }
+            } else {
+                NativeResponse {
+                    status: "error".to_string(),
+                    action: "delete_download".to_string(),
+                    message: Some("Missing 'job_id'".to_string()),
+                    ..Default::default()
+                }
             }
         },
 

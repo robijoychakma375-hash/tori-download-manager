@@ -978,7 +978,6 @@ pub async fn update_toast_bounds(
 pub async fn hide_toast_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("progress_toast") {
         let _ = win.destroy();
-        crate::lifecycle::trim_memory();
     }
     Ok(())
 }

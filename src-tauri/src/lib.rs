@@ -125,6 +125,9 @@ pub fn run() {
                                         .await;
                             });
                         }
+                        tdm_core::DownloadEvent::Deleted { id } => {
+                            let _ = bus_app_handle.emit("download-deleted", id);
+                        }
                         _ => {}
                     }
                     let _ = bus_app_handle.emit("download-event", &event);
