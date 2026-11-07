@@ -1217,6 +1217,10 @@ async fn handle_events(
                     let payload = serde_json::json!({ "id": id });
                     yield Ok(Event::default().event("open_progress").data(payload.to_string()));
                 }
+                tdm_core::DownloadEvent::Deleted { id } => {
+                    let payload = serde_json::json!({ "id": id });
+                    yield Ok(Event::default().event("deleted").data(payload.to_string()));
+                }
             }
         }
     };

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import './App.css';
@@ -240,6 +240,7 @@ export function App() {
   }
 
   const [downloads, setDownloads] = useState<DownloadJob[]>([]);
+  const lastProgressRenderRef = useRef<number>(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastFocusedId, setLastFocusedId] = useState<string | null>(null);
   const [currentCategory, setCurrentCategory] = useState<CategoryKey>('all');
@@ -423,12 +424,27 @@ export function App() {
     checkExt();
     const extInterval = setInterval(checkExt, 8000);
 
+    // Handle visibility changes to flush UI updates when returning to foreground
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        loadDownloads();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     // Listen to real-time events from Rust engine EventBus
     const unlistenPromise = listen<DownloadEvent>('download-event', (event) => {
       const payload = event.payload;
 
       if (payload.type === 'Progress') {
         const p = payload.payload;
+        const now = Date.now();
+        // Throttle high-frequency table updates when hidden to preserve memory and CPU
+        if (document.hidden && now - lastProgressRenderRef.current < 1500) {
+          return;
+        }
+        lastProgressRenderRef.current = now;
+
         setDownloads((prev) => {
           const exists = prev.some((j) => j.id === p.id);
           if (!exists) {
@@ -460,14 +476,18 @@ export function App() {
           }
           return prev.map((job) => {
             if (job.id === sc.id) {
+              const isDone = sc.state === 'completed';
+              const isPaused = sc.state === 'paused';
               return {
                 ...job,
                 state: sc.state,
                 error_message: sc.error,
-                speed_bps:
-                  sc.state === 'completed' || sc.state === 'paused'
-                    ? 0
-                    : job.speed_bps,
+                speed_bps: isDone || isPaused ? 0 : job.speed_bps,
+                eta_seconds: isDone || isPaused ? null : job.eta_seconds,
+                downloaded_bytes:
+                  isDone && job.total_bytes && job.total_bytes > 0
+                    ? job.total_bytes
+                    : job.downloaded_bytes,
               };
             }
             return job;
@@ -477,12 +497,36 @@ export function App() {
         if (sc.state === 'completed' || sc.state === 'failed' || sc.state === 'downloading') {
           loadDownloads();
         }
+      } else if (payload.type === 'Deleted') {
+        const { id } = payload.payload;
+        setDownloads((prev) => prev.filter((j) => j.id !== id));
+        setSelectedIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    });
+
+    const unlistenDeletedPromise = listen<string>('download-deleted', (event) => {
+      const id = event.payload;
+      if (id) {
+        setDownloads((prev) => prev.filter((j) => j.id !== id));
+        setSelectedIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
       }
     });
 
     return () => {
       clearInterval(extInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       unlistenPromise.then((unlisten) => unlisten());
+      unlistenDeletedPromise.then((unlisten) => unlisten());
     };
   }, [loadDownloads]);
 

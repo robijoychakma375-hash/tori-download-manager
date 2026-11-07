@@ -478,6 +478,57 @@ Integrate TORI Download Manager with the confirmed GitHub repository (`https://g
 - [x] Commit verified changes locally.
 - [x] Strictly do NOT push remote, do NOT create GitHub release, do NOT publish.
 
+---
+
+# TORI Download Manager — Gate 14.1: v1.0.1 Bug Fixes & Memory Optimization
+
+### Objective
+Resolve the ghost floating download toast issue, synchronize download completion states, and optimize WebView2 memory usage while establishing the unpublished `v1.0.1` development versioning policy.
+
+### Specific Measurable Next Milestones
+
+#### Milestone 1: Development Version Configuration (`v1.0.1`)
+- [x] Configure development version `1.0.1` in `Cargo.toml`, `src-tauri/tauri.conf.json`, `ui/package.json`.
+- [x] Update About page in `SettingsModal.tsx` to identify dynamic development build (`Version {appVersion} (Development Build)`).
+- [x] Preserve browser extension version `1.0.0` and preserve production `release/v1.0.0/` assets intact.
+- [x] Safeguard build scripts so development artifacts do not clobber `release/v1.0.0/`.
+
+#### Milestone 2: Ghost Toast Bug Investigation & Proper Lifecycle Fix
+- [x] Trace complete deletion pipeline: UI `DeleteDownloadModal` -> `delete_download` IPC -> `Engine::delete_download` -> SQLite delete -> Toast cleanup.
+- [x] Investigate why deleted tasks like "LG 4K DEMO HDR 2018 (60FPS)" persist or reappear in `DownloadToast.tsx`.
+- [x] Check active ID tracking in `DownloadToast.tsx` (`activeId`, `persistedHistory`, `dismissedIdsRef`, `localStorage`).
+- [x] Emit explicit deletion event (`download_deleted` and `DownloadEvent::Deleted`) from Rust to all windows.
+- [x] In `DownloadToast.tsx`, immediately purge deleted ID from state, history, and active tracking.
+- [x] Guard progress event handler (`download_progress`) so late async events for deleted IDs are strictly dropped.
+- [x] Ensure deleted tasks never reappear across restarts or window show/hide cycles.
+
+#### Milestone 3: Download Completion State Synchronization
+- [x] Investigate completion flow: worker termination -> final disk sync -> SQLite status update -> completion event.
+- [x] Fix instances where download row displays 100% with lingering ETA or "Live" status.
+- [x] Explicitly zero remaining time and speed upon entering completed status (`speed = 0`, `eta = 0`).
+- [x] Synchronize sidebar category counts with actual SQLite status.
+- [x] Ensure main download table and floating progress toast show identical completed state.
+
+#### Milestone 4: WebView2 Memory Optimization
+- [x] Audit WebView2 process tree: identify processes, memory footprints, and roles.
+- [x] Investigate toast window: review whether toast window should be hidden or closed when dismissed, or if React state/intervals cause bloat.
+- [x] Destroy empty toast window (`win.destroy()`) to eliminate dedicated ~55 MB renderer process.
+- [x] Audit React listeners, DOM nodes, intervals, and memory leaks.
+- [x] Throttle UI progress re-renders when document is hidden to minimize V8 heap and GC churn.
+- [x] Apply safe, non-destructive memory optimizations without unsafe flags or disabling sandboxing.
+
+#### Milestone 5: Controlled Memory Benchmarking (Scenarios A through K)
+- [x] Benchmark Total Process Tree Working Set, WebView2 Working Set, Private Bytes, CPU across scenarios A-K.
+- [x] Record transparent, honest measurements before and after optimization.
+- [x] Export telemetry dataset to `docs/reports/gate14_1_memory_benchmark.json`.
+
+#### Milestone 6: Regression Testing, Report & Local Commits
+- [x] Run `cargo test --workspace` (161 tests passed).
+- [x] Run QA and production release guard suites (`verify_gate14_1_qa.js` 37/37, `verify_production_release.ps1` 15/15).
+- [x] Create `docs/reports/TORI_V1.0.1_GATE_14_1_REPORT.md`.
+- [x] Maintain on `dev/v1.0.1` branch; strictly do NOT push or publish.
+
+
 
 
 

@@ -1,0 +1,123 @@
+﻿[
+    {
+        "Scenario":  "A: Cold Start (Idle)",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  382.87,
+                      "PrivateBytes_MB":  186.2,
+                      "CommitSize_MB":  186.45,
+                      "PageFaults":  112646,
+                      "CpuSeconds":  2.08
+                  }
+    },
+    {
+        "Scenario":  "B: Minimized to Tray",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  383.04,
+                      "PrivateBytes_MB":  186.25,
+                      "CommitSize_MB":  186.25,
+                      "PageFaults":  112712,
+                      "CpuSeconds":  2.09
+                  }
+    },
+    {
+        "Scenario":  "C: Restored from Tray",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  383.14,
+                      "PrivateBytes_MB":  186.3,
+                      "CommitSize_MB":  186.3,
+                      "PageFaults":  112739,
+                      "CpuSeconds":  2.09
+                  }
+    },
+    {
+        "Scenario":  "D: 30 Hide/Restore Cycles",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  383.3,
+                      "PrivateBytes_MB":  186.34,
+                      "CommitSize_MB":  186.34,
+                      "PageFaults":  112788,
+                      "CpuSeconds":  2.11
+                  }
+    },
+    {
+        "Scenario":  "E: Toast Window (1 Active)",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  383.32,
+                      "PrivateBytes_MB":  186.34,
+                      "CommitSize_MB":  186.34,
+                      "PageFaults":  112795,
+                      "CpuSeconds":  2.11
+                  }
+    },
+    {
+        "Scenario":  "F: Toast (4 Items)",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  383.48,
+                      "PrivateBytes_MB":  186.36,
+                      "CommitSize_MB":  186.36,
+                      "PageFaults":  112841,
+                      "CpuSeconds":  2.11
+                  }
+    },
+    {
+        "Scenario":  "G: Toast Closed and Reclaimed",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  383.78,
+                      "PrivateBytes_MB":  186.38,
+                      "CommitSize_MB":  186.38,
+                      "PageFaults":  112924,
+                      "CpuSeconds":  2.11
+                  }
+    },
+    {
+        "Scenario":  "H: Table Navigation",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  383.88,
+                      "PrivateBytes_MB":  186.39,
+                      "CommitSize_MB":  186.39,
+                      "PageFaults":  112952,
+                      "CpuSeconds":  2.11
+                  }
+    },
+    {
+        "Scenario":  "I: Settings \u0026 About Page",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  383.88,
+                      "PrivateBytes_MB":  186.39,
+                      "CommitSize_MB":  186.39,
+                      "PageFaults":  112952,
+                      "CpuSeconds":  2.11
+                  }
+    },
+    {
+        "Scenario":  "J: Deletion / Ghost Purge",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  383.88,
+                      "PrivateBytes_MB":  186.39,
+                      "CommitSize_MB":  186.39,
+                      "PageFaults":  112952,
+                      "CpuSeconds":  2.11
+                  }
+    },
+    {
+        "Scenario":  "K: Background in Tray",
+        "Stats":  {
+                      "ProcessCount":  7,
+                      "WorkingSet_MB":  393.79,
+                      "PrivateBytes_MB":  186.65,
+                      "CommitSize_MB":  186.65,
+                      "PageFaults":  116073,
+                      "CpuSeconds":  2.36
+                  }
+    }
+]

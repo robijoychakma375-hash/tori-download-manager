@@ -907,7 +907,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 TORI Download Manager
               </h2>
               <div className="mut" style={{ fontSize: 13 }}>
-                Version {appVersion} (Production Release)
+                Version {appVersion} {appVersion === '1.0.0' ? '(Production Release)' : '(Development Build)'}
               </div>
               <div style={{ fontSize: 12, color: 'var(--mut)', marginTop: 2 }}>
                 Developed by TORI Download Manager Team

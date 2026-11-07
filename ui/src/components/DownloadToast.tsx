@@ -79,6 +79,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
   const hoveredRef = useRef<Record<string, boolean>>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const dismissedIdsRef = useRef<Set<string>>(new Set());
+  const deletedIdsRef = useRef<Set<string>>(new Set());
   const isUserDraggingRef = useRef<boolean>(false);
   const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const isTextMovedRef = useRef<boolean>(false);
@@ -122,21 +123,60 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
     }
   }, []);
 
-  // Fetch job helper
-  const fetchJob = useCallback(async (id: string) => {
-    try {
-      const job = await invoke<DownloadJob | null>('get_download', { id });
-      if (job) {
-        setJobs((prev) => ({ ...prev, [id]: job }));
-        const c = await invoke<ChunkRecord[]>('get_download_chunks', { id }).catch(() => []);
-        if (c && c.length > 0) {
-          setChunks((prev) => ({ ...prev, [id]: c }));
-        }
+  // Centralized deletion / removal handler ensuring ghost tasks cannot persist
+  const handleTaskDeleted = useCallback((id: string) => {
+    deletedIdsRef.current.add(id);
+    dismissedIdsRef.current.add(id);
+    setActiveIds((prev) => {
+      const next = prev.filter((x) => x !== id);
+      if (next.length === 0) {
+        invoke('hide_toast_window').catch(() => {});
       }
-    } catch (err) {
-      console.warn(`Failed to fetch job ${id}:`, err);
-    }
+      return next;
+    });
+    setJobs((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setChunks((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setExpanded((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   }, []);
+
+  // Fetch job helper
+  const fetchJob = useCallback(
+    async (id: string) => {
+      if (deletedIdsRef.current.has(id)) return;
+      try {
+        const job = await invoke<DownloadJob | null>('get_download', { id });
+        if (job) {
+          setJobs((prev) => ({ ...prev, [id]: job }));
+          const c = await invoke<ChunkRecord[]>('get_download_chunks', { id }).catch(() => []);
+          if (c && c.length > 0) {
+            setChunks((prev) => ({ ...prev, [id]: c }));
+          }
+        } else {
+          // Job does not exist in SQLite database (was deleted)
+          handleTaskDeleted(id);
+        }
+      } catch (err) {
+        console.warn(`Failed to fetch job ${id}:`, err);
+        handleTaskDeleted(id);
+      }
+    },
+    [handleTaskDeleted]
+  );
 
   // Initial load
   useEffect(() => {
@@ -290,9 +330,10 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
       const payload = event.payload;
       if (payload.type === 'Progress') {
         const prog = payload.payload;
-        if (!dismissedIdsRef.current.has(prog.id)) {
-          setActiveIds((prev) => (prev.includes(prog.id) ? prev : [...prev, prog.id]));
+        if (deletedIdsRef.current.has(prog.id) || dismissedIdsRef.current.has(prog.id)) {
+          return;
         }
+        setActiveIds((prev) => (prev.includes(prog.id) ? prev : [...prev, prog.id]));
         setJobs((prev) => {
           const existing = prev[prog.id];
           if (!existing) {
@@ -313,29 +354,49 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
         });
       } else if (payload.type === 'StateChanged') {
         const { id, state, error } = payload.payload;
+        if (deletedIdsRef.current.has(id)) return;
         setJobs((prev) => {
           const existing = prev[id];
           if (!existing) return prev;
+          const isDone = state === 'completed';
+          const isPaused = state === 'paused';
           return {
             ...prev,
             [id]: {
               ...existing,
               state,
+              speed_bps: isDone || isPaused ? 0 : existing.speed_bps,
+              eta_seconds: isDone || isPaused ? null : existing.eta_seconds,
+              downloaded_bytes:
+                isDone && existing.total_bytes && existing.total_bytes > 0
+                  ? existing.total_bytes
+                  : existing.downloaded_bytes,
               error_message: error !== undefined && error !== null ? error : existing.error_message,
             },
           };
         });
+      } else if (payload.type === 'Deleted') {
+        const { id } = payload.payload;
+        handleTaskDeleted(id);
       } else if (payload.type === 'OpenProgressWindow') {
         const { id } = payload.payload;
+        if (deletedIdsRef.current.has(id)) return;
         dismissedIdsRef.current.delete(id);
         setActiveIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
         fetchJob(id);
       }
     });
 
-    const unlistenAdd = listen<string>('toast-add-download', (event) => {
+    const unlistenDeleted = listen<string>('download-deleted', (event) => {
       const id = event.payload;
       if (id) {
+        handleTaskDeleted(id);
+      }
+    });
+
+    const unlistenAdd = listen<string>('toast-add-download', (event) => {
+      const id = event.payload;
+      if (id && !deletedIdsRef.current.has(id)) {
         dismissedIdsRef.current.delete(id);
         setActiveIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
         fetchJob(id);
@@ -344,9 +405,10 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
 
     return () => {
       unlistenProgress.then((u) => u());
+      unlistenDeleted.then((u) => u());
       unlistenAdd.then((u) => u());
     };
-  }, [fetchJob]);
+  }, [fetchJob, handleTaskDeleted]);
 
   const jobsRef = useRef<Record<string, DownloadJob>>(jobs);
   jobsRef.current = jobs;
@@ -356,16 +418,18 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
     if (activeIds.length === 0) return;
 
     const interval = setInterval(async () => {
-      const activeRunning = activeIds.some(
-        (id) =>
-          jobsRef.current[id] &&
-          ['downloading', 'probing', 'pausing', 'verifying'].includes(jobsRef.current[id].state)
-      );
-      if (!activeRunning) return;
-
       try {
         const all = await invoke<DownloadJob[]>('list_downloads');
         if (all) {
+          const existingIds = new Set(all.map((j) => j.id));
+          // Identify any active IDs that have been deleted or missing from backend
+          const missingIds = activeIds.filter((id) => !existingIds.has(id));
+          if (missingIds.length > 0) {
+            for (const mid of missingIds) {
+              handleTaskDeleted(mid);
+            }
+          }
+
           setJobs((prev) => {
             let changed = false;
             const updated = { ...prev };
@@ -384,7 +448,7 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [activeIds]);
+  }, [activeIds, handleTaskDeleted]);
 
   const handleToggleExpand = useCallback(async (id: string) => {
     setExpanded((prev) => {
@@ -803,7 +867,12 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
         const total = job.total_bytes && job.total_bytes > 0 ? job.total_bytes : 0;
         const downloaded = job.downloaded_bytes || 0;
         const hasKnownTotal = total > 0;
-        const pct = hasKnownTotal ? Math.min(100, Math.max(0, (downloaded / total) * 100)) : 0;
+        const isFinishing = isDown && hasKnownTotal && downloaded >= total;
+        const pct = isComplete
+          ? 100
+          : hasKnownTotal
+          ? Math.min(100, Math.max(0, (downloaded / total) * 100))
+          : 0;
 
         // Empty ring if total is unknown or starting, full ring if complete, else dashoffset
         const offset = isComplete
@@ -827,6 +896,8 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
           subtext = hasKnownTotal
             ? `${fmtProgressBytes(downloaded, total)} · Paused`
             : `${fmtB(downloaded)} · Paused`;
+        } else if (isFinishing) {
+          subtext = `${fmtB(total)} · Finishing…`;
         } else {
           // Active states: downloading, probing, verifying
           if (downloaded === 0) {
@@ -850,6 +921,9 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
         } else if (isPaused) {
           etaNum = 'Paused';
           etaSub = hasKnownTotal ? `${Math.floor(pct)}%` : '';
+        } else if (isFinishing) {
+          etaNum = 'Finishing…';
+          etaSub = 'Sync';
         } else {
           // Active downloading
           if (downloaded === 0) {

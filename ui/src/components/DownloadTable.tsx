@@ -24,16 +24,19 @@ const TableRow = React.memo<TableRowProps>(
     const category = typeOfJob(job);
     const total = job.total_bytes || 0;
     const downloaded = job.downloaded_bytes || 0;
-    const percent =
-      total > 0
-        ? Math.min(100, (downloaded / total) * 100)
-        : job.state === 'completed'
-        ? 100
-        : 0;
     const isComplete = job.state === 'completed';
     const isPaused =
       job.state === 'paused' || job.state === 'queued' || job.state === 'failed';
     const isDownloading = job.state === 'downloading';
+    const hasKnownTotal = total > 0;
+    const isFinishing = isDownloading && hasKnownTotal && downloaded >= total;
+
+    const percent =
+      isComplete
+        ? 100
+        : hasKnownTotal
+        ? Math.min(100, Math.max(0, (downloaded / total) * 100))
+        : 0;
 
     return (
       <div
@@ -86,19 +89,21 @@ const TableRow = React.memo<TableRowProps>(
           <i className={isPaused ? 'pz' : isComplete ? 'dn' : ''}>
             <b style={{ width: `${percent}%` }} />
           </i>
-          <span>{isComplete ? '100%' : `${Math.floor(percent)}%`}</span>
+          <span>{isComplete ? '100%' : isFinishing ? 'Finishing…' : `${Math.floor(percent)}%`}</span>
         </span>
 
         <span className="mut">
-          {isDownloading
-            ? fmtT(job.eta_seconds)
-            : isComplete
+          {isComplete
             ? ''
+            : isFinishing
+            ? 'Finishing…'
+            : isDownloading
+            ? fmtT(job.eta_seconds)
             : stateLabel(job.state)}
         </span>
 
         <span className="mut">
-          {isDownloading ? fmtSp(job.speed_bps) : ''}
+          {isDownloading && !isFinishing ? fmtSp(job.speed_bps) : ''}
         </span>
 
         <span className="mut">{formatAdded(job.created_at)}</span>

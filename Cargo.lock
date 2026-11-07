@@ -5103,7 +5103,7 @@ dependencies = [
 
 [[package]]
 name = "tdm-cli"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "tdm-core",
  "tokio",
@@ -5114,7 +5114,7 @@ dependencies = [
 
 [[package]]
 name = "tdm-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -5142,7 +5142,7 @@ dependencies = [
 
 [[package]]
 name = "tdm-native-host"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "async-stream",
  "axum",
@@ -5453,7 +5453,7 @@ checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "tori-download-manager"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "chrono",
  "hex",

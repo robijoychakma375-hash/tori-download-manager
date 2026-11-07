@@ -390,6 +390,7 @@ impl Database {
 
     pub fn delete_job(&self, download_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let _ = conn.execute("DELETE FROM download_chunks WHERE download_id = ?1", params![download_id]);
         conn.execute("DELETE FROM downloads WHERE id = ?1", params![download_id])?;
         Ok(())
     }

@@ -10,6 +10,9 @@ pub enum DownloadEvent {
         state: JobState,
         error: Option<String>,
     },
+    Deleted {
+        id: String,
+    },
     ShowWindow,
     HideWindow,
     OpenProgressWindow {

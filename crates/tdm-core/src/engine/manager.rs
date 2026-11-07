@@ -799,6 +799,8 @@ impl DownloadManager {
         }
 
         self.db.delete_job(id)?;
+        self.event_bus
+            .emit(DownloadEvent::Deleted { id: id.to_string() });
         let _ = self.process_queue();
         Ok(())
     }

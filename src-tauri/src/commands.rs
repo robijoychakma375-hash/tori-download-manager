@@ -141,23 +141,29 @@ pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadJo
 pub async fn delete_download(
     id: String,
     delete_files: bool,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     state
         .manager
         .delete_download(&id, delete_files)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    let _ = app.emit("download-deleted", &id);
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn delete_downloads(
     ids: Vec<String>,
     delete_files: bool,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
     let mut deleted = Vec::new();
     for id in ids {
         if state.manager.delete_download(&id, delete_files).is_ok() {
+            let _ = app.emit("download-deleted", &id);
             deleted.push(id);
         }
     }
@@ -971,7 +977,7 @@ pub async fn update_toast_bounds(
 #[tauri::command]
 pub async fn hide_toast_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("progress_toast") {
-        let _ = win.hide();
+        let _ = win.destroy();
         crate::lifecycle::trim_memory();
     }
     Ok(())
