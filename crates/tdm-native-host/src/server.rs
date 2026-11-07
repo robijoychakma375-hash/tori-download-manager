@@ -163,29 +163,50 @@ pub fn is_valid_host(host_str: &str) -> bool {
 }
 
 pub fn is_allowed_origin(origin_str: &str, allowed_ids: &[String]) -> bool {
-    let lower = origin_str.trim().to_lowercase();
-    // Allow browser extensions (Chrome, Edge, Brave, etc.)
-    if lower.starts_with("chrome-extension://") || lower.starts_with("edge-extension://") {
-        if allowed_ids.is_empty() {
-            return true;
-        }
-        for id in allowed_ids {
-            if lower.contains(id) {
-                return true;
-            }
-        }
-        return true;
+    let trimmed = origin_str.trim();
+    if trimmed.is_empty() {
+        return false;
     }
-    // Allow local desktop app / webview
-    if lower.starts_with("tauri://")
-        || lower.starts_with("http://tauri.localhost")
-        || lower.starts_with("https://tauri.localhost")
-        || lower == "null"
+
+    let lower = trimmed.to_lowercase();
+
+    // 1. Browser extension validation (Chrome, Edge, Chromium)
+    let ext_id_opt = lower
+        .strip_prefix("chrome-extension://")
+        .or_else(|| lower.strip_prefix("edge-extension://"));
+
+    if let Some(rest) = ext_id_opt {
+        // Strip single optional trailing slash
+        let clean_id = rest.strip_suffix('/').unwrap_or(rest);
+
+        // Extension ID must be non-empty, pure alphanumeric, and contain no path, port, credentials, or query
+        if clean_id.is_empty() || !clean_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return false;
+        }
+
+        // If allowlist is empty, deny all extensions (never default-allow)
+        if allowed_ids.is_empty() {
+            return false;
+        }
+
+        // Exact match against authorized extension IDs (case-insensitive)
+        return allowed_ids
+            .iter()
+            .any(|allowed| allowed.trim().eq_ignore_ascii_case(clean_id));
+    }
+
+    // 2. Trusted local desktop app / Tauri origins (exact match, with optional trailing slash)
+    let clean_origin = lower.strip_suffix('/').unwrap_or(&lower);
+    if clean_origin == "tauri://localhost"
+        || clean_origin == "tauri://"
+        || clean_origin == "http://tauri.localhost"
+        || clean_origin == "https://tauri.localhost"
+        || clean_origin == "null"
     {
         return true;
     }
 
-    // Explicitly reject all web page origins (e.g. https://google.com, http://evil.com)
+    // 3. Explicitly reject all other origins (arbitrary websites, spoofed schemes, etc.)
     false
 }
 
@@ -1356,10 +1377,35 @@ pub async fn start_server(
     let port = get_configured_port(&db);
     let token = get_or_create_token(&db);
 
-    let allowed_extension_ids = vec![
+    let mut allowed_extension_ids = vec![
         "jfnfgmcbgapcpieaonbaolgebjaejcdm".to_string(), // Deterministic Chrome/Edge extension ID
         "bflchfddfgkfglmjapohkjmldepflkbe".to_string(),
     ];
+
+    // Support trusted development extension ID from database setting or environment variable
+    if let Ok(Some(custom_id)) = db.get_setting("custom_extension_id") {
+        let trimmed = custom_id.trim();
+        if !trimmed.is_empty()
+            && !allowed_extension_ids
+                .iter()
+                .any(|id| id.eq_ignore_ascii_case(trimmed))
+        {
+            allowed_extension_ids.push(trimmed.to_string());
+        }
+    }
+
+    if let Ok(env_ids) = std::env::var("TORI_ALLOWED_EXTENSION_ID") {
+        for env_id in env_ids.split(',') {
+            let trimmed = env_id.trim();
+            if !trimmed.is_empty()
+                && !allowed_extension_ids
+                    .iter()
+                    .any(|id| id.eq_ignore_ascii_case(trimmed))
+            {
+                allowed_extension_ids.push(trimmed.to_string());
+            }
+        }
+    }
 
     // Try preferred port, and if conflict, try next available ports
     let mut bound_listener = None;
@@ -1418,4 +1464,139 @@ pub async fn start_server(
     });
 
     Ok((bound_port, token))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_allowed_origin_authorized_chrome() {
+        let allowed = vec!["jfnfgmcbgapcpieaonbaolgebjaejcdm".to_string()];
+        assert!(is_allowed_origin(
+            "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm",
+            &allowed
+        ));
+        assert!(is_allowed_origin(
+            "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm/",
+            &allowed
+        ));
+        assert!(is_allowed_origin(
+            "CHROME-EXTENSION://JFNFGMCBGAPCPIEAONBAOLGEBJAEJCDM",
+            &allowed
+        ));
+    }
+
+    #[test]
+    fn test_is_allowed_origin_authorized_edge() {
+        let allowed = vec!["bflchfddfgkfglmjapohkjmldepflkbe".to_string()];
+        assert!(is_allowed_origin(
+            "edge-extension://bflchfddfgkfglmjapohkjmldepflkbe",
+            &allowed
+        ));
+        assert!(is_allowed_origin(
+            "edge-extension://bflchfddfgkfglmjapohkjmldepflkbe/",
+            &allowed
+        ));
+    }
+
+    #[test]
+    fn test_is_allowed_origin_unauthorized_extension() {
+        let allowed = vec!["jfnfgmcbgapcpieaonbaolgebjaejcdm".to_string()];
+        assert!(!is_allowed_origin(
+            "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            &allowed
+        ));
+        assert!(!is_allowed_origin(
+            "edge-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            &allowed
+        ));
+    }
+
+    #[test]
+    fn test_is_allowed_origin_spoofed_substring() {
+        let allowed = vec!["jfnfgmcbgapcpieaonbaolgebjaejcdm".to_string()];
+        // Substring prefix or suffix attacks
+        assert!(!is_allowed_origin(
+            "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm_extra",
+            &allowed
+        ));
+        assert!(!is_allowed_origin(
+            "chrome-extension://fake_jfnfgmcbgapcpieaonbaolgebjaejcdm",
+            &allowed
+        ));
+        assert!(!is_allowed_origin(
+            "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm.attacker.com",
+            &allowed
+        ));
+        assert!(!is_allowed_origin(
+            "https://jfnfgmcbgapcpieaonbaolgebjaejcdm",
+            &allowed
+        ));
+    }
+
+    #[test]
+    fn test_is_allowed_origin_malformed() {
+        let allowed = vec!["jfnfgmcbgapcpieaonbaolgebjaejcdm".to_string()];
+        assert!(!is_allowed_origin("chrome-extension://", &allowed));
+        assert!(!is_allowed_origin("chrome-extension:///", &allowed));
+        assert!(!is_allowed_origin(
+            "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm:8080",
+            &allowed
+        ));
+        assert!(!is_allowed_origin(
+            "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm@attacker.com",
+            &allowed
+        ));
+        assert!(!is_allowed_origin(
+            "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm/path/page.html",
+            &allowed
+        ));
+        assert!(!is_allowed_origin("", &allowed));
+        assert!(!is_allowed_origin("   ", &allowed));
+    }
+
+    #[test]
+    fn test_is_allowed_origin_empty_allowlist() {
+        let empty: Vec<String> = vec![];
+        assert!(!is_allowed_origin(
+            "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm",
+            &empty
+        ));
+        assert!(!is_allowed_origin(
+            "edge-extension://bflchfddfgkfglmjapohkjmldepflkbe",
+            &empty
+        ));
+    }
+
+    #[test]
+    fn test_is_allowed_origin_trusted_desktop_and_tauri() {
+        let allowed = vec!["jfnfgmcbgapcpieaonbaolgebjaejcdm".to_string()];
+        assert!(is_allowed_origin("tauri://localhost", &allowed));
+        assert!(is_allowed_origin("tauri://localhost/", &allowed));
+        assert!(is_allowed_origin("http://tauri.localhost", &allowed));
+        assert!(is_allowed_origin("http://tauri.localhost/", &allowed));
+        assert!(is_allowed_origin("https://tauri.localhost", &allowed));
+        assert!(is_allowed_origin("null", &allowed));
+
+        // Reject spoofed desktop domains
+        assert!(!is_allowed_origin(
+            "http://tauri.localhost.attacker.com",
+            &allowed
+        ));
+        assert!(!is_allowed_origin(
+            "https://tauri.localhost.attacker.com",
+            &allowed
+        ));
+        assert!(!is_allowed_origin("http://tauri.localhost:3000", &allowed));
+    }
+
+    #[test]
+    fn test_is_allowed_origin_rejects_websites() {
+        let allowed = vec!["jfnfgmcbgapcpieaonbaolgebjaejcdm".to_string()];
+        assert!(!is_allowed_origin("https://google.com", &allowed));
+        assert!(!is_allowed_origin("https://youtube.com", &allowed));
+        assert!(!is_allowed_origin("http://localhost:3000", &allowed));
+        assert!(!is_allowed_origin("http://127.0.0.1:8080", &allowed));
+    }
 }

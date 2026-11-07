@@ -107,54 +107,166 @@ async fn test_origin_validation_and_cors() {
     let base_url = format!("http://127.0.0.1:{}", port);
 
     // 1. Arbitrary web page origin must be rejected with 403 Forbidden
-    let bad_origin_resp = client
+    let bad_web_resp = client
         .get(format!("{}/api/v1/ping", base_url))
         .header(HOST, format!("127.0.0.1:{}", port))
         .header(ORIGIN, "https://malicious-site.example.com")
         .send()
         .await
         .expect("Request failed");
+    assert_eq!(bad_web_resp.status(), 403);
 
-    assert_eq!(bad_origin_resp.status(), 403);
-
-    // 2. Extension origin must be permitted and return explicit CORS header
-    let ext_origin = "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm";
-    let good_origin_resp = client
+    // 2. Authorized Chrome extension origin must be permitted and return explicit CORS header
+    let chrome_origin = "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm";
+    let chrome_resp = client
         .get(format!("{}/api/v1/ping", base_url))
         .header(HOST, format!("127.0.0.1:{}", port))
-        .header(ORIGIN, ext_origin)
+        .header(ORIGIN, chrome_origin)
         .header("X-Tori-Token", &token)
         .send()
         .await
         .expect("Request failed");
-
-    assert_eq!(good_origin_resp.status(), 200);
-    let allow_origin = good_origin_resp
+    assert_eq!(chrome_resp.status(), 200);
+    let allow_origin = chrome_resp
         .headers()
         .get("access-control-allow-origin")
         .expect("Missing Access-Control-Allow-Origin header");
-    assert_eq!(allow_origin, ext_origin);
+    assert_eq!(allow_origin, chrome_origin);
 
-    // 3. Preflight OPTIONS request
-    let preflight_resp = client
+    // 3. Authorized Edge extension origin must be permitted
+    let edge_origin = "edge-extension://bflchfddfgkfglmjapohkjmldepflkbe";
+    let edge_resp = client
+        .get(format!("{}/api/v1/ping", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header(ORIGIN, edge_origin)
+        .header("X-Tori-Token", &token)
+        .send()
+        .await
+        .expect("Request failed");
+    assert_eq!(edge_resp.status(), 200);
+    assert_eq!(
+        edge_resp
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        edge_origin
+    );
+
+    // 4. Unauthorized extension origin must be rejected with 403 Forbidden
+    let unauth_ext_resp = client
+        .get(format!("{}/api/v1/ping", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header(ORIGIN, "chrome-extension://unauthorizedextensionid12345678")
+        .send()
+        .await
+        .expect("Request failed");
+    assert_eq!(unauth_ext_resp.status(), 403);
+
+    // 5. Spoofed origin containing authorized ID as substring must be rejected with 403
+    let spoof_sub_resp = client
+        .get(format!("{}/api/v1/ping", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header(
+            ORIGIN,
+            "chrome-extension://fake_jfnfgmcbgapcpieaonbaolgebjaejcdm",
+        )
+        .send()
+        .await
+        .expect("Request failed");
+    assert_eq!(spoof_sub_resp.status(), 403);
+
+    // 6. Malformed origin with port must be rejected with 403
+    let malformed_resp = client
+        .get(format!("{}/api/v1/ping", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header(
+            ORIGIN,
+            "chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm:8080",
+        )
+        .send()
+        .await
+        .expect("Request failed");
+    assert_eq!(malformed_resp.status(), 403);
+
+    // 7. Valid token sent with unauthorized browser origin: origin check MUST enforce 403
+    let token_with_bad_origin = client
+        .get(format!("{}/api/v1/downloads", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header(ORIGIN, "chrome-extension://evilbadextensionorigin12345678")
+        .header("X-Tori-Token", &token)
+        .send()
+        .await
+        .expect("Request failed");
+    assert_eq!(token_with_bad_origin.status(), 403);
+
+    // 8. Preflight OPTIONS request for authorized origin -> 204 No Content with CORS headers
+    let preflight_ok = client
         .request(
             reqwest::Method::OPTIONS,
             format!("{}/api/v1/downloads", base_url),
         )
         .header(HOST, format!("127.0.0.1:{}", port))
-        .header(ORIGIN, ext_origin)
+        .header(ORIGIN, chrome_origin)
         .send()
         .await
         .expect("OPTIONS failed");
-
-    assert_eq!(preflight_resp.status(), 204);
+    assert_eq!(preflight_ok.status(), 204);
     assert_eq!(
-        preflight_resp
+        preflight_ok
             .headers()
             .get("access-control-allow-origin")
             .unwrap(),
-        ext_origin
+        chrome_origin
     );
+
+    // 9. Preflight OPTIONS request for unauthorized origin -> 403 Forbidden without CORS
+    let preflight_bad = client
+        .request(
+            reqwest::Method::OPTIONS,
+            format!("{}/api/v1/downloads", base_url),
+        )
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header(ORIGIN, "chrome-extension://unauthorizedid12345678901234")
+        .send()
+        .await
+        .expect("OPTIONS failed");
+    assert_eq!(preflight_bad.status(), 403);
+    assert!(preflight_bad
+        .headers()
+        .get("access-control-allow-origin")
+        .is_none());
+
+    // 10. Trusted desktop Tauri origin -> permitted
+    let tauri_origin = "http://tauri.localhost";
+    let tauri_resp = client
+        .get(format!("{}/api/v1/ping", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header(ORIGIN, tauri_origin)
+        .header("X-Tori-Token", &token)
+        .send()
+        .await
+        .expect("Request failed");
+    assert_eq!(tauri_resp.status(), 200);
+
+    // 11. Spoofed desktop origin -> rejected
+    let spoof_tauri = client
+        .get(format!("{}/api/v1/ping", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header(ORIGIN, "http://tauri.localhost.attacker.com")
+        .send()
+        .await
+        .expect("Request failed");
+    assert_eq!(spoof_tauri.status(), 403);
+
+    // 12. Direct non-browser request without Origin header with valid token -> permitted
+    let no_origin_resp = client
+        .get(format!("{}/api/v1/downloads", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &token)
+        .send()
+        .await
+        .expect("Request failed");
+    assert_eq!(no_origin_resp.status(), 200);
 
     shutdown.cancel();
 }
