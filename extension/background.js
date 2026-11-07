@@ -30,6 +30,155 @@ const tabGenerations = new Map();
 // Active in-flight media resolution promises to prevent duplicate fetches
 const activeResolutions = new Map();
 
+// Tabs explicitly cleared or navigated during the current service worker life
+const clearedTabsDuringStartup = new Set();
+
+// Debounce storage write timers per tab to bound storage write operations
+const storageWriteTimers = new Map();
+
+// Promise managing service worker session storage restoration
+let sessionRestorePromise = null;
+
+/**
+ * Restores detected media candidates from chrome.storage.session on service worker wake-up.
+ * Merges safely with any network candidates received while restoration was in flight.
+ */
+async function restoreSessionStorage() {
+  if (!chrome.storage || !chrome.storage.session) {
+    return;
+  }
+
+  try {
+    const allData = await chrome.storage.session.get(null);
+    const liveTabs = await chrome.tabs.query({}).catch(() => []);
+    const liveTabIds = new Set(liveTabs.map((t) => t.id));
+    const keysToRemove = [];
+
+    for (const [key, value] of Object.entries(allData || {})) {
+      if (!key.startsWith('media_tab_')) continue;
+      const tabId = parseInt(key.replace('media_tab_', ''), 10);
+      if (isNaN(tabId)) continue;
+
+      // Clean up stale session keys if tab is no longer open or was cleared during startup
+      if (!liveTabIds.has(tabId) || clearedTabsDuringStartup.has(tabId)) {
+        keysToRemove.push(key);
+        continue;
+      }
+
+      if (Array.isArray(value) && value.length > 0) {
+        const existing = tabMediaCache.get(tabId) || [];
+        if (existing.length === 0) {
+          tabMediaCache.set(tabId, value.slice(-MAX_CANDIDATES_PER_TAB));
+        } else {
+          // Merge: preserved restored items + newly arrived items in this wake cycle (dedup by url)
+          const seenUrls = new Set(value.map((c) => c.url));
+          const merged = [...value];
+          for (const item of existing) {
+            if (!seenUrls.has(item.url)) {
+              seenUrls.add(item.url);
+              merged.push(item);
+            }
+          }
+          if (merged.length > MAX_CANDIDATES_PER_TAB) {
+            merged.splice(0, merged.length - MAX_CANDIDATES_PER_TAB);
+          }
+          tabMediaCache.set(tabId, merged);
+        }
+
+        // Restore badge count if enabled
+        if (extSettings.badge !== false) {
+          const count = (tabMediaCache.get(tabId) || []).length;
+          if (count > 0) {
+            chrome.action.setBadgeText({ tabId, text: String(count) }).catch(() => {});
+            chrome.action.setBadgeBackgroundColor({ tabId, color: '#6366f1' }).catch(() => {});
+          }
+        }
+      }
+    }
+
+    if (keysToRemove.length > 0) {
+      await chrome.storage.session.remove(keysToRemove).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('[TORI] Failed to restore session media cache:', err);
+  }
+}
+
+function ensureSessionRestored() {
+  if (!sessionRestorePromise) {
+    sessionRestorePromise = restoreSessionStorage();
+  }
+  return sessionRestorePromise;
+}
+
+// Proactive restoration trigger on service worker start
+ensureSessionRestored();
+
+/**
+ * Schedules a debounced write to chrome.storage.session for a specific tab.
+ * Bounded to 80ms to avoid thrashing storage during rapid segment streaming.
+ */
+function scheduleSessionWrite(tabId) {
+  if (!chrome.storage || !chrome.storage.session) return;
+  if (storageWriteTimers.has(tabId)) {
+    return;
+  }
+
+  const timerId = setTimeout(async () => {
+    storageWriteTimers.delete(tabId);
+    const list = tabMediaCache.get(tabId);
+    const key = `media_tab_${tabId}`;
+    try {
+      if (list && list.length > 0) {
+        await chrome.storage.session.set({ [key]: list });
+      } else {
+        await chrome.storage.session.remove(key);
+      }
+    } catch (_) {}
+  }, 80);
+
+  storageWriteTimers.set(tabId, timerId);
+}
+
+function cancelPendingStorageWrite(tabId) {
+  if (storageWriteTimers.has(tabId)) {
+    clearTimeout(storageWriteTimers.get(tabId));
+    storageWriteTimers.delete(tabId);
+  }
+}
+
+/**
+ * Clears media candidates for a tab on page reload or URL navigation.
+ */
+function clearTabMedia(tabId) {
+  clearedTabsDuringStartup.add(tabId);
+  cancelPendingStorageWrite(tabId);
+  tabMediaCache.delete(tabId);
+  const nextGen = (tabGenerations.get(tabId) || 0) + 1;
+  tabGenerations.set(tabId, nextGen);
+
+  if (chrome.storage && chrome.storage.session) {
+    chrome.storage.session.remove(`media_tab_${tabId}`).catch(() => {});
+  }
+  if (extSettings.badge !== false) {
+    chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+  }
+}
+
+/**
+ * Completely removes tab media and generations when a tab is closed.
+ */
+function removeTabMedia(tabId) {
+  clearedTabsDuringStartup.add(tabId);
+  cancelPendingStorageWrite(tabId);
+  tabMediaCache.delete(tabId);
+  tabGenerations.delete(tabId);
+
+  if (chrome.storage && chrome.storage.session) {
+    chrome.storage.session.remove(`media_tab_${tabId}`).catch(() => {});
+  }
+}
+
 // Extension configuration synchronized with storage
 let extSettings = {
   port: 6800,
@@ -71,9 +220,8 @@ chrome.storage.onChanged.addListener((changes) => {
 if (chrome.webNavigation && chrome.webNavigation.onHistoryStateUpdated) {
   chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
     if (details.frameId === 0) {
-      tabMediaCache.delete(details.tabId);
-      const nextGen = (tabGenerations.get(details.tabId) || 0) + 1;
-      tabGenerations.set(details.tabId, nextGen);
+      clearTabMedia(details.tabId);
+      const nextGen = tabGenerations.get(details.tabId) || 1;
       chrome.tabs.sendMessage(details.tabId, {
         action: 'MEDIA_NAVIGATED',
         url: details.url,
@@ -85,15 +233,12 @@ if (chrome.webNavigation && chrome.webNavigation.onHistoryStateUpdated) {
 
 // Clean up tab state when tab is closed or navigated
 chrome.tabs.onRemoved.addListener((tabId) => {
-  tabMediaCache.delete(tabId);
-  tabGenerations.delete(tabId);
+  removeTabMedia(tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.url) {
-    tabMediaCache.delete(tabId);
-    const nextGen = (tabGenerations.get(tabId) || 0) + 1;
-    tabGenerations.set(tabId, nextGen);
+  if (changeInfo.url || (changeInfo.status === 'loading' && changeInfo.url)) {
+    clearTabMedia(tabId);
   }
 });
 
@@ -743,6 +888,9 @@ async function recordCandidate(tabId, candidate) {
     return;
   }
 
+  // Ensure session storage restoration has completed before modifying cache
+  await ensureSessionRestored();
+
   let list = tabMediaCache.get(tabId) || [];
 
   // Deduplicate by URL
@@ -756,14 +904,15 @@ async function recordCandidate(tabId, candidate) {
 
   list.push(candidate);
   tabMediaCache.set(tabId, list);
+  scheduleSessionWrite(tabId);
 
   // Update badge if enabled
   if (extSettings.badge !== false) {
     const count = list.length;
-    await chrome.action.setBadgeText({ tabId, text: String(count) });
-    await chrome.action.setBadgeBackgroundColor({ tabId, color: '#6366f1' });
+    await chrome.action.setBadgeText({ tabId, text: String(count) }).catch(() => {});
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: '#6366f1' }).catch(() => {});
   } else {
-    await chrome.action.setBadgeText({ tabId, text: '' });
+    await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
   }
 }
 
@@ -856,30 +1005,18 @@ chrome.webRequest.onHeadersReceived.addListener(
 );
 
 // -------------------------------------------------------------------------
-// Tab Navigation & Lifecycle Listeners
-// -------------------------------------------------------------------------
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === 'loading' && changeInfo.url) {
-    // Clear candidates on new page navigation
-    tabMediaCache.delete(tabId);
-    chrome.action.setBadgeText({ tabId, text: '' });
-  }
-});
-
-chrome.tabs.onRemoved.addListener((tabId) => {
-  tabMediaCache.delete(tabId);
-});
-
-// -------------------------------------------------------------------------
 // Runtime Message Listener (Popup & Content Script interaction)
 // -------------------------------------------------------------------------
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender.tab?.id || message.tabId;
 
   if (message.action === 'GET_TAB_MEDIA') {
-    const list = tabMediaCache.get(message.tabId) || [];
-    sendResponse({ status: 'ok', media: list });
-    return false;
+    const targetTabId = message.tabId || tabId;
+    ensureSessionRestored().then(() => {
+      const list = targetTabId ? (tabMediaCache.get(targetTabId) || []) : [];
+      sendResponse({ status: 'ok', media: list });
+    });
+    return true;
   }
 
   if (message.action === 'RECORD_MEDIA_FROM_DOM') {
@@ -892,9 +1029,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         supported: classification.supported,
         notice: classification.notice,
         detected_at: new Date().toISOString(),
+      }).then(() => {
+        try { sendResponse({ status: 'ok' }); } catch (_) {}
+      }).catch((err) => {
+        try { sendResponse({ status: 'error', message: String(err) }); } catch (_) {}
       });
-      sendResponse({ status: 'ok' });
+      return true;
     }
+    sendResponse({ status: 'ignored' });
     return false;
   }
 
@@ -1169,6 +1311,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     const resolutionPromise = (async () => {
+      await ensureSessionRestored();
       const tabId = sender.tab?.id || message.tabId;
       const cachedStreams = tabId ? (tabMediaCache.get(tabId) || []) : [];
 
