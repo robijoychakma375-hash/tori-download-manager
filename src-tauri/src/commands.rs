@@ -1090,12 +1090,15 @@ pub struct CreateMediaDownloadArgs {
 }
 
 #[tauri::command]
-pub async fn resolve_media(url: String) -> Result<tdm_core::MediaMetadata, String> {
+pub async fn resolve_media(
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<tdm_core::MediaMetadata, String> {
     let raw_url = url.trim();
     if raw_url.is_empty() {
         return Err("Missing media URL to resolve".to_string());
     }
-    let resolver = tdm_core::MediaResolver::new();
+    let resolver = tdm_core::MediaResolver::new().with_database(state.manager.database().clone());
     resolver.resolve(raw_url).await.map_err(|e| e.to_string())
 }
 

@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod discovery;
 pub mod downloader;
 pub mod extractor;
@@ -5,6 +6,11 @@ pub mod models;
 pub mod orchestrator;
 pub mod pipeline;
 pub mod ssrf;
+
+pub use cache::{
+    is_cacheable, normalize_cache_key, sanitize_for_cache, CacheIdentity, DEFAULT_CACHE_TTL_SECS,
+    MAX_CACHE_ENTRIES,
+};
 
 pub use discovery::{
     find_ffmpeg, find_ffprobe, find_js_runtime, find_streamlink, find_yt_dlp, get_resolver_status,

@@ -499,4 +499,161 @@ impl Database {
         }
         Ok(map)
     }
+
+    // ---------------------------------------------------------------------------
+    // Format Metadata Cache
+    // ---------------------------------------------------------------------------
+
+    pub fn get_format_cache(
+        &self,
+        cache_key: &str,
+    ) -> Result<Option<crate::resolver::models::MediaMetadata>> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().timestamp();
+
+        let mut stmt = conn.prepare(
+            "SELECT metadata_json, expires_at FROM format_metadata_cache WHERE cache_key = ?1",
+        )?;
+        let mut rows = stmt.query(params![cache_key])?;
+
+        if let Some(row) = rows.next()? {
+            let json_str: String = row.get(0)?;
+            let expires_at: i64 = row.get(1)?;
+
+            if now >= expires_at {
+                // Expired: prune lazily and return None
+                drop(rows);
+                drop(stmt);
+                let _ = conn.execute(
+                    "DELETE FROM format_metadata_cache WHERE cache_key = ?1",
+                    params![cache_key],
+                );
+                return Ok(None);
+            }
+
+            // Update last_accessed_at for LRU tracking
+            drop(rows);
+            drop(stmt);
+            let _ = conn.execute(
+                "UPDATE format_metadata_cache SET last_accessed_at = ?1 WHERE cache_key = ?2",
+                params![now, cache_key],
+            );
+
+            // Deserialization with corruption recovery
+            match serde_json::from_str::<crate::resolver::models::MediaMetadata>(&json_str) {
+                Ok(mut meta) => {
+                    meta.is_cached = Some(true);
+                    Ok(Some(meta))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Corrupt format cache JSON for key {}: {}. Evicting.",
+                        cache_key,
+                        e
+                    );
+                    let _ = conn.execute(
+                        "DELETE FROM format_metadata_cache WHERE cache_key = ?1",
+                        params![cache_key],
+                    );
+                    Ok(None)
+                }
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_format_cache(
+        &self,
+        cache_key: &str,
+        platform: &str,
+        video_id: &str,
+        canonical_url: &str,
+        metadata: &crate::resolver::models::MediaMetadata,
+        ttl_secs: u64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().timestamp();
+        let expires_at = now + (ttl_secs as i64);
+
+        let sanitized = crate::resolver::cache::sanitize_for_cache(metadata);
+        let json_str = serde_json::to_string(&sanitized).map_err(|e| {
+            crate::error::EngineError::Other(format!("Failed to serialize metadata cache: {}", e))
+        })?;
+
+        conn.execute(
+            "INSERT INTO format_metadata_cache (
+                cache_key, platform, video_id, canonical_url, metadata_json, created_at, expires_at, last_accessed_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                canonical_url = ?4,
+                metadata_json = ?5,
+                expires_at = ?7,
+                last_accessed_at = ?8",
+            params![
+                cache_key,
+                platform,
+                video_id,
+                canonical_url,
+                json_str,
+                now,
+                expires_at,
+                now,
+            ],
+        )?;
+
+        // Bounded capacity enforcement: purge expired and excess entries
+        let _ = conn.execute(
+            "DELETE FROM format_metadata_cache WHERE expires_at <= ?1",
+            params![now],
+        );
+
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM format_metadata_cache", [], |r| {
+                r.get(0)
+            })
+            .unwrap_or(0);
+
+        if count > crate::resolver::cache::MAX_CACHE_ENTRIES as i64 {
+            let excess = count - crate::resolver::cache::MAX_CACHE_ENTRIES as i64;
+            let _ = conn.execute(
+                "DELETE FROM format_metadata_cache WHERE cache_key IN (
+                    SELECT cache_key FROM format_metadata_cache
+                    ORDER BY last_accessed_at ASC
+                    LIMIT ?1
+                )",
+                params![excess],
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn invalidate_format_cache(&self, cache_key: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM format_metadata_cache WHERE cache_key = ?1",
+            params![cache_key],
+        )?;
+        Ok(())
+    }
+
+    pub fn purge_expired_format_cache(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().timestamp();
+        let n = conn.execute(
+            "DELETE FROM format_metadata_cache WHERE expires_at <= ?1",
+            params![now],
+        )?;
+        Ok(n)
+    }
+
+    pub fn format_cache_count(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let count: usize =
+            conn.query_row("SELECT count(*) FROM format_metadata_cache", [], |r| {
+                r.get(0)
+            })?;
+        Ok(count)
+    }
 }

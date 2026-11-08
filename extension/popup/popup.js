@@ -438,18 +438,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  function triggerManualResolve(tab) {
+  function triggerManualResolve(tab, forceRefresh = false) {
     stopResolutionPolling();
-    mediaCountHeader.textContent = 'Resolving media on page…';
+    mediaCountHeader.textContent = forceRefresh ? 'Refreshing media formats…' : 'Resolving media on page…';
     mediaList.innerHTML = `
       <div class="empty-state" style="padding:20px 12px;text-align:center">
         <div class="tori-spin"></div>
-        <div style="font-weight:600;margin-bottom:4px">Resolving media formats…</div>
+        <div style="font-weight:600;margin-bottom:4px">${forceRefresh ? 'Refreshing media formats…' : 'Resolving media formats…'}</div>
         <div style="font-size:11px;color:var(--mut);line-height:1.4">Extracting genuine quality streams and formats</div>
       </div>`;
 
     // Attempt to notify content script
-    chrome.tabs.sendMessage(tab.id, { action: 'TRIGGER_RESOLVE_MEDIA' }, () => {
+    chrome.tabs.sendMessage(tab.id, { action: 'TRIGGER_RESOLVE_MEDIA', force_refresh: forceRefresh }, () => {
       if (chrome.runtime.lastError) {}
     });
 
@@ -466,7 +466,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const norm = normalizePlatformUrl(tab.url);
     const targetUrl = norm.url || tab.url;
 
-    chrome.runtime.sendMessage({ action: 'RESOLVE_MEDIA', url: targetUrl, tabId: tab.id }, (rRes) => {
+    chrome.runtime.sendMessage({ action: 'RESOLVE_MEDIA', url: targetUrl, tabId: tab.id, force_refresh: forceRefresh }, (rRes) => {
       clearTimeout(timer);
       if (timedOut) return;
       if (rRes && rRes.status === 'ok' && rRes.metadata && Array.isArray(rRes.metadata.formats) && rRes.metadata.formats.length > 0) {
@@ -560,8 +560,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     const fallbackId = meta.id || (tab.url.match(/\/(?:reel|reels)\/([^/?#]+)/i) || [])[1] || 'Facebook Reel';
     const displayTitle = cleanMediaTitle(rawTitle, fallbackId);
 
-    mediaCountHeader.textContent = `Resolved Formats · ${meta.formats.length}`;
-    showToast(`Found ${meta.formats.length} formats`);
+    const isCached = meta.is_cached === true;
+    mediaCountHeader.innerHTML = `Resolved Formats${isCached ? ' <span style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.08);color:var(--mut, #888);font-weight:500">Cached</span> <a href="#" id="lnkRefreshFormats" style="font-size:10px;color:var(--acc, #3e98ff);text-decoration:none;margin-left:6px">Refresh</a>' : ''} · ${meta.formats.length}`;
+    showToast(isCached ? `Loaded ${meta.formats.length} formats from cache` : `Found ${meta.formats.length} formats`);
+
+    const lnkRefresh = document.getElementById('lnkRefreshFormats');
+    if (lnkRefresh) {
+      lnkRefresh.addEventListener('click', (e) => {
+        e.preventDefault();
+        triggerManualResolve(tab, true);
+      });
+    }
 
     mediaList.innerHTML = meta.formats
       .map((fmt, idx) => {

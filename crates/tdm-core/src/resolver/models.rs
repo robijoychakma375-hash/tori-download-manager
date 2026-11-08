@@ -59,6 +59,8 @@ pub struct MediaMetadata {
     pub extractor: String,
     pub formats: Vec<ResolvedMediaFormat>,
     pub is_direct_media: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_cached: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

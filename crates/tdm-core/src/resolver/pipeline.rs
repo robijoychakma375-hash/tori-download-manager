@@ -16,6 +16,7 @@ use crate::resolver::ssrf::validate_safe_media_url;
 
 pub struct MediaResolver {
     client: reqwest::Client,
+    db: Option<crate::db::Database>,
 }
 
 impl Default for MediaResolver {
@@ -31,7 +32,16 @@ impl MediaResolver {
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()
             .unwrap_or_default();
-        Self { client }
+        Self { client, db: None }
+    }
+
+    pub fn with_database(mut self, db: crate::db::Database) -> Self {
+        self.db = Some(db);
+        self
+    }
+
+    pub fn db(&self) -> Option<&crate::db::Database> {
+        self.db.as_ref()
     }
 
     /// Resolves media metadata using multi-strategy discovery orchestrator across platform extractors,
@@ -46,6 +56,15 @@ impl MediaResolver {
 
     /// Resolves media metadata for any direct URL, streaming manifest, or video platform webpage.
     pub async fn resolve(&self, raw_url: &str) -> Result<MediaMetadata> {
+        self.resolve_with_options(raw_url, false).await
+    }
+
+    /// Resolves media metadata with optional cache bypass.
+    pub async fn resolve_with_options(
+        &self,
+        raw_url: &str,
+        force_refresh: bool,
+    ) -> Result<MediaMetadata> {
         let safe_url = validate_safe_media_url(raw_url).await?;
         let url_str = safe_url.as_str();
 
@@ -81,6 +100,21 @@ impl MediaResolver {
         // 4. Normalize platform media URLs for universal extractor (e.g. Facebook /reels/<id> -> /reel/<id>)
         let target_url = normalize_platform_media_url(url_str)?;
 
+        // Cache Check: If caching is available and force_refresh is false, check SQLite cache first
+        let cache_id = crate::resolver::cache::normalize_cache_key(&target_url);
+        if !force_refresh {
+            if let (Some(ref db), Some(ref cid)) = (&self.db, &cache_id) {
+                if let Ok(Some(cached_meta)) = db.get_format_cache(&cid.cache_key) {
+                    tracing::info!(
+                        "[FormatCache] Hit for {} (key: {})",
+                        target_url,
+                        cid.cache_key
+                    );
+                    return Ok(cached_meta);
+                }
+            }
+        }
+
         // 5. Universal Platform Extraction via yt-dlp with adaptive timeouts
         let is_platform = is_known_platform_domain(&target_url);
         let timeout = if is_platform {
@@ -89,7 +123,28 @@ impl MediaResolver {
             GENERIC_RESOLVER_TIMEOUT
         };
         match execute_yt_dlp_dump(&target_url, Some(timeout)).await {
-            Ok(json_val) => self.parse_ytdlp_metadata(&target_url, &json_val),
+            Ok(json_val) => {
+                let parsed = self.parse_ytdlp_metadata(&target_url, &json_val)?;
+                // Cache Store: If eligible, persist sanitized metadata with standard TTL
+                if let (Some(ref db), Some(ref cid)) = (&self.db, &cache_id) {
+                    if crate::resolver::cache::is_cacheable(&parsed) {
+                        let _ = db.set_format_cache(
+                            &cid.cache_key,
+                            &cid.platform,
+                            &cid.video_id,
+                            &cid.canonical_url,
+                            &parsed,
+                            crate::resolver::cache::DEFAULT_CACHE_TTL_SECS,
+                        );
+                        tracing::info!(
+                            "[FormatCache] Stored {} (key: {})",
+                            target_url,
+                            cid.cache_key
+                        );
+                    }
+                }
+                Ok(parsed)
+            }
             Err(e) => {
                 // Fallback: If yt-dlp fails (e.g. Unsupported URL or generic extractor failure),
                 // try probing the target URL directly as a media stream or manifest before failing.
@@ -273,6 +328,7 @@ impl MediaResolver {
             extractor: "direct_http".to_string(),
             formats: vec![format],
             is_direct_media: true,
+            is_cached: None,
         })
     }
 
@@ -375,6 +431,7 @@ impl MediaResolver {
             extractor: "hls".to_string(),
             formats,
             is_direct_media: true,
+            is_cached: None,
         })
     }
 
@@ -483,6 +540,7 @@ impl MediaResolver {
             extractor: "dash".to_string(),
             formats,
             is_direct_media: true,
+            is_cached: None,
         })
     }
 
@@ -790,6 +848,7 @@ impl MediaResolver {
             extractor,
             formats: final_formats,
             is_direct_media: false,
+            is_cached: Some(false),
         })
     }
 }

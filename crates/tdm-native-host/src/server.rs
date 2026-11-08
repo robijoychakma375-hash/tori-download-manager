@@ -1472,9 +1472,9 @@ pub async fn start_server(
 
     let server_state = Arc::new(ServerState {
         manager,
-        db,
+        db: db.clone(),
         config: RwLock::new(config),
-        resolver: Arc::new(tdm_core::MediaResolver::new()),
+        resolver: Arc::new(tdm_core::MediaResolver::new().with_database(db)),
     });
 
     let app = build_router(server_state);

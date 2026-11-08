@@ -1574,8 +1574,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       protocol: isPlatform ? 'platform' : 'generic',
     });
 
-    // Deduplicate in-flight resolution requests for the same URL
-    if (activeResolutions.has(targetUrl)) {
+    // Deduplicate in-flight resolution requests for the same URL (unless force_refresh is requested)
+    if (!message.force_refresh && activeResolutions.has(targetUrl)) {
       activeResolutions
         .get(targetUrl)
         .then((res) => sendResponse({ ...res, generation }))
@@ -1645,6 +1645,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         candidates: candidatesList,
         page_title: message.page_title || null,
         thumbnail_url: message.thumbnail_url || null,
+        force_refresh: message.force_refresh || false,
       };
 
       const httpRes = await callDesktopApi('/api/v1/media/resolve', 'POST', resolvePayload, customTimeout);

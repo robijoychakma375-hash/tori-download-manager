@@ -574,6 +574,7 @@ impl DiscoveryOrchestrator {
                 extractor: "browser_candidate".to_string(),
                 formats: ranked,
                 is_direct_media: true,
+                is_cached: None,
             });
         }
 
@@ -581,7 +582,10 @@ impl DiscoveryOrchestrator {
 
         // 3. For known platform domains (YouTube, TikTok, Facebook, etc.), try standard platform resolver pipeline first
         if is_platform {
-            match resolver.resolve(raw_url).await {
+            match resolver
+                .resolve_with_options(raw_url, req.force_refresh)
+                .await
+            {
                 Ok(meta) => return Ok(meta),
                 Err(e) => {
                     // If it's a DRM protected platform, do not attempt generic bypasses
@@ -638,7 +642,10 @@ impl DiscoveryOrchestrator {
 
         // 5. If not a platform domain and HTML scraping found no direct media, fall back to yt-dlp
         if !is_platform && discovered_formats.is_empty() {
-            match resolver.resolve(raw_url).await {
+            match resolver
+                .resolve_with_options(raw_url, req.force_refresh)
+                .await
+            {
                 Ok(meta) => return Ok(meta),
                 Err(e) => {
                     let err_msg = e.to_string();
@@ -673,6 +680,7 @@ impl DiscoveryOrchestrator {
                 extractor: "multi_strategy_html".to_string(),
                 formats: ranked,
                 is_direct_media: true,
+                is_cached: None,
             });
         }
 

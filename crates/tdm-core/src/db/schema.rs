@@ -53,8 +53,21 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
             value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS format_metadata_cache (
+            cache_key TEXT PRIMARY KEY,
+            platform TEXT NOT NULL,
+            video_id TEXT NOT NULL,
+            canonical_url TEXT NOT NULL,
+            metadata_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            last_accessed_at INTEGER NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_downloads_state ON downloads(state);
-        CREATE INDEX IF NOT EXISTS idx_download_chunks_lookup ON download_chunks(download_id, chunk_index);"
+        CREATE INDEX IF NOT EXISTS idx_download_chunks_lookup ON download_chunks(download_id, chunk_index);
+        CREATE INDEX IF NOT EXISTS idx_format_cache_expires ON format_metadata_cache(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_format_cache_platform_id ON format_metadata_cache(platform, video_id);"
     )?;
 
     // Backward-compatible schema migration
