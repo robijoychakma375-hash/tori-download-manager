@@ -1,56 +1,57 @@
-# TORI Download Manager v1.0.1 — Milestone Plan: Gate 14.4.6
-## Secure Per-Download User-Agent Support
+# TORI Download Manager v1.0.1 — Milestone Plan: Gate 14.4.10
+## DASH Manifest Misclassification Fix
 
 ### Objective
-Implement optional, secure per-download browser User-Agent propagation across TORI's Browser Extension → IPC → Rust Download Engine pipeline. Propagate validated User-Agent headers strictly to direct HTTP probing, chunk/stream downloads, HLS manifests/segments, and DASH manifests/segments without mutating global Reqwest client defaults, while preserving the existing TORI User-Agent fallback when omitted and preserving all existing Referer context from Gate 14.4.5.
+Fix the confirmed DASH manifest misclassification in the browser extension where valid DASH MPD responses with Content-Type `application/dash+xml` were misclassified as `type: 'hls'` and `format: 'm3u8'`. Ensure that:
+1. `application/dash+xml` and `.mpd` URLs are strictly classified as `type: 'dash'` and `format: 'DASH (mpd)'`.
+2. MIME parameters such as `; charset=utf-8` are properly parsed and handled.
+3. Extensionless manifests for both DASH and HLS are recognized when Content-Type identifies the protocol.
+4. Generic streaming detection, segment classification, manifest eviction protection, and session persistence remain fully functional.
+5. Zero production code changes to the Rust engine or download manager core.
 
 ---
 
 ### Specific Measurable Next Milestones
 
-#### Milestone 1: Data Model & IPC Schemas
-- [x] Add optional `user_agent: Option<String>` to `DownloadJob` in `crates/tdm-core/src/types.rs`.
-- [x] Update SQLite schema migration in `crates/tdm-core/src/db/schema.rs` (`ALTER TABLE downloads ADD COLUMN user_agent TEXT`) and update repo methods (`insert_job`, `get_job`, `list_jobs`, `get_next_queued_job`) with backward compatibility.
-- [x] Add optional `user_agent: Option<String>` to `CreateMediaDownloadReq` in `crates/tdm-native-host/src/server.rs` (preserve existing `CreateDownloadReq.user_agent`).
-- [x] Add optional `user_agent: Option<String>` to `NativeMessage` in `crates/tdm-native-host/src/protocol.rs`.
-- [x] Update `create_download` in `src-tauri/src/commands.rs` to accept optional `user_agent: Option<String>`.
-- [x] Update existing struct literals across test files (`gate12_5_multisite_tests.rs`, `gate6_torrent_tests.rs`, `gate7_live_tests.rs`, `gate8_protocol_matrix_tests.rs`, `host_tests.rs`, `src-tauri/src/lib.rs`).
+#### Milestone 1: Root Cause Analysis & Plan Verification
+- [x] Inspect `extension/background.js` lines 18-22, 38-42, 1000-1022, 1222-1230.
+- [x] Confirm that `STREAMING_MIMES` contains `'application/dash+xml'` and is checked inside the HLS classification block before DASH classification, causing `.mpd` and `application/dash+xml` to be labeled as HLS.
+- [x] Formulate minimal protocol-specific classifier correction separating `HLS_MIMES` and `DASH_MIMES`.
 
-#### Milestone 2: User-Agent Sanitization, Validation & Extension Propagation
-- [x] Create `crates/tdm-core/src/engine/user_agent.rs`:
-  - Reject CRLF (`\r`, `\n`) and ASCII control characters (0-31, 127).
-  - Enforce bounded length limit (<= 1024 chars).
-  - Validate against `HeaderValue::from_str`.
-  - Expose `apply_user_agent(builder, user_agent)` attaching the header only when present and valid, leaving Reqwest default as fallback.
-  - Unit tests for valid browser UAs, CRLF injection, control characters, excess length, empty strings, and fallback.
-- [x] Implement `getSafeUserAgent(customUserAgent)` in `extension/background.js`:
-  - Read `navigator.userAgent` safely in background service worker.
-  - Forward `user_agent: browserUserAgent` in `START_DOWNLOAD` (direct HTTP, CDN reroute, Native Messaging).
-  - Forward `user_agent: browserUserAgent` in `START_MEDIA_DOWNLOAD`.
-- [x] Update `extension/popup/popup.js` and `extension/content.js` to optionally pass `user_agent: navigator.userAgent`.
+#### Milestone 2: Minimal Implementation in Browser Extension
+- [x] In `extension/background.js`:
+  - Define distinct `HLS_MIMES` and `DASH_MIMES`, keeping `STREAMING_MIMES = [...HLS_MIMES, ...DASH_MIMES]`.
+  - Normalize MIME types with parameter stripping (`baseMime = lowerMime.split(';')[0].trim()`).
+  - In `classifyMedia()`: Evaluate DASH detection before HLS, matching `lowerUrl.includes('.mpd') || DASH_MIMES.includes(baseMime) || lowerMime.includes('dash+xml')`.
+  - In `classifyMedia()`: Update HLS detection to check `lowerUrl.includes('.m3u8') || HLS_MIMES.includes(baseMime) || lowerMime.includes('mpegurl')`.
+  - In `isManifestCandidate()`: Support base MIME normalization with parameters.
+  - In `onHeadersReceived`: Use `baseMime` to ensure extensionless DASH/HLS responses with parameters are intercepted.
 
-#### Milestone 3: Rust Engine Network Propagation
-- [x] Pass validated User-Agent to `probe_url_with_options` in `crates/tdm-core/src/engine/probe.rs` (attached to HEAD and GET byte-range probes).
-- [x] Pass validated User-Agent to `download_chunk_with_options` and `download_stream_with_options` in `crates/tdm-core/src/engine/worker.rs`.
-- [x] Pass validated User-Agent in `crates/tdm-core/src/engine/manager.rs`:
-  - `create_download_with_all_options` & `create_managed_media_download_with_options`.
-  - Re-probing on resume.
-  - Multi-chunk worker tasks and tail splitting.
-  - Single-stream worker task.
-- [x] Pass validated User-Agent to `crates/tdm-core/src/hls/downloader.rs` (master playlist, variant playlist, audio rendition, init segment, AES-128 key, media TS segments).
-- [x] Pass validated User-Agent to `crates/tdm-core/src/dash/downloader.rs` (MPD manifest, video/audio init segments, media fragments).
-- [x] Sanitize and forward `user_agent` in `crates/tdm-native-host/src/server.rs` (`handle_create_download`, `handle_create_media_download`) and `crates/tdm-native-host/src/lib.rs` (Native Messaging `start_download`).
+#### Milestone 3: Automated Regression Test Suite
+- [x] Create `scripts/verify_gate14_4_10_dash_fix.js`:
+  - Test 1: MPD URL with `application/dash+xml` -> DASH (`type: 'dash'`, `format: 'DASH (mpd)'`).
+  - Test 2: Extensionless URL with `application/dash+xml` -> DASH.
+  - Test 3: MPD with MIME parameters (`application/dash+xml; charset=utf-8`) -> DASH.
+  - Test 4: M3U8 URL with HLS MIME -> HLS (`type: 'hls'`, `format: 'm3u8'`).
+  - Test 5: Extensionless HLS with HLS MIME -> HLS.
+  - Test 6: Direct MP4 remains direct media (`type: 'direct'`, `format: 'MP4'`).
+  - Test 7: Standalone TS and AAC remain supported.
+  - Test 8: DASH M4S segments remain classified as segments (`is_segment: true`).
+  - Test 9: HLS TS segment classification remains functional (`is_segment: true`).
+  - Test 10: DASH manifest persists after MV3 service worker restart (`chrome.storage.session`).
+  - Test 11: DASH manifest survives more than 50 segment candidates (eviction protection).
+  - Test 12: Popup and overlay format display for DASH.
+  - Regression check: Validate existing tests from Gates 14.4.2 through 14.4.6.
 
-#### Milestone 4: Verification & Regression Testing
-- [x] Build controlled local HTTP test server verifying actual outgoing HTTP request headers (`crates/tdm-native-host/tests/user_agent_tests.rs`):
-  - Direct HTTP download with custom User-Agent.
-  - Direct HTTP download without User-Agent (verifies default TORI User-Agent fallback).
-  - HLS manifest, variant, and segment requests receive custom User-Agent.
-  - DASH manifest, init, and segment requests receive custom User-Agent.
-  - Invalid User-Agent / CRLF injection rejected safely and falls back to default TORI User-Agent.
-  - Concurrent downloads with different User-Agents maintain per-job isolation without leaking.
-  - Pause and resume preserves User-Agent on re-probe and chunk resumption.
-  - Referer preservation alongside User-Agent.
-- [x] Create `scripts/verify_gate14_4_6_user_agent_support.js` verifying extension payloads and sanitization.
-- [x] Run regression suites: Gate 14.4.5, Gate 14.4.4, Gate 14.4.3, Gate 14.4.2, `cargo test -p tdm-native-host`, `cargo test -p tdm-core -j 2`, `cargo clippy`, `cargo fmt`.
-- [x] Update `IMPLEMENTATION_STATUS.md` and commit locally.
+#### Milestone 4: Real Microsoft Edge Verification
+- [x] Run Microsoft Edge with TORI extension in isolated development environment.
+- [x] Pair with TORI v1.0.1 desktop host on port 6800.
+- [x] Navigate to test page, trigger fetch of `/dash/manifest.mpd`.
+- [x] Query candidates via `GET_TAB_MEDIA`: verify `type: 'dash'`, `format: 'DASH (mpd)'`, `is_segment: false`.
+- [x] Open extension popup context, verify popup list renders `DASH (mpd)` with download button.
+- [x] Dispatch download and verify completion.
+
+#### Milestone 5: Reporting & Safe Git Commit
+- [x] Verify `git status` (no modifications to Rust backend or unintended files).
+- [x] Document all before/after classification results and test matrices in `IMPLEMENTATION_STATUS.md`.
+- [x] Create local Git commit on `dev/v1.0.1` upon all tests passing.

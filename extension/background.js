@@ -15,10 +15,17 @@ const DIRECT_MEDIA_EXTS = [
 const STREAMING_MANIFEST_EXTS = ['.m3u8', '.mpd'];
 
 const MEDIA_MIME_PREFIXES = ['video/', 'audio/'];
-const STREAMING_MIMES = [
+const HLS_MIMES = [
   'application/x-mpegurl',
   'application/vnd.apple.mpegurl',
-  'application/dash+xml'
+  'audio/x-mpegurl',
+];
+const DASH_MIMES = [
+  'application/dash+xml',
+];
+const STREAMING_MIMES = [
+  ...HLS_MIMES,
+  ...DASH_MIMES,
 ];
 
 /**
@@ -34,8 +41,9 @@ function isManifestCandidate(candidate) {
     return true;
   }
   const mime = (candidate.content_type || '').toLowerCase();
+  const baseMime = mime.split(';')[0].trim();
   if (
-    STREAMING_MIMES.includes(mime) ||
+    STREAMING_MIMES.includes(baseMime) ||
     mime.includes('mpegurl') ||
     mime.includes('dash+xml')
   ) {
@@ -997,9 +1005,27 @@ function classifyMedia(url, mimeType, headers = [], statusCode = 200, tabId = -1
   }
 
   // Check streaming manifests
+  const baseMime = lowerMime.split(';')[0].trim();
+
+  // Check DASH streaming manifests
+  if (
+    lowerUrl.includes('.mpd') ||
+    DASH_MIMES.includes(baseMime) ||
+    lowerMime.includes('dash+xml')
+  ) {
+    return {
+      type: 'dash',
+      format: 'DASH (mpd)',
+      is_segment: false,
+      supported: true,
+      notice: 'ISO/IEC 23009-1 MPEG-DASH VOD stream with parallel segment downloading & FFmpeg container muxing',
+    };
+  }
+
+  // Check HLS streaming manifests
   if (
     lowerUrl.includes('.m3u8') ||
-    STREAMING_MIMES.includes(lowerMime) ||
+    HLS_MIMES.includes(baseMime) ||
     lowerMime.includes('mpegurl')
   ) {
     return {
@@ -1008,16 +1034,6 @@ function classifyMedia(url, mimeType, headers = [], statusCode = 200, tabId = -1
       is_segment: false,
       supported: true,
       notice: 'RFC 8216 HLS VOD stream with parallel segment downloading & FFmpeg container muxing',
-    };
-  }
-
-  if (lowerUrl.includes('.mpd') || lowerMime.includes('dash+xml')) {
-    return {
-      type: 'dash',
-      format: 'DASH (mpd)',
-      is_segment: false,
-      supported: true,
-      notice: 'ISO/IEC 23009-1 MPEG-DASH VOD stream with parallel segment downloading & FFmpeg container muxing',
     };
   }
 
@@ -1219,10 +1235,16 @@ chrome.webRequest.onHeadersReceived.addListener(
 
     const lowerUrl = url.toLowerCase();
     const lowerMime = contentType.toLowerCase();
+    const baseMime = lowerMime.split(';')[0].trim();
 
     // Check if matching media
-    const isMediaMime = MEDIA_MIME_PREFIXES.some((p) => lowerMime.startsWith(p)) || STREAMING_MIMES.includes(lowerMime);
-    const hasMediaExt = DIRECT_MEDIA_EXTS.some((e) => lowerUrl.includes(e)) || STREAMING_MANIFEST_EXTS.some((e) => lowerUrl.includes(e));
+    const isMediaMime =
+      MEDIA_MIME_PREFIXES.some((p) => lowerMime.startsWith(p)) ||
+      STREAMING_MIMES.includes(baseMime) ||
+      STREAMING_MIMES.some((m) => lowerMime.includes(m));
+    const hasMediaExt =
+      DIRECT_MEDIA_EXTS.some((e) => lowerUrl.includes(e)) ||
+      STREAMING_MANIFEST_EXTS.some((e) => lowerUrl.includes(e));
 
     if (isMediaMime || hasMediaExt) {
       const classification = classifyMedia(url, contentType, details.responseHeaders, details.statusCode, details.tabId);
