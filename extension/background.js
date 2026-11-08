@@ -1306,6 +1306,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender.tab?.id || message.tabId;
 
   if (message.action === 'GET_ALL_MEDIA') {
+    // Restrict GET_ALL_MEDIA to internal extension contexts (popup / options).
+    // Reject calls originated from content scripts (where sender.tab is defined) to prevent cross-tab media exposure.
+    if (sender.tab) {
+      sendResponse({ status: 'error', message: 'Unauthorized: GET_ALL_MEDIA cannot be called from a content script' });
+      return false;
+    }
     ensureSessionRestored().then(() => {
       const all = [];
       for (const candidates of tabMediaCache.values()) {

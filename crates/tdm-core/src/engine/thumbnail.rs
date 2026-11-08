@@ -285,7 +285,27 @@ pub async fn ensure_cached_thumbnail(
     // 4. If the target video file exists on disk, extract genuine thumbnail frame via FFmpeg
     if let Some(path_str) = target_path {
         let p = Path::new(path_str);
-        if p.exists() {
+        let ext = p
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        let is_video = matches!(
+            ext.as_str(),
+            "mp4"
+                | "mkv"
+                | "webm"
+                | "mov"
+                | "avi"
+                | "flv"
+                | "ts"
+                | "m4v"
+                | "wmv"
+                | "mpg"
+                | "mpeg"
+                | "3gp"
+        );
+        if is_video && p.exists() {
             if let Ok(data_uri) = extract_thumbnail_from_video(p, &local_file) {
                 let _ = db.update_thumbnail_url(job_id, &data_uri);
                 return Some(data_uri);

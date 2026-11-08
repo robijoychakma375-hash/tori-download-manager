@@ -295,18 +295,31 @@ impl DownloadManager {
     }
 
     pub fn process_queue(&self) -> Result<Option<String>> {
-        let active_count = self.active_tokens.lock().unwrap().len();
         let max = self.max_active_jobs.load(Ordering::SeqCst);
-        if active_count >= max {
-            return Ok(None);
+        let mut first_started = None;
+        loop {
+            let active_count = self.active_tokens.lock().unwrap().len();
+            if active_count >= max {
+                break;
+            }
+
+            if let Some(next_job) = self.db.get_next_queued_job()? {
+                let id = next_job.id.clone();
+                self.start_download(&id)?;
+                if first_started.is_none() {
+                    first_started = Some(id);
+                }
+                let new_active = self.active_tokens.lock().unwrap().len();
+                if new_active <= active_count {
+                    // Start did not increase active count (e.g. error or reached cap)
+                    break;
+                }
+            } else {
+                break;
+            }
         }
 
-        if let Some(next_job) = self.db.get_next_queued_job()? {
-            self.start_download(&next_job.id)?;
-            return Ok(Some(next_job.id));
-        }
-
-        Ok(None)
+        Ok(first_started)
     }
 
     pub fn database(&self) -> &Database {
@@ -668,13 +681,26 @@ impl DownloadManager {
             None => return Err(EngineError::JobNotFound(id.to_string())),
         };
 
-        if job.state == JobState::Completed {
+        if job.state == JobState::Completed || job.state == JobState::Cancelled {
             return Ok(());
         }
 
         let mut tokens = active_tokens.lock().unwrap();
         if tokens.contains_key(id) {
             // Already running
+            return Ok(());
+        }
+
+        let max_jobs = max_active_jobs.load(Ordering::SeqCst);
+        if max_jobs > 0 && tokens.len() >= max_jobs {
+            // Configured maximum active downloads reached: keep job in Queued state for automatic dispatch
+            drop(tokens);
+            let _ = db.update_job_state(id, JobState::Queued, None);
+            event_bus.emit(DownloadEvent::StateChanged {
+                id: id.to_string(),
+                state: JobState::Queued,
+                error: None,
+            });
             return Ok(());
         }
 
@@ -757,8 +783,10 @@ impl DownloadManager {
                 }
             }
 
-            // Real priority queue scheduling: automatically advance next queued job!
-            if active_count < max_jobs_c.load(Ordering::SeqCst) {
+            // Real priority queue scheduling: automatically advance next queued jobs up to max_active_jobs!
+            let max_jobs = max_jobs_c.load(Ordering::SeqCst);
+            let mut current_active = active_count;
+            while current_active < max_jobs {
                 if let Ok(Some(next_job)) = db_c.get_next_queued_job() {
                     let _ = Self::start_job_internal(
                         &next_job.id,
@@ -775,6 +803,13 @@ impl DownloadManager {
                         &retries_for_queued,
                         &dynamic_for_queued,
                     );
+                    let new_active = active_tokens_c.lock().unwrap().len();
+                    if new_active <= current_active {
+                        break;
+                    }
+                    current_active = new_active;
+                } else {
+                    break;
                 }
             }
         });
@@ -915,7 +950,7 @@ impl DownloadManager {
         max_retries: u32,
         dynamic_segmentation: bool,
     ) -> Result<()> {
-        let job = match db.get_job(&download_id)? {
+        let mut job = match db.get_job(&download_id)? {
             Some(j) => j,
             None => return Err(EngineError::JobNotFound(download_id)),
         };
@@ -995,7 +1030,7 @@ impl DownloadManager {
         let initial_written: u64 = existing_chunks.iter().map(|c| c.written_bytes).sum();
 
         if initial_written > 0 && job.is_resumable {
-            // Re-probe to check ETag or Last-Modified match
+            // Re-probe to check ETag, Last-Modified, Content-Length, and Range support match
             if let Ok(probe) = crate::engine::probe::probe_url_with_options(
                 &client,
                 &job.url,
@@ -1004,14 +1039,29 @@ impl DownloadManager {
             )
             .await
             {
-                let mut etag_changed = false;
+                let mut representation_changed = false;
                 if let (Some(expected_etag), Some(new_etag)) = (&job.etag, &probe.etag) {
                     if expected_etag != new_etag {
-                        etag_changed = true;
+                        representation_changed = true;
                     }
                 }
+                if let (Some(expected_lm), Some(new_lm)) =
+                    (&job.last_modified, &probe.last_modified)
+                {
+                    if expected_lm != new_lm {
+                        representation_changed = true;
+                    }
+                }
+                if let (Some(expected_len), Some(new_len)) = (job.total_bytes, probe.total_bytes) {
+                    if expected_len != new_len {
+                        representation_changed = true;
+                    }
+                }
+                if !probe.supports_ranges {
+                    representation_changed = true;
+                }
 
-                if etag_changed {
+                if representation_changed {
                     tracing::warn!("Resource representation changed on server. Invalidating stale chunks for {}", download_id);
                     let _ = fs::remove_file(&temp_path);
                     db.reset_job_for_restart(&download_id)?;
@@ -1027,8 +1077,28 @@ impl DownloadManager {
                         probe.supports_ranges,
                         fresh_chunks.len(),
                     )?;
+                    job.total_bytes = probe.total_bytes;
+                    job.etag = probe.etag;
+                    job.last_modified = probe.last_modified;
+                    job.is_resumable = probe.supports_ranges;
                 }
             }
+        }
+
+        // Missing or truncated partial file check (after validator check)
+        let current_chunks = db.get_chunks(&download_id)?;
+        let current_written: u64 = current_chunks.iter().map(|c| c.written_bytes).sum();
+        if current_written > 0
+            && (!temp_path.exists() || fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0) == 0)
+        {
+            tracing::warn!(
+                "Partial file missing or empty on disk for {}. Resetting chunk progress.",
+                download_id
+            );
+            let _ = fs::remove_file(&temp_path);
+            db.reset_job_for_restart(&download_id)?;
+            let fresh_chunks = plan_chunks(&download_id, job.total_bytes, job.is_resumable);
+            db.save_chunks(&fresh_chunks)?;
         }
 
         let writer = PartFileWriter::open_or_create(&temp_path, job.total_bytes)?;
