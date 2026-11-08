@@ -1,3 +1,4 @@
+use futures_util::StreamExt;
 use reqwest::header::{ACCEPT_ENCODING, RANGE};
 use reqwest::Client;
 use std::collections::HashMap;
@@ -264,8 +265,34 @@ pub async fn download_hls_vod(
         init_path = Some(p);
     }
 
-    // 5. Cache for AES-128 keys (URI -> 16-byte key)
+    // 5. Pre-fetch and cache AES-128 keys (URI -> 16-byte key)
     let mut key_cache: HashMap<String, [u8; 16]> = HashMap::new();
+    for seg in &media_playlist.segments {
+        if let Some(ref k) = seg.key {
+            if k.method == HlsKeyMethod::Aes128 && !key_cache.contains_key(&k.uri) {
+                let bytes = fetch_hls_bytes_with_retry(
+                    client,
+                    &k.uri,
+                    None,
+                    job.referer.as_deref(),
+                    job.user_agent.as_deref(),
+                    cancel_token,
+                )
+                .await?;
+                if bytes.len() != 16 {
+                    return Err(EngineError::Other(format!(
+                        "Invalid AES-128 key length {} from {}",
+                        bytes.len(),
+                        k.uri
+                    )));
+                }
+                let mut arr = [0u8; 16];
+                arr.copy_from_slice(&bytes);
+                key_cache.insert(k.uri.clone(), arr);
+            }
+        }
+    }
+    let key_cache = Arc::new(key_cache);
 
     // Download metrics tracking
     let total_downloaded_bytes = Arc::new(AtomicU64::new(0));
@@ -325,139 +352,215 @@ pub async fn download_hls_vod(
         }
     });
 
-    // 6. Download Video Segments with bounded parallelism
+    // 6. Download Video Segments with bounded concurrency
     let mut segment_file_paths: Vec<PathBuf> = Vec::with_capacity(total_segments);
     if let Some(ref init) = init_path {
         segment_file_paths.push(init.clone());
     }
 
-    for (i, seg) in media_playlist.segments.iter().enumerate() {
-        if cancel_token.is_cancelled() {
-            progress_cancel.cancel();
-            let _ = progress_handle.await;
-            return Err(EngineError::Cancelled);
-        }
+    let is_fmp4 = media_playlist
+        .segments
+        .first()
+        .map(|s| s.uri.ends_with(".m4s"))
+        .unwrap_or(false)
+        || media_playlist.init_segment.is_some();
 
+    let mut pending_segments: Vec<(usize, crate::hls::parser::HlsSegment)> = Vec::new();
+    for (i, seg) in media_playlist.segments.iter().enumerate() {
         let seg_filename = format!("seg_{:06}.ts", i);
         let seg_path = work_dir.join(&seg_filename);
-
-        // Resume: if segment already exists and passes validation, skip downloading!
-        let is_fmp4 = seg.uri.ends_with(".m4s") || media_playlist.init_segment.is_some();
         let exp_len = seg.byterange.map(|(len, _)| len);
         if seg_path.exists() {
             if validate_hls_segment(&seg_path, exp_len, is_fmp4) {
-                segment_file_paths.push(seg_path);
                 continue;
             } else {
                 let _ = fs::remove_file(&seg_path);
             }
         }
-
-        // Handle AES-128 Key fetch
-        let mut resolved_key: Option<([u8; 16], [u8; 16])> = None;
-        if let Some(ref k) = seg.key {
-            if k.method == HlsKeyMethod::Aes128 {
-                let key_bytes = match key_cache.get(&k.uri) {
-                    Some(kb) => *kb,
-                    None => {
-                        let bytes = fetch_hls_bytes_with_retry(
-                            client,
-                            &k.uri,
-                            None,
-                            job.referer.as_deref(),
-                            job.user_agent.as_deref(),
-                            cancel_token,
-                        )
-                        .await?;
-                        if bytes.len() != 16 {
-                            return Err(EngineError::Other(format!(
-                                "Invalid AES-128 key length {} from {}",
-                                bytes.len(),
-                                k.uri
-                            )));
-                        }
-                        let mut arr = [0u8; 16];
-                        arr.copy_from_slice(&bytes);
-                        key_cache.insert(k.uri.clone(), arr);
-                        arr
-                    }
-                };
-
-                let iv =
-                    k.iv.unwrap_or_else(|| derive_iv_from_sequence(seg.sequence_number));
-                resolved_key = Some((key_bytes, iv));
-            }
-        }
-
-        // Concurrency permit from governor
-        let _permit = governor.acquire_permit(&host);
-
-        // Download segment bytes with automatic retry
-        let raw_bytes = fetch_hls_bytes_with_retry(
-            client,
-            &seg.uri,
-            seg.byterange,
-            job.referer.as_deref(),
-            job.user_agent.as_deref(),
-            cancel_token,
-        )
-        .await?;
-        total_downloaded_bytes.fetch_add(raw_bytes.len() as u64, Ordering::Relaxed);
-
-        // Decrypt if AES-128
-        let final_bytes = if let Some((ref kb, ref iv)) = resolved_key {
-            decrypt_hls_segment(&raw_bytes, kb, iv)?
-        } else {
-            raw_bytes
-        };
-
-        fs::write(&seg_path, &final_bytes)?;
-        segment_file_paths.push(seg_path);
-
-        completed_segments.fetch_add(1, Ordering::Relaxed);
-        let _ = db.update_chunk_progress(&job.id, i, final_bytes.len() as u64, true);
+        pending_segments.push((i, seg.clone()));
     }
 
-    // 7. Download Separate Audio Segments if present
+    if !pending_segments.is_empty() {
+        let concurrency = governor.stream_concurrency();
+        tracing::info!(
+            "[HLS Downloader] Downloading {} pending segments with concurrency={}",
+            pending_segments.len(),
+            concurrency
+        );
+
+        let host_c = host.clone();
+        let work_dir_c = work_dir.clone();
+        let job_id_c = job.id.clone();
+        let referer_c = job.referer.clone();
+        let user_agent_c = job.user_agent.clone();
+
+        let tasks = pending_segments.into_iter().map(|(i, seg)| {
+            let client = client.clone();
+            let governor = governor.clone();
+            let cancel_token = cancel_token.clone();
+            let db = db.clone();
+            let key_cache = key_cache.clone();
+            let total_downloaded_bytes = total_downloaded_bytes.clone();
+            let completed_segments = completed_segments.clone();
+            let host = host_c.clone();
+            let seg_path = work_dir_c.join(format!("seg_{:06}.ts", i));
+            let job_id = job_id_c.clone();
+            let referer = referer_c.clone();
+            let user_agent = user_agent_c.clone();
+
+            async move {
+                if cancel_token.is_cancelled() {
+                    return Err(EngineError::Cancelled);
+                }
+
+                // Resolve key and IV if AES-128
+                let resolved_key: Option<([u8; 16], [u8; 16])> = if let Some(ref k) = seg.key {
+                    if k.method == HlsKeyMethod::Aes128 {
+                        let kb = key_cache.get(&k.uri).copied().ok_or_else(|| {
+                            EngineError::Other(format!(
+                                "Missing pre-fetched AES-128 key for {}",
+                                k.uri
+                            ))
+                        })?;
+                        let iv =
+                            k.iv.unwrap_or_else(|| derive_iv_from_sequence(seg.sequence_number));
+                        Some((kb, iv))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let _permit = governor.acquire_permit(&host);
+
+                let raw_bytes = fetch_hls_bytes_with_retry(
+                    &client,
+                    &seg.uri,
+                    seg.byterange,
+                    referer.as_deref(),
+                    user_agent.as_deref(),
+                    &cancel_token,
+                )
+                .await?;
+
+                total_downloaded_bytes.fetch_add(raw_bytes.len() as u64, Ordering::Relaxed);
+
+                let final_bytes = if let Some((ref kb, ref iv)) = resolved_key {
+                    decrypt_hls_segment(&raw_bytes, kb, iv)?
+                } else {
+                    raw_bytes
+                };
+
+                fs::write(&seg_path, &final_bytes)?;
+                let bytes_len = final_bytes.len() as u64;
+                drop(final_bytes);
+
+                completed_segments.fetch_add(1, Ordering::Relaxed);
+                let _ = db.update_chunk_progress(&job_id, i, bytes_len, true);
+
+                Ok::<(), EngineError>(())
+            }
+        });
+
+        let mut stream = futures_util::stream::iter(tasks).buffer_unordered(concurrency);
+        while let Some(res) = stream.next().await {
+            if cancel_token.is_cancelled() {
+                progress_cancel.cancel();
+                let _ = progress_handle.await;
+                return Err(EngineError::Cancelled);
+            }
+            res?;
+        }
+    }
+
+    // Populate deterministic segment path list
+    for i in 0..total_segments {
+        let seg_path = work_dir.join(format!("seg_{:06}.ts", i));
+        segment_file_paths.push(seg_path);
+    }
+
+    // 7. Download Separate Audio Segments if present with bounded concurrency
     let mut audio_segment_paths: Vec<PathBuf> = Vec::new();
     if let Some(ref audio_media) = audio_media_playlist {
         tracing::info!(
             "[HLS Downloader] Downloading {} audio rendition segments",
             audio_media.segments.len()
         );
-        for (i, seg) in audio_media.segments.iter().enumerate() {
-            if cancel_token.is_cancelled() {
-                progress_cancel.cancel();
-                let _ = progress_handle.await;
-                return Err(EngineError::Cancelled);
-            }
 
+        let is_audio_fmp4 = audio_media
+            .segments
+            .first()
+            .map(|s| s.uri.ends_with(".m4s"))
+            .unwrap_or(false)
+            || audio_media.init_segment.is_some();
+
+        let mut pending_audio: Vec<(usize, crate::hls::parser::HlsSegment)> = Vec::new();
+        for (i, seg) in audio_media.segments.iter().enumerate() {
             let a_filename = format!("audio_seg_{:06}.ts", i);
             let a_path = work_dir.join(&a_filename);
-
-            let is_fmp4 = seg.uri.ends_with(".m4s") || audio_media.init_segment.is_some();
             let exp_len = seg.byterange.map(|(len, _)| len);
             if a_path.exists() {
-                if validate_hls_segment(&a_path, exp_len, is_fmp4) {
-                    audio_segment_paths.push(a_path);
+                if validate_hls_segment(&a_path, exp_len, is_audio_fmp4) {
                     continue;
                 } else {
                     let _ = fs::remove_file(&a_path);
                 }
             }
+            pending_audio.push((i, seg.clone()));
+        }
 
-            let _permit = governor.acquire_permit(&host);
-            let bytes = fetch_hls_bytes_with_retry(
-                client,
-                &seg.uri,
-                seg.byterange,
-                job.referer.as_deref(),
-                job.user_agent.as_deref(),
-                cancel_token,
-            )
-            .await?;
-            fs::write(&a_path, &bytes)?;
-            audio_segment_paths.push(a_path);
+        if !pending_audio.is_empty() {
+            let concurrency = governor.stream_concurrency();
+            let host_c = host.clone();
+            let work_dir_c = work_dir.clone();
+            let referer_c = job.referer.clone();
+            let user_agent_c = job.user_agent.clone();
+
+            let a_tasks = pending_audio.into_iter().map(|(i, seg)| {
+                let client = client.clone();
+                let governor = governor.clone();
+                let cancel_token = cancel_token.clone();
+                let host = host_c.clone();
+                let a_path = work_dir_c.join(format!("audio_seg_{:06}.ts", i));
+                let referer = referer_c.clone();
+                let user_agent = user_agent_c.clone();
+
+                async move {
+                    if cancel_token.is_cancelled() {
+                        return Err(EngineError::Cancelled);
+                    }
+
+                    let _permit = governor.acquire_permit(&host);
+
+                    let bytes = fetch_hls_bytes_with_retry(
+                        &client,
+                        &seg.uri,
+                        seg.byterange,
+                        referer.as_deref(),
+                        user_agent.as_deref(),
+                        &cancel_token,
+                    )
+                    .await?;
+
+                    fs::write(&a_path, &bytes)?;
+                    Ok::<(), EngineError>(())
+                }
+            });
+
+            let mut a_stream = futures_util::stream::iter(a_tasks).buffer_unordered(concurrency);
+            while let Some(res) = a_stream.next().await {
+                if cancel_token.is_cancelled() {
+                    progress_cancel.cancel();
+                    let _ = progress_handle.await;
+                    return Err(EngineError::Cancelled);
+                }
+                res?;
+            }
+        }
+
+        for i in 0..audio_media.segments.len() {
+            audio_segment_paths.push(work_dir.join(format!("audio_seg_{:06}.ts", i)));
         }
     }
 

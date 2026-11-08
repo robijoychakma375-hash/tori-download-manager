@@ -1,3 +1,4 @@
+use futures_util::StreamExt;
 use reqwest::header::{ACCEPT_ENCODING, RANGE};
 use reqwest::Client;
 use std::fs;
@@ -308,45 +309,91 @@ pub async fn download_dash_vod(
         video_init_path = Some(p);
     }
 
-    // 7. Download Video Segments
+    // 7. Download Video Segments with bounded concurrency
     let mut video_segment_paths: Vec<PathBuf> = Vec::with_capacity(total_video_segs);
+    let ext = if is_webm { "webm" } else { "m4s" };
 
+    let mut pending_video: Vec<(usize, ResolvedDashSegment)> = Vec::new();
     for (i, seg) in v_stream.media_segments.iter().enumerate() {
-        if cancel_token.is_cancelled() {
-            progress_cancel.cancel();
-            let _ = progress_handle.await;
-            return Err(EngineError::Cancelled);
-        }
-
-        let ext = if is_webm { "webm" } else { "m4s" };
         let seg_path = work_dir.join(format!("video_seg_{:06}.{}", i, ext));
         let exp_len = seg.byterange.map(|(s, e)| e - s + 1);
 
         // Resume: if valid, skip download!
         if seg_path.exists() && validate_dash_segment(&seg_path, exp_len, is_webm) {
-            video_segment_paths.push(seg_path);
             completed_segments_count.fetch_add(1, Ordering::Relaxed);
             continue;
         }
-
-        let _permit = governor.acquire_permit(&host);
-        let n = download_segment_with_retry(
-            client,
-            seg,
-            &seg_path,
-            cancel_token,
-            job.referer.as_deref(),
-            job.user_agent.as_deref(),
-        )
-        .await?;
-        total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
-        completed_segments_count.fetch_add(1, Ordering::Relaxed);
-
-        let _ = db.update_chunk_progress(&job.id, i, n, true);
-        video_segment_paths.push(seg_path);
+        pending_video.push((i, seg.clone()));
     }
 
-    // 8. Download Audio Stream if present
+    if !pending_video.is_empty() {
+        let concurrency = governor.stream_concurrency();
+        tracing::info!(
+            "[DASH Downloader] Downloading {} pending video segments with concurrency={}",
+            pending_video.len(),
+            concurrency
+        );
+
+        let host_c = host.clone();
+        let work_dir_c = work_dir.clone();
+        let job_id_c = job.id.clone();
+        let referer_c = job.referer.clone();
+        let user_agent_c = job.user_agent.clone();
+
+        let tasks = pending_video.into_iter().map(|(i, seg)| {
+            let client = client.clone();
+            let governor = governor.clone();
+            let cancel_token = cancel_token.clone();
+            let db = db.clone();
+            let total_downloaded_bytes = total_downloaded_bytes.clone();
+            let completed_segments_count = completed_segments_count.clone();
+            let host = host_c.clone();
+            let seg_path = work_dir_c.join(format!("video_seg_{:06}.{}", i, ext));
+            let job_id = job_id_c.clone();
+            let referer = referer_c.clone();
+            let user_agent = user_agent_c.clone();
+
+            async move {
+                if cancel_token.is_cancelled() {
+                    return Err(EngineError::Cancelled);
+                }
+
+                let _permit = governor.acquire_permit(&host);
+
+                let n = download_segment_with_retry(
+                    &client,
+                    &seg,
+                    &seg_path,
+                    &cancel_token,
+                    referer.as_deref(),
+                    user_agent.as_deref(),
+                )
+                .await?;
+
+                total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
+                completed_segments_count.fetch_add(1, Ordering::Relaxed);
+                let _ = db.update_chunk_progress(&job_id, i, n, true);
+
+                Ok::<(), EngineError>(())
+            }
+        });
+
+        let mut stream = futures_util::stream::iter(tasks).buffer_unordered(concurrency);
+        while let Some(res) = stream.next().await {
+            if cancel_token.is_cancelled() {
+                progress_cancel.cancel();
+                let _ = progress_handle.await;
+                return Err(EngineError::Cancelled);
+            }
+            res?;
+        }
+    }
+
+    for i in 0..total_video_segs {
+        video_segment_paths.push(work_dir.join(format!("video_seg_{:06}.{}", i, ext)));
+    }
+
+    // 8. Download Audio Stream if present with bounded concurrency
     let mut audio_init_path: Option<PathBuf> = None;
     let mut audio_segment_paths: Vec<PathBuf> = Vec::new();
 
@@ -375,40 +422,80 @@ pub async fn download_dash_vod(
             audio_init_path = Some(p);
         }
 
-        // Audio media segments
+        // Audio media segments with bounded concurrency
+        let a_ext = if is_audio_webm { "webm" } else { "m4s" };
+        let mut pending_audio: Vec<(usize, ResolvedDashSegment)> = Vec::new();
         for (j, seg) in a_stream.media_segments.iter().enumerate() {
-            if cancel_token.is_cancelled() {
-                progress_cancel.cancel();
-                let _ = progress_handle.await;
-                return Err(EngineError::Cancelled);
-            }
-
-            let ext = if is_audio_webm { "webm" } else { "m4s" };
-            let a_path = work_dir.join(format!("audio_seg_{:06}.{}", j, ext));
+            let a_path = work_dir.join(format!("audio_seg_{:06}.{}", j, a_ext));
             let exp_len = seg.byterange.map(|(s, e)| e - s + 1);
 
             if a_path.exists() && validate_dash_segment(&a_path, exp_len, is_audio_webm) {
-                audio_segment_paths.push(a_path);
                 completed_segments_count.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
+            pending_audio.push((j, seg.clone()));
+        }
 
-            let _permit = governor.acquire_permit(&host);
-            let n = download_segment_with_retry(
-                client,
-                seg,
-                &a_path,
-                cancel_token,
-                job.referer.as_deref(),
-                job.user_agent.as_deref(),
-            )
-            .await?;
-            total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
-            completed_segments_count.fetch_add(1, Ordering::Relaxed);
+        if !pending_audio.is_empty() {
+            let concurrency = governor.stream_concurrency();
+            let host_c = host.clone();
+            let work_dir_c = work_dir.clone();
+            let job_id_c = job.id.clone();
+            let referer_c = job.referer.clone();
+            let user_agent_c = job.user_agent.clone();
 
-            let chunk_idx = total_video_segs + j;
-            let _ = db.update_chunk_progress(&job.id, chunk_idx, n, true);
-            audio_segment_paths.push(a_path);
+            let a_tasks = pending_audio.into_iter().map(|(j, seg)| {
+                let client = client.clone();
+                let governor = governor.clone();
+                let cancel_token = cancel_token.clone();
+                let db = db.clone();
+                let total_downloaded_bytes = total_downloaded_bytes.clone();
+                let completed_segments_count = completed_segments_count.clone();
+                let host = host_c.clone();
+                let a_path = work_dir_c.join(format!("audio_seg_{:06}.{}", j, a_ext));
+                let job_id = job_id_c.clone();
+                let referer = referer_c.clone();
+                let user_agent = user_agent_c.clone();
+                let chunk_idx = total_video_segs + j;
+
+                async move {
+                    if cancel_token.is_cancelled() {
+                        return Err(EngineError::Cancelled);
+                    }
+
+                    let _permit = governor.acquire_permit(&host);
+
+                    let n = download_segment_with_retry(
+                        &client,
+                        &seg,
+                        &a_path,
+                        &cancel_token,
+                        referer.as_deref(),
+                        user_agent.as_deref(),
+                    )
+                    .await?;
+
+                    total_downloaded_bytes.fetch_add(n, Ordering::Relaxed);
+                    completed_segments_count.fetch_add(1, Ordering::Relaxed);
+                    let _ = db.update_chunk_progress(&job_id, chunk_idx, n, true);
+
+                    Ok::<(), EngineError>(())
+                }
+            });
+
+            let mut a_stream = futures_util::stream::iter(a_tasks).buffer_unordered(concurrency);
+            while let Some(res) = a_stream.next().await {
+                if cancel_token.is_cancelled() {
+                    progress_cancel.cancel();
+                    let _ = progress_handle.await;
+                    return Err(EngineError::Cancelled);
+                }
+                res?;
+            }
+        }
+
+        for j in 0..a_stream.media_segments.len() {
+            audio_segment_paths.push(work_dir.join(format!("audio_seg_{:06}.{}", j, a_ext)));
         }
     }
 

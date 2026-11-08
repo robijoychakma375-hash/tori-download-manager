@@ -49,6 +49,24 @@ impl ConcurrencyGovernor {
         self.max_connections_per_host.load(Ordering::Relaxed)
     }
 
+    /// Returns the effective concurrent segment worker count for streaming downloads (HLS/DASH).
+    /// Defaults to 4 (bounded by `max_connections_per_host`), or can be overridden via `TORI_STREAM_CONCURRENCY`.
+    pub fn stream_concurrency(&self) -> usize {
+        if let Ok(val) = std::env::var("TORI_STREAM_CONCURRENCY") {
+            if let Ok(c) = val.trim().parse::<usize>() {
+                if c > 0 {
+                    return c.min(16);
+                }
+            }
+        }
+        let per_host = self.max_connections_per_host();
+        if per_host > 0 {
+            4.min(per_host)
+        } else {
+            4
+        }
+    }
+
     pub fn acquire_permit(self: &Arc<Self>, host: &str) -> Option<ConnectionPermit> {
         let max_global = self.max_global_connections.load(Ordering::Relaxed);
         let global = self.active_global.load(Ordering::Relaxed);
