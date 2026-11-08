@@ -47,29 +47,9 @@ pub async fn download_managed_media(
 
     // Format selection
     if let Some(ref fmt) = job.resolved_url {
-        let trimmed = fmt.trim();
-        if !trimmed.is_empty() && trimmed != "default" && trimmed != "auto" {
-            let format_arg = if trimmed.starts_with("format:") {
-                trimmed.strip_prefix("format:").unwrap_or(trimmed).trim()
-            } else {
-                trimmed
-            };
+        if let Some(sel) = build_format_selector(fmt) {
             args.push("-f".to_string());
-            let is_audio = format_arg.contains("audio")
-                || format_arg.contains("ba")
-                || is_common_audio_format(format_arg);
-            if format_arg == "best"
-                || format_arg == "direct"
-                || format_arg.starts_with("hls_")
-                || format_arg.starts_with("dash_")
-            {
-                args.push("bestvideo+bestaudio/best".to_string());
-            } else if format_arg.contains('+') || format_arg.contains('/') || is_audio {
-                args.push(format_arg.to_string());
-            } else {
-                // If single video format is specified, ensure it pairs with best audio so it's not silent
-                args.push(format!("{format_arg}+bestaudio/best/{format_arg}"));
-            }
+            args.push(sel);
         }
     }
 
@@ -312,6 +292,37 @@ struct ParsedProgress {
     eta_seconds: Option<u64>,
 }
 
+/// Constructs the strict yt-dlp format selection expression.
+/// For explicit single video format IDs, pairs with best compatible audio,
+/// falling back strictly to the selected video alone (without unrelated /best/ fallback).
+pub fn build_format_selector(fmt: &str) -> Option<String> {
+    let trimmed = fmt.trim();
+    if trimmed.is_empty() || trimmed == "default" || trimmed == "auto" {
+        return None;
+    }
+    let format_arg = if trimmed.starts_with("format:") {
+        trimmed.strip_prefix("format:").unwrap_or(trimmed).trim()
+    } else {
+        trimmed
+    };
+    let is_audio = format_arg.contains("audio")
+        || format_arg.contains("ba")
+        || is_common_audio_format(format_arg);
+    if format_arg == "best"
+        || format_arg == "direct"
+        || format_arg.starts_with("hls_")
+        || format_arg.starts_with("dash_")
+    {
+        Some("bestvideo+bestaudio/best".to_string())
+    } else if format_arg.contains('+') || format_arg.contains('/') || is_audio {
+        Some(format_arg.to_string())
+    } else {
+        // If single video format is specified, ensure it pairs with best audio so it's not silent;
+        // fallback strictly to selected video alone without unrelated /best/ substitution
+        Some(format!("{format_arg}+bestaudio/{format_arg}"))
+    }
+}
+
 fn is_common_audio_format(fmt: &str) -> bool {
     let lower = fmt.to_lowercase();
     matches!(
@@ -443,5 +454,83 @@ pub(crate) fn cleanup_partial_files(target_str: &str) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_selector_single_video_eliminates_best_fallback() {
+        // Single video formats must pair with best audio, falling back only to the video itself
+        assert_eq!(
+            build_format_selector("160").as_deref(),
+            Some("160+bestaudio/160")
+        );
+        assert_eq!(
+            build_format_selector("395").as_deref(),
+            Some("395+bestaudio/395")
+        );
+        assert_eq!(
+            build_format_selector("230").as_deref(),
+            Some("230+bestaudio/230")
+        );
+        assert_eq!(
+            build_format_selector("format:160").as_deref(),
+            Some("160+bestaudio/160")
+        );
+
+        // Crucial security invariant: never contains /best/ fallback for explicit single video
+        let sel = build_format_selector("160").unwrap();
+        assert!(
+            !sel.contains("/best/"),
+            "Single video selector must not contain /best/ fallback"
+        );
+    }
+
+    #[test]
+    fn test_format_selector_audio_only_preserved() {
+        assert_eq!(build_format_selector("251").as_deref(), Some("251"));
+        assert_eq!(build_format_selector("140").as_deref(), Some("140"));
+        assert_eq!(build_format_selector("opus").as_deref(), Some("opus"));
+        assert_eq!(build_format_selector("m4a").as_deref(), Some("m4a"));
+        assert_eq!(build_format_selector("format:251").as_deref(), Some("251"));
+    }
+
+    #[test]
+    fn test_format_selector_explicit_combo_preserved() {
+        assert_eq!(build_format_selector("230+140").as_deref(), Some("230+140"));
+        assert_eq!(build_format_selector("395+251").as_deref(), Some("395+251"));
+        assert_eq!(
+            build_format_selector("format:230+140").as_deref(),
+            Some("230+140")
+        );
+    }
+
+    #[test]
+    fn test_format_selector_best_and_auto_intact() {
+        assert_eq!(
+            build_format_selector("best").as_deref(),
+            Some("bestvideo+bestaudio/best")
+        );
+        assert_eq!(
+            build_format_selector("direct").as_deref(),
+            Some("bestvideo+bestaudio/best")
+        );
+        assert_eq!(
+            build_format_selector("hls_1").as_deref(),
+            Some("bestvideo+bestaudio/best")
+        );
+        assert_eq!(
+            build_format_selector("dash_1").as_deref(),
+            Some("bestvideo+bestaudio/best")
+        );
+
+        // Auto / default / empty produces None (yt-dlp default behavior)
+        assert_eq!(build_format_selector("auto"), None);
+        assert_eq!(build_format_selector("default"), None);
+        assert_eq!(build_format_selector(""), None);
+        assert_eq!(build_format_selector("   "), None);
     }
 }
