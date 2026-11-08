@@ -19,6 +19,80 @@ use crate::hls::parser::{
 };
 use crate::types::{ChunkRecord, DownloadJob, DownloadProgress, JobState};
 
+/// Downloads raw segment or key bytes with automatic retry backoff on transient errors (429, 500..=504) and connection drops.
+async fn fetch_hls_bytes_with_retry(
+    client: &Client,
+    uri: &str,
+    byterange: Option<(u64, Option<u64>)>,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+    cancel_token: &CancellationToken,
+) -> Result<Vec<u8>> {
+    let max_retries = 3;
+    let mut attempt = 0;
+
+    loop {
+        if cancel_token.is_cancelled() {
+            return Err(EngineError::Cancelled);
+        }
+
+        let mut req = client.get(uri).header(ACCEPT_ENCODING, "identity");
+        if let Some((len, opt_offset)) = byterange {
+            let offset = opt_offset.unwrap_or(0);
+            req = req.header(RANGE, format!("bytes={}-{}", offset, offset + len - 1));
+        }
+        req = crate::engine::referer::apply_referer(req, referer, uri);
+        req = crate::engine::user_agent::apply_user_agent(req, user_agent);
+
+        match req.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    let bytes = resp.bytes().await.map_err(EngineError::Http)?;
+                    return Ok(bytes.to_vec());
+                } else if status.as_u16() == 429 || (500..=504).contains(&status.as_u16()) {
+                    attempt += 1;
+                    if attempt > max_retries {
+                        return Err(EngineError::HttpStatus(status.as_u16()));
+                    }
+                    let backoff = Duration::from_millis(150 * (1 << attempt));
+                    tracing::warn!(
+                        "[HLS Downloader] Server returned {}. Retrying in {:?} (attempt {}/{})",
+                        status,
+                        backoff,
+                        attempt,
+                        max_retries
+                    );
+                    tokio::select! {
+                        _ = cancel_token.cancelled() => return Err(EngineError::Cancelled),
+                        _ = tokio::time::sleep(backoff) => continue,
+                    }
+                } else {
+                    return Err(EngineError::HttpStatus(status.as_u16()));
+                }
+            }
+            Err(e) => {
+                attempt += 1;
+                if attempt > max_retries {
+                    return Err(EngineError::Http(e));
+                }
+                let backoff = Duration::from_millis(150 * (1 << attempt));
+                tracing::warn!(
+                    "[HLS Downloader] Network error: {}. Retrying in {:?} (attempt {}/{})",
+                    e,
+                    backoff,
+                    attempt,
+                    max_retries
+                );
+                tokio::select! {
+                    _ = cancel_token.cancelled() => return Err(EngineError::Cancelled),
+                    _ = tokio::time::sleep(backoff) => continue,
+                }
+            }
+        }
+    }
+}
+
 /// Downloads an HLS VOD resource end-to-end with bounded segment concurrency,
 /// durable SQLite progress tracking, AES-128 decryption, and container remuxing.
 #[allow(clippy::too_many_arguments)]
@@ -176,20 +250,15 @@ pub async fn download_hls_vod(
     if let Some(ref init_seg) = media_playlist.init_segment {
         let p = work_dir.join("init.mp4");
         if !p.exists() || fs::metadata(&p)?.len() == 0 {
-            let mut req = client.get(&init_seg.uri);
-            if let Some((len, offset)) = init_seg.byterange {
-                let start = offset.unwrap_or(0);
-                req = req.header(RANGE, format!("bytes={}-{}", start, start + len - 1));
-            }
-            req = crate::engine::referer::apply_referer(req, job.referer.as_deref(), &init_seg.uri);
-            req = crate::engine::user_agent::apply_user_agent(req, job.user_agent.as_deref());
-            let bytes = req
-                .send()
-                .await
-                .map_err(EngineError::Http)?
-                .bytes()
-                .await
-                .map_err(EngineError::Http)?;
+            let bytes = fetch_hls_bytes_with_retry(
+                client,
+                &init_seg.uri,
+                init_seg.byterange,
+                job.referer.as_deref(),
+                job.user_agent.as_deref(),
+                cancel_token,
+            )
+            .await?;
             fs::write(&p, &bytes)?;
         }
         init_path = Some(p);
@@ -291,18 +360,15 @@ pub async fn download_hls_vod(
                 let key_bytes = match key_cache.get(&k.uri) {
                     Some(kb) => *kb,
                     None => {
-                        let mut k_req = client.get(&k.uri);
-                        k_req = crate::engine::referer::apply_referer(
-                            k_req,
-                            job.referer.as_deref(),
+                        let bytes = fetch_hls_bytes_with_retry(
+                            client,
                             &k.uri,
-                        );
-                        k_req = crate::engine::user_agent::apply_user_agent(
-                            k_req,
+                            None,
+                            job.referer.as_deref(),
                             job.user_agent.as_deref(),
-                        );
-                        let resp = k_req.send().await.map_err(EngineError::Http)?;
-                        let bytes = resp.bytes().await.map_err(EngineError::Http)?;
+                            cancel_token,
+                        )
+                        .await?;
                         if bytes.len() != 16 {
                             return Err(EngineError::Other(format!(
                                 "Invalid AES-128 key length {} from {}",
@@ -326,29 +392,23 @@ pub async fn download_hls_vod(
         // Concurrency permit from governor
         let _permit = governor.acquire_permit(&host);
 
-        // Download segment bytes
-        let mut req = client.get(&seg.uri).header(ACCEPT_ENCODING, "identity");
-        if let Some((len, opt_offset)) = seg.byterange {
-            let offset = opt_offset.unwrap_or(0);
-            req = req.header(RANGE, format!("bytes={}-{}", offset, offset + len - 1));
-        }
-        req = crate::engine::referer::apply_referer(req, job.referer.as_deref(), &seg.uri);
-        req = crate::engine::user_agent::apply_user_agent(req, job.user_agent.as_deref());
-
-        let resp = req.send().await.map_err(EngineError::Http)?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(EngineError::HttpStatus(status.as_u16()));
-        }
-
-        let raw_bytes = resp.bytes().await.map_err(EngineError::Http)?;
+        // Download segment bytes with automatic retry
+        let raw_bytes = fetch_hls_bytes_with_retry(
+            client,
+            &seg.uri,
+            seg.byterange,
+            job.referer.as_deref(),
+            job.user_agent.as_deref(),
+            cancel_token,
+        )
+        .await?;
         total_downloaded_bytes.fetch_add(raw_bytes.len() as u64, Ordering::Relaxed);
 
         // Decrypt if AES-128
         let final_bytes = if let Some((ref kb, ref iv)) = resolved_key {
             decrypt_hls_segment(&raw_bytes, kb, iv)?
         } else {
-            raw_bytes.to_vec()
+            raw_bytes
         };
 
         fs::write(&seg_path, &final_bytes)?;
@@ -387,12 +447,15 @@ pub async fn download_hls_vod(
             }
 
             let _permit = governor.acquire_permit(&host);
-            let resp = client
-                .get(&seg.uri)
-                .send()
-                .await
-                .map_err(EngineError::Http)?;
-            let bytes = resp.bytes().await.map_err(EngineError::Http)?;
+            let bytes = fetch_hls_bytes_with_retry(
+                client,
+                &seg.uri,
+                seg.byterange,
+                job.referer.as_deref(),
+                job.user_agent.as_deref(),
+                cancel_token,
+            )
+            .await?;
             fs::write(&a_path, &bytes)?;
             audio_segment_paths.push(a_path);
         }

@@ -777,3 +777,102 @@ async fn test_hls_pause_and_resume_continuity() {
 
     cancel.cancel();
 }
+
+// =========================================================================
+// TEST 10: Transient HTTP 429/503 Retries with Backoff Recovery
+// =========================================================================
+#[tokio::test]
+async fn test_hls_transient_429_503_retry_recovery() {
+    let temp_fixture_dir = tempdir().unwrap();
+    let ts_path = temp_fixture_dir.path().join("source.ts");
+    let seg_bytes = generate_test_ts_segment(&ts_path, 1);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let cancel = CancellationToken::new();
+    let cancel_server = cancel.clone();
+
+    let throttle_count = Arc::new(AtomicUsize::new(0));
+    let tc = throttle_count.clone();
+    let sb = seg_bytes.clone();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel_server.cancelled() => break,
+                res = listener.accept() => {
+                    let (mut socket, _) = match res {
+                        Ok(s) => s,
+                        Err(_) => break,
+                    };
+                    let sb = sb.clone();
+                    let t_counter = tc.clone();
+
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; 2048];
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        let req = String::from_utf8_lossy(&buf[..n]);
+
+                        if req.contains("GET /retry_test.m3u8") {
+                            let m3u8 = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:1.0,\nseg0.ts\n#EXTINF:1.0,\nseg1.ts\n#EXT-X-ENDLIST\n";
+                            let resp = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                m3u8.len(),
+                                m3u8
+                            );
+                            let _ = socket.write_all(resp.as_bytes()).await;
+                        } else if req.contains("GET /seg0.ts") && t_counter.fetch_add(1, Ordering::SeqCst) < 2 {
+                            // Inject transient 429 on first 2 attempts
+                            let resp = "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1\r\nConnection: close\r\n\r\n";
+                            let _ = socket.write_all(resp.as_bytes()).await;
+                        } else if req.contains("GET /seg0.ts") || req.contains("GET /seg1.ts") {
+                            let resp = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                sb.len()
+                            );
+                            let _ = socket.write_all(resp.as_bytes()).await;
+                            let _ = socket.write_all(&sb).await;
+                        } else {
+                            let resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n";
+                            let _ = socket.write_all(resp.as_bytes()).await;
+                        }
+                    });
+                }
+            }
+        }
+    });
+
+    let temp_client_dir = tempdir().unwrap();
+    let db = Database::open(temp_client_dir.path().join("retry_hls.sqlite")).unwrap();
+    let manager = DownloadManager::new(db, EventBus::default()).unwrap();
+
+    let manifest_url = format!("http://127.0.0.1:{}/retry_test.m3u8", port);
+    let job = manager
+        .create_download(&manifest_url, temp_client_dir.path())
+        .await
+        .unwrap();
+
+    manager.start_download(&job.id).unwrap();
+
+    let state = wait_for_job_terminal(&manager, &job.id, Duration::from_secs(15))
+        .await
+        .unwrap();
+    assert_eq!(state, JobState::Completed);
+
+    // Verify that throttle was encountered and retried successfully
+    assert!(
+        throttle_count.load(Ordering::SeqCst) >= 2,
+        "Expected 429 retries were not observed"
+    );
+
+    let output_file = std::path::Path::new(&job.target_path);
+    assert!(output_file.exists());
+    let dur = probe_duration(output_file).expect("Output probe failed");
+    assert!(
+        (1.5..=2.5).contains(&dur),
+        "Duration {:.2}s outside expected 2s range",
+        dur
+    );
+
+    cancel.cancel();
+}
