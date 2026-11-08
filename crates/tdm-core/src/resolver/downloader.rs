@@ -53,6 +53,35 @@ pub async fn download_managed_media(
         }
     }
 
+    // Target media URL: normalize if platform URL
+    let target_url =
+        if let Ok(normalized) = crate::resolver::pipeline::normalize_platform_media_url(&job.url) {
+            normalized
+        } else {
+            job.url.clone()
+        };
+
+    // Propagate Referer to prevent hotlink blocks on platform/CDN media streams
+    if let Some(ref referer) = job.referer {
+        let clean = referer.trim();
+        if !clean.is_empty() {
+            args.push("--referer".to_string());
+            args.push(clean.to_string());
+        }
+    } else if target_url.contains("player.vimeo.com") || job.url.contains("vimeo.com") {
+        args.push("--referer".to_string());
+        args.push("https://vimeo.com/".to_string());
+    }
+
+    // Propagate User-Agent to match the user's browser session
+    if let Some(ref ua) = job.user_agent {
+        let clean = ua.trim();
+        if !clean.is_empty() {
+            args.push("--user-agent".to_string());
+            args.push(clean.to_string());
+        }
+    }
+
     // Configure FFmpeg location if available for stream-copy muxing
     if let Some(ffmpeg_bin) = find_ffmpeg() {
         if let Some(parent) = ffmpeg_bin.parent() {
@@ -70,7 +99,7 @@ pub async fn download_managed_media(
     args.push(job.target_path.clone());
 
     // Target media URL
-    args.push(job.url.clone());
+    args.push(target_url);
 
     let mut cmd = Command::new(&yt_dlp_bin);
     cmd.args(&args)

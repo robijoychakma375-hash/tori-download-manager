@@ -147,6 +147,17 @@ function normalizePlatformUrl(rawUrl) {
           platform: 'instagram',
         };
       }
+    } else if (host.includes('vimeo.com') && !host.includes('player.vimeo.com')) {
+      const segments = path.split('/').filter(Boolean);
+      const last = segments[segments.length - 1];
+      if (last && /^\d+$/.test(last)) {
+        return {
+          url: `https://player.vimeo.com/video/${last}`,
+          videoId: last,
+          isSpecific: true,
+          platform: 'vimeo',
+        };
+      }
     }
 
     return {
@@ -395,16 +406,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function getDisplayCandidates(items) {
     if (!Array.isArray(items) || items.length === 0) return [];
-    const hasManifest = items.some(
-      (c) => c.type === 'hls' || c.type === 'dash' || (c.url && (c.url.includes('.m3u8') || c.url.includes('.mpd')))
-    );
-    if (hasManifest) {
-      // If a manifest is available, prefer displaying the manifest instead of dozens of individual fragments
-      const nonSegments = items.filter((c) => !c.is_segment && c.type !== 'segment');
-      return nonSegments.length > 0 ? nonSegments : items;
-    }
-    // When no manifest is detected, preserve useful media candidates (including segments)
-    return items;
+    // Strictly exclude partial transport fragments (.m4s, .cmfv, .cmfa, numbered .ts chunks)
+    // from being displayed as independent downloadable full videos
+    return items.filter((c) => !c.is_segment && c.type !== 'segment');
   }
 
   function renderResolutionError(errMsg, tab) {
@@ -668,27 +672,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.disabled = true;
         btn.textContent = 'Sending…';
         const currentUrl = (tab && tab.url) || window.location.href;
-        const isManaged = isManagedPlatform(currentUrl) || isTransientCdnUrl(target.url);
-        const reqPayload = isManaged
-          ? {
-              action: 'START_MEDIA_DOWNLOAD',
-              url: currentUrl,
-              format_id: 'best',
-              filename: target.filename,
-              priority: 'high',
-              page_url: currentUrl,
-              thumbnail_url: target.thumbnail_url || null,
-              user_agent: navigator.userAgent,
-            }
-          : {
-              action: 'START_DOWNLOAD',
-              url: target.url,
-              filename: target.filename,
-              priority: 'high',
-              page_url: currentUrl,
-              thumbnail_url: target.thumbnail_url || null,
-              user_agent: navigator.userAgent,
-            };
+        // Direct media candidates must start immediately through native downloader
+        const reqPayload = {
+          action: 'START_DOWNLOAD',
+          url: target.url,
+          filename: target.filename,
+          priority: 'high',
+          page_url: currentUrl,
+          thumbnail_url: target.thumbnail_url || null,
+          user_agent: navigator.userAgent,
+        };
 
         chrome.runtime.sendMessage(
           reqPayload,

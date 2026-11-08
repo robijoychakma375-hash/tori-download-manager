@@ -439,6 +439,24 @@ fn test_gate12_5_1_facebook_reel_url_normalization_and_validation() {
 }
 
 #[test]
+fn test_gate17_2_vimeo_url_normalization() {
+    // 1. Direct numeric video path normalizes to player.vimeo.com embed
+    let u1 = normalize_platform_media_url("https://vimeo.com/27246366")
+        .expect("Should normalize Vimeo video URL");
+    assert_eq!(u1, "https://player.vimeo.com/video/27246366");
+
+    // 2. Staff picks channel path normalizes to player.vimeo.com embed
+    let u2 = normalize_platform_media_url("https://vimeo.com/channels/staffpicks/27246366")
+        .expect("Should normalize channel Vimeo video URL");
+    assert_eq!(u2, "https://player.vimeo.com/video/27246366");
+
+    // 3. Already canonical player.vimeo.com is preserved
+    let u3 = normalize_platform_media_url("https://player.vimeo.com/video/27246366")
+        .expect("Should preserve player.vimeo.com");
+    assert_eq!(u3, "https://player.vimeo.com/video/27246366");
+}
+
+#[test]
 fn test_gate12_5_2_media_filesize_reporting_priority_and_accuracy() {
     // 1. Priority 1: Exact filesize when reliably available
     let json_exact = serde_json::json!({

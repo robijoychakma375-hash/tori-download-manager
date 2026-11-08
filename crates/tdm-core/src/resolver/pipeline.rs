@@ -1499,6 +1499,13 @@ pub fn normalize_platform_media_url(raw_url: &str) -> Result<String> {
                 }
             }
         }
+    } else if host.contains("vimeo.com") && !host.contains("player.vimeo.com") {
+        let path = parsed.path().trim_matches('/');
+        if let Some(last_seg) = path.split('/').next_back() {
+            if !last_seg.is_empty() && last_seg.chars().all(|c| c.is_ascii_digit()) {
+                return Ok(format!("https://player.vimeo.com/video/{}", last_seg));
+            }
+        }
     }
 
     Ok(raw_url.to_string())

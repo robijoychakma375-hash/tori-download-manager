@@ -44,6 +44,12 @@ pub async fn execute_yt_dlp_dump(
         }
     }
 
+    // Pass referer for player.vimeo.com embeds to satisfy Vimeo public embed requirements
+    if url.contains("player.vimeo.com") {
+        args.push("--referer".to_string());
+        args.push("https://vimeo.com/".to_string());
+    }
+
     // Add target URL as the final explicit argument
     args.push(url.to_string());
 

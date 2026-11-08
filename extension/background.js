@@ -493,6 +493,17 @@ function normalizePlatformUrl(rawUrl) {
           platform: 'instagram',
         };
       }
+    } else if (host.includes('vimeo.com') && !host.includes('player.vimeo.com')) {
+      const segments = path.split('/').filter(Boolean);
+      const last = segments[segments.length - 1];
+      if (last && /^\d+$/.test(last)) {
+        return {
+          url: `https://player.vimeo.com/video/${last}`,
+          videoId: last,
+          isSpecific: true,
+          platform: 'vimeo',
+        };
+      }
     }
 
     return {
@@ -1419,34 +1430,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message: 'watch.plex.tv content is DRM-protected and not licensed for offline download.',
       });
       return false;
-    }
-
-    if (isTransientCdnUrl(rawUrl)) {
-      const pageUrl = message.page_url || sender.tab?.url;
-      if (pageUrl && !pageUrl.startsWith('chrome:') && !pageUrl.startsWith('edge:') && !pageUrl.startsWith('about:')) {
-        console.log('[TORI] Rerouting transient CDN URL to managed media download for page:', pageUrl);
-        callDesktopApi('/api/v1/media/download', 'POST', {
-          url: pageUrl,
-          format_id: message.format_id || 'best',
-          filename: message.filename,
-          destination: message.destination,
-          priority: message.priority || 'normal',
-          referer: safeReferer,
-          user_agent: safeUserAgent,
-        }).then((httpRes) => {
-          if (httpRes.ok && httpRes.data) {
-            sendResponse(httpRes.data);
-          } else {
-            sendResponse({
-              status: 'error',
-              message: httpRes.data?.message || 'Managed media download failed',
-            });
-          }
-        }).catch((err) => {
-          sendResponse({ status: 'error', message: err.message || 'Download error' });
-        });
-        return true;
-      }
     }
 
     if (!rawUrl || rawUrl.startsWith('blob:') || rawUrl.startsWith('data:') || rawUrl.startsWith('javascript:')) {

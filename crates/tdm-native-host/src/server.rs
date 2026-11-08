@@ -777,11 +777,16 @@ async fn handle_create_media_download(
         _ => Priority::Normal,
     };
 
-    let target_media_url = payload
+    let raw_target_media_url = payload
         .direct_stream_url
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(raw_url);
+
+    let normalized_media_url =
+        tdm_core::resolver::pipeline::normalize_platform_media_url(raw_target_media_url)
+            .unwrap_or_else(|_| raw_target_media_url.to_string());
+    let target_media_url = normalized_media_url.as_str();
 
     // Duplicate check for media download
     if let Ok(jobs) = state.db.list_jobs() {
@@ -803,7 +808,14 @@ async fn handle_create_media_download(
     let clean_referer = payload
         .referer
         .as_deref()
-        .and_then(|r| tdm_core::sanitize_and_validate_referer(r, target_media_url));
+        .and_then(|r| tdm_core::sanitize_and_validate_referer(r, target_media_url))
+        .or_else(|| {
+            if target_media_url.contains("player.vimeo.com") {
+                Some("https://vimeo.com/".to_string())
+            } else {
+                None
+            }
+        });
 
     let clean_user_agent = payload
         .user_agent

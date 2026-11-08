@@ -153,6 +153,17 @@ function normalizePlatformUrl(rawUrl) {
           platform: 'instagram',
         };
       }
+    } else if (host.includes('vimeo.com') && !host.includes('player.vimeo.com')) {
+      const segments = path.split('/').filter(Boolean);
+      const last = segments[segments.length - 1];
+      if (last && /^\d+$/.test(last)) {
+        return {
+          url: `https://player.vimeo.com/video/${last}`,
+          videoId: last,
+          isSpecific: true,
+          platform: 'vimeo',
+        };
+      }
     }
 
     return {
@@ -286,6 +297,45 @@ function normalizePlatformUrl(rawUrl) {
   function sanitizeFilename(title, ext = 'mp4') {
     const clean = title.replace(/[\\/:*?"<>|]/g, '').trim();
     return `${clean || 'download'}.${ext}`;
+  }
+
+  // Extract and record direct DOM video media candidates with background worker
+  function recordDomMedia(videoEl) {
+    if (!videoEl) return;
+    const directSrc = videoEl.currentSrc || videoEl.src;
+    if (directSrc && !directSrc.startsWith('blob:') && !directSrc.startsWith('data:')) {
+      const lower = directSrc.toLowerCase();
+      const ext = lower.includes('.webm') ? 'webm' : (lower.includes('.mkv') ? 'mkv' : 'mp4');
+      const cType = lower.includes('.webm') ? 'video/webm' : (lower.includes('.mkv') ? 'video/x-matroska' : 'video/mp4');
+      chrome.runtime.sendMessage({
+        action: 'RECORD_MEDIA_FROM_DOM',
+        candidate: {
+          url: directSrc,
+          filename: sanitizeFilename(getMediaTitle(videoEl), ext),
+          size_bytes: null,
+          content_type: cType,
+        },
+      });
+    }
+
+    const sources = videoEl.querySelectorAll('source');
+    for (const s of sources) {
+      const sSrc = s.src || s.getAttribute('src');
+      if (sSrc && !sSrc.startsWith('blob:') && !sSrc.startsWith('data:')) {
+        const lower = sSrc.toLowerCase();
+        const ext = lower.includes('.webm') ? 'webm' : 'mp4';
+        const cType = s.type || (lower.includes('.webm') ? 'video/webm' : 'video/mp4');
+        chrome.runtime.sendMessage({
+          action: 'RECORD_MEDIA_FROM_DOM',
+          candidate: {
+            url: sSrc,
+            filename: sanitizeFilename(getMediaTitle(videoEl), ext),
+            size_bytes: null,
+            content_type: cType,
+          },
+        });
+      }
+    }
   }
 
   // Format bytes helper adhering to Gate 12.5.2 display guidelines
@@ -558,8 +608,14 @@ function normalizePlatformUrl(rawUrl) {
                    videoEl.parentElement;
     if (!anchor) return;
 
-    // Prevent duplicate overlays in this anchor
-    if (anchor.querySelector(':scope > .tori-mp')) return;
+    // Prevent duplicate overlays for this specific video element or dedicated player anchor
+    const existingMps = anchor.querySelectorAll(':scope > .tori-mp');
+    for (const em of existingMps) {
+      if (em.__toriVideoEl === videoEl) return;
+    }
+    if (anchor !== videoEl.parentElement && existingMps.length > 0) {
+      return;
+    }
 
     videoEl.setAttribute('data-tori-attached', 'true');
 
@@ -914,13 +970,8 @@ function normalizePlatformUrl(rawUrl) {
         }
       });
 
-      // 3. Tab candidates from background webRequest interception
-      const hasManifest = tabMediaCandidates.some(
-        (c) => c.type === 'hls' || c.type === 'dash' || (c.url && (c.url.includes('.m3u8') || c.url.includes('.mpd')))
-      );
-      const displayCandidates = hasManifest
-        ? tabMediaCandidates.filter((c) => !c.is_segment && c.type !== 'segment')
-        : tabMediaCandidates;
+      // 3. Tab candidates from background webRequest interception (strictly excluding partial transport fragments)
+      const displayCandidates = tabMediaCandidates.filter((c) => !c.is_segment && c.type !== 'segment');
 
       displayCandidates.forEach((tc) => {
         if (tc && tc.url) {
@@ -1457,19 +1508,8 @@ function normalizePlatformUrl(rawUrl) {
       });
     });
 
-    // Check DOM source attributes and inform background worker
-    const directSrc = videoEl.currentSrc || videoEl.src;
-    if (directSrc && !directSrc.startsWith('blob:') && !directSrc.startsWith('data:')) {
-      chrome.runtime.sendMessage({
-        action: 'RECORD_MEDIA_FROM_DOM',
-        candidate: {
-          url: directSrc,
-          filename: sanitizeFilename(getMediaTitle(videoEl), 'mp4'),
-          size_bytes: null,
-          content_type: 'video/mp4',
-        },
-      });
-    }
+    // Record DOM media candidates
+    recordDomMedia(videoEl);
 
     // Initial render and proactive platform resolution
     renderPanel();
@@ -1607,6 +1647,7 @@ function normalizePlatformUrl(rawUrl) {
 
     const videos = getAllVideos(document);
     videos.forEach((video) => {
+      recordDomMedia(video);
       attachVideoOverlay(video);
     });
   }
