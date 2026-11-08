@@ -1,118 +1,66 @@
-# TORI Download Manager v1.0.1 — Milestone Plan: Gate 17.4
-## Persistent Queue, Scheduler & Crash Recovery Reliability
+# TORI Download Manager v1.0.1 — Milestone Plan: Gate 17.4.1
+## Scheduler & Long-Run Reliability Evidence Closure
 
 ### Objective
-Verify and strengthen TORI's existing download queue, scheduler, pause/resume, partial-file preservation, SQLite persistence, and unexpected process recovery across all protocols, preserving all previously validated Gate 15.x, Gate 17.0, Gate 17.1, Gate 17.2, and Gate 17.3 functionality without introducing replacement download engines or speculative architecture rewrites.
+Close two critical evidence gaps from Gate 17.4 before proceeding to Gate 17.5:
+1. Forensic audit and acceptance testing of TORI's actual scheduler features (priority queue vs. wall-clock scheduling).
+2. Controlled 20–30 minute continuous long-run stability workload measuring physical working set, private bytes, CPU, file handles, SQLite growth, and child processes across multiple concurrent and adaptive streaming downloads.
+
+Preserve all previously validated Gate 15.x, 17.0, 17.1, 17.2, 17.3, and 17.4 functionality without speculative feature additions or engine rewrites.
 
 ---
 
 ### Specific Measurable Milestones
 
-#### Milestone 1: Checkpoint & Gate 17.3 Safety Audit (Task 1)
-- [x] Verify Git branch (`dev/v1.0.1`), expected baseline HEAD (`fcb12a5`), clean working tree, and untracked verification scripts.
-- [x] Confirm stable public TORI v1.0.0 exists untouched (`C:\Program Files\Tori Download Manager`).
-- [x] Audit Gate 17.3 changes:
-  1. `GET_ALL_MEDIA` handler in `extension/background.js` guarded against caller tabs; content scripts rejected.
-  2. Localhost / `127.0.0.1` content-script match patterns preserved for local test harnesses.
-  3. Authentication and ownership checks for `POST /api/v1/downloads/{id}/progress` verified (401/404).
-  4. Secondary-instance Tokio runtime fix in `src-tauri/src/lib.rs` verified.
-  5. 10-second Native Messaging auto-pair cooldown active.
+#### Milestone 1: Review Existing Evidence (Task 1)
+- [x] Review `GATE17_4_QUEUE_SCHEDULER_RECOVERY_REPORT.md`, Gate 17.4 test results, SQLite schema, and existing benchmarks.
+- [x] Audit existing scheduler implementation in `crates/tdm-core/src/db/repo.rs`, `manager.rs`, and `adaptive.rs`.
+- [x] Determine exact coverage and isolate the two evidence gaps.
 
-#### Milestone 2: Queue Behavior & Bounded Concurrency (Task 2)
-- [x] Test queueing 10–30 concurrent download requests under bounded concurrency (`max_active_jobs = 4`).
-- [x] Verify unique job IDs and proper SQLite insertion in `JobState::Queued`.
-- [x] Verify priority ordering: High > Normal > Low, with FIFO (`created_at ASC`) within identical priority.
-- [x] Verify worker capacity release: when an active job completes, pauses, or cancels, the next queued job is automatically dispatched.
-- [x] Verify paused jobs release their active worker slot immediately without consuming worker concurrency.
-- [x] Verify cancelled jobs do not restart automatically.
-- [x] Verify failed jobs respect retry policies without queue stalling or worker starvation.
+#### Milestone 2: Scheduler Acceptance & Feature Inventory (Task 2)
+- [x] Identify features actually implemented in TORI (Priority Queue Scheduler, Bounded Concurrency Governor, Adaptive Straggler Scheduler).
+- [x] Explicitly inventory unsupported/absent features (Future scheduled download start, wall-clock time execution, delayed execution, missed time handling).
+- [x] Execute deterministic tests for all 9 required verification points:
+  1. Future scheduled download start (Verify absence / unsupported status honestly: No `scheduled_at` column/field in TORI).
+  2. Persistent scheduled job state (Verify `JobState::Queued` persistence in SQLite).
+  3. Application restart before execution (Verify queued jobs persist across restarts and reconcile on startup).
+  4. Correct execution when due (Verify priority `high > normal > low` and FIFO queue dispatch when slots free).
+  5. Cancelled scheduled jobs remain cancelled (Verify cancelled jobs never auto-start or return from scheduler).
+  6. Paused scheduled jobs do not start unexpectedly (Verify paused jobs remain paused and ignored by `get_next_queued_job`).
+  7. No duplicate execution after repeated scheduler evaluation (Verify idempotency of `process_queue` and `start_download`).
+  8. Correct handling of missed scheduled times (Verify absence / unsupported status honestly: No wall-clock schedule exists).
+  9. Correct SQLite state transitions (`Queued -> Downloading -> Paused / Completed / Cancelled`).
 
-#### Milestone 3: Pause & Resume Across 8 Server/Network Edge Conditions (Task 3)
-- [x] Condition 1: Accept-Ranges server (partial-content 206, byte offset preservation).
-- [x] Condition 2: Server without HTTP Range support (explicit restart single-stream fallback).
-- [x] Condition 3: Intermittent network failures (transient socket drop & reconnection).
-- [x] Condition 4: Slow network connection / throttled transfer.
-- [x] Condition 5: Interrupted chunk transfer during active chunk download.
-- [x] Condition 6: Stale ETag / Last-Modified metadata (validator mismatch detection; resets chunk plans and purges stale parts).
-- [x] Condition 7: Changed Content-Length upon resume (re-plans chunks to prevent corrupted file assembly).
-- [x] Condition 8: Corrupt or missing partial `.tdm-part` chunk (resets SQLite chunk progress and re-fetches cleanly).
-- [x] Verify byte-for-byte SHA256 integrity on all completed files.
+#### Milestone 3: Controlled 20–30 Minute Long-Run Stability Workload (Task 3)
+- [x] Construct realistic, controlled multi-workload harness using disposable test data:
+  - Multiple concurrent queued HTTP downloads (bounded to 3 active slots).
+  - Native HLS VOD streaming workflow with multi-segment TS chunks remuxing to MP4.
+  - Periodic pause and resume operations mid-stream (pause @ 3m, resume @ 6m).
+  - Temporary network interruption (transient 503 from 8m to 9m) with automatic retry recovery.
+  - Normal download completions with SHA-256 byte-for-byte integrity verification.
+- [x] Run continuous 20-minute workload (1,200 seconds / 20.9 min actual) with periodic 30-second sampling (40 samples):
+  - Rust engine Working Set: 30.47 MB initial -> 32.69 MB final (+2.22 MB net drift, peak 33.96 MB < 75 MB limit).
+  - Private Bytes: 12.80 MB initial -> 13.40 MB final (+0.60 MB net drift, peak 14.11 MB < 50 MB limit).
+  - Engine CPU utilization: baseline 0.0% – 0.5%.
+  - OS File Handle count: 666 – 692 handles (stable).
+  - SQLite DB and WAL storage footprint: 12 KB DB, 664 KB – 1086 KB WAL (strictly bounded).
+  - Temporary `.tdm-part` disk usage: cleaned atomically on job completion.
+  - Active worker concurrency vs. queued count: strictly bounded to $\le 3$.
+  - Companion orphan processes: 0 `tdm-native-host`, 0 `ffmpeg`, 0 `yt-dlp`.
+- [x] Confirm no memory leak, handle leak, or unhandled process degradation over 20+ minutes.
 
-#### Milestone 4: Application Crash Recovery Across 5 Execution Stages (Task 4)
-- [x] Interrupt development engine at Stage 1: Initial connection / probing.
-- [x] Interrupt development engine at Stage 2: Active chunk writing (mid-stream).
-- [x] Interrupt development engine at Stage 3: Final chunk completion.
-- [x] Interrupt development engine at Stage 4: File assembly / rename from `.tdm-part` to final.
-- [x] Interrupt development engine at Stage 5: SQLite state commit.
-- [x] Verify `reconcile_on_startup()` transitions interrupted active jobs to `Paused` without false `Completed`.
-- [x] Verify resumed jobs achieve byte-perfect SHA256 matches.
+#### Milestone 4: Critical Safety Review (Task 4)
+- [x] Verify original download data preservation during normal resume (byte-perfect SHA-256).
+- [x] Verify safe invalidation of stale partial files when server validators change (stale V1 purged, fresh V2 assembled).
+- [x] Verify correct file-size mismatch handling.
+- [x] Verify no duplicate job execution (single SQLite record, token deduplication).
+- [x] Verify no accidental deletion of completed downloads (collision detection preserves original, saves as `filename (1).ext`).
+- [x] Verify no cross-tab media exposure to untrusted content scripts (caller tab validation on `GET_ALL_MEDIA`).
+- [x] Confirm all tests execute strictly within isolated disposable directories (`%TEMP%\tori_*`).
 
-#### Milestone 5: Scheduler Reliability (Task 5)
-- [x] Audit scheduling mechanisms (priority queue scheduling, adaptive straggler scheduling, queue advancement).
-- [x] Test future scheduled execution / delayed queue dispatch where applicable.
-- [x] Test paused scheduled jobs, cancelled scheduled jobs, and missed execution windows.
-- [x] Confirm cancelled or paused jobs never start unexpectedly.
-
-#### Milestone 6: Storage and File Safety (Task 6)
-- [x] Verify SQLite WAL consistency (`PRAGMA integrity_check` = ok), zero duplicate records, and atomic transactions.
-- [x] Verify partial-file preservation: `.tdm-part` files are never prematurely deleted.
-- [x] Verify file collision safety: `coll_doc (1).pdf` avoidance without overwriting existing user data.
-- [x] Verify graceful handling of permission-denied / disk-full edge conditions.
-
-#### Milestone 7: Multi-Protocol Recovery Capability Matrix (Task 7)
-- [x] Direct HTTP/HTTPS: Pause, Resume (HTTP 206), Restart, Retry, Cancel, Partial file preserved.
-- [x] Multi-Chunk HTTP: Pause, Resume (chunk byte offsets), Restart, Retry, Cancel, Partial file preserved.
-- [x] Native HLS VOD: Pause, Resume (segment restart), Restart, Retry, Cancel, Clean MP4 remux.
-- [x] Native DASH VOD: Pause, Resume (segment restart), Restart, Retry, Cancel, Clean MP4 remux.
-- [x] AES-128 Encrypted HLS: Pause, Resume (key cached), Restart, Retry, Cancel, Decrypts to valid MP4.
-
-#### Milestone 8: Resource Stability & Long-Running Profile (Task 8)
-- [x] Working Set physical memory bounded < 75 MB (measured: 29.38 MB).
-- [x] Private Bytes memory bounded < 50 MB (measured: 13.00 MB).
-- [x] Zero orphan background processes (`tdm-native-host`, `ffmpeg`, `yt-dlp` = 0).
-- [x] Background thumbnail backfill conditioned on video extensions to prevent process churn.
-
-#### Milestone 9: Targeted Bug Fixes (Task 9)
-- [x] Multi-slot worker advancement loop in completion/pause/cancel callbacks.
-- [x] Concurrency cap enforcement in `start_job_internal` preventing unconstrained worker spawns.
-- [x] Validator re-verification on resume (ETag, Last-Modified, Content-Length, Range support).
-- [x] Missing or corrupt partial file auto-recovery.
-- [x] GET_ALL_MEDIA cross-tab isolation in extension background worker.
-
-#### Milestone 10: Regression Verification (Task 10)
-- [x] `cargo fmt --all -- --check` (0 differences).
-- [x] `cargo clippy --workspace --all-targets -j 2 -- -D warnings` (0 warnings).
-- [x] `cargo test --workspace -j 2` (100% passing across all workspace suites).
-- [x] Frontend `cd ui; npm run build` (0 errors).
-
-#### Milestone 11: Final Report & Clean Commit (Task 11)
-- [ ] Deliver `GATE17_4_QUEUE_SCHEDULER_RECOVERY_REPORT.md` artifact.
-- [ ] Commit changes locally on `dev/v1.0.1` branch without version bump.
-- [ ] All destructive file tests execute in isolated disposable test directories.
-
-#### Milestone 7: Multi-Protocol Recovery Matrix (Task 7)
-- [ ] Direct HTTP/HTTPS: Pause, Resume, Restart recovery, Retry, Cancellation, Partial preservation.
-- [ ] HLS VOD: Pause, Resume, Restart recovery, Retry, Cancellation, Partial preservation.
-- [ ] DASH VOD: Pause, Resume, Restart recovery, Retry, Cancellation, Partial preservation.
-- [ ] AES-128 Encrypted HLS: Key caching, Segment recovery, Playable output.
-- [ ] Multi-chunk HTTP: Range redistribution, Split plan, Assembly integrity.
-- [ ] Truthful capability matrix distinguishing fully resumable protocols from restart-required protocols.
-
-#### Milestone 8: Resource & 20-30 Minute Longer-Duration Stability Benchmark (Task 8)
-- [ ] Run continuous 20–30 minute workload with real fixtures and queue churning.
-- [ ] Measure Engine Working Set (RAM), Private Bytes, CPU usage, file handles, network sockets, worker tasks.
-- [ ] Verify zero memory leaks, zero stalled jobs, and zero orphan companion processes (`ffmpeg`, `yt-dlp`, `tdm-native-host`).
-
-#### Milestone 9 & 10: Targeted Bug Fixing & Regression Verification (Task 9 & 10)
-- [ ] Deterministic failing tests for any identified bugs.
-- [ ] Minimal safe fixes with zero speculative architecture rewrites.
-- [ ] Run:
-  - `cargo fmt --all -- --check`
-  - `cargo clippy --workspace --all-targets -j 2 -- -D warnings`
-  - `cargo test --workspace -j 2`
-
-#### Milestone 11: Final Report & Local Commit (Task 11)
-- [ ] Produce `GATE17_4_QUEUE_SCHEDULER_RECOVERY_REPORT.md`.
-- [ ] Update `IMPLEMENTATION_STATUS.md`.
-- [ ] Commit locally to `dev/v1.0.1`.
-- [ ] STOP; do not proceed to Gate 17.5.
+#### Milestone 5: Evidence Closure Report & Repository Hygiene (Task 5)
+- [ ] Deliver `GATE17_4_1_EVIDENCE_CLOSURE_REPORT.md` in artifact directory.
+- [ ] Update `IMPLEMENTATION_STATUS.md` with verified status.
+- [ ] Verify zero regressions (`cargo fmt`, `cargo clippy`, `cargo test`).
+- [ ] Commit locally on `dev/v1.0.1` branch without version bump.
+- [ ] STOP immediately after Gate 17.4.1.
