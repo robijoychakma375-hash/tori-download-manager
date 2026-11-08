@@ -24,15 +24,15 @@ pub fn run() {
 
     // Single-Instance Check: If a primary instance is already active with the Named Pipe server,
     // request that the primary instance bring its window to the foreground, then exit cleanly.
-    if tdm_native_host::ipc::try_connect_engine().is_ok() {
-        lifecycle::log_event(
-            "APP",
-            "SECONDARY_INSTANCE",
-            "Active primary instance detected; forwarding show_window and exiting",
-        );
-        eprintln!("[TORI] An active instance of TORI Download Manager is already running. Focusing primary window and exiting secondary process.");
-        if let Ok(rt) = tokio::runtime::Runtime::new() {
-            rt.block_on(async {
+    let is_secondary = if let Ok(rt) = tokio::runtime::Runtime::new() {
+        rt.block_on(async {
+            if tdm_native_host::ipc::try_connect_engine().is_ok() {
+                lifecycle::log_event(
+                    "APP",
+                    "SECONDARY_INSTANCE",
+                    "Active primary instance detected; forwarding show_window and exiting",
+                );
+                eprintln!("[TORI] An active instance of TORI Download Manager is already running. Focusing primary window and exiting secondary process.");
                 let msg = tdm_native_host::protocol::NativeMessage {
                     action: "show_window".to_string(),
                     url: None,
@@ -44,8 +44,16 @@ pub fn run() {
                     user_agent: None,
                 };
                 let _ = tdm_native_host::ipc::forward_to_persistent_engine(&msg).await;
-            });
-        }
+                true
+            } else {
+                false
+            }
+        })
+    } else {
+        false
+    };
+
+    if is_secondary {
         return;
     }
 

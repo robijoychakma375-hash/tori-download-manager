@@ -604,10 +604,23 @@ async function sendNativeMessage(payload) {
   });
 }
 
+// Automatic Native Messaging auto-pair and candidate port sweep rate limiting
+let lastAutoPairAttempt = 0;
+const AUTO_PAIR_COOLDOWN_MS = 10000; // 10s cooldown for automatic native messaging invocations
+
+let lastCandidateSweep = 0;
+const CANDIDATE_SWEEP_COOLDOWN_MS = 8000; // 8s cooldown between candidate port sweeps
+
 /**
- * One-time secure auto-pairing via Native Messaging bound to this extension
+ * One-time secure auto-pairing via Native Messaging bound to this extension.
+ * Supports force=true to bypass the 10s failure cooldown (e.g. on explicit user click).
  */
-async function autoPairWithDesktop() {
+async function autoPairWithDesktop(force = false) {
+  const now = Date.now();
+  if (!force && now - lastAutoPairAttempt < AUTO_PAIR_COOLDOWN_MS) {
+    return { ok: false, error: 'Auto-pairing cooldown active (desktop offline)', cooledDown: true };
+  }
+  lastAutoPairAttempt = now;
   try {
     const res = await sendNativeMessage({ action: 'pair' });
     if (res && res.status === 'ok' && res.token) {
@@ -642,7 +655,7 @@ async function callDesktopApi(
 
   // Proactive auto-pairing if key is empty and this endpoint requires auth
   if (!token && !endpoint.startsWith('/api/v1/ping')) {
-    const pairRes = await autoPairWithDesktop();
+    const pairRes = await autoPairWithDesktop(false);
     if (pairRes.ok && pairRes.token) {
       token = pairRes.token;
       if (!customPort && pairRes.port) port = pairRes.port;
@@ -675,7 +688,7 @@ async function callDesktopApi(
     // Auto-recovery: if 401 Unauthorized, token may be invalidated; attempt re-pairing once
     if (res.status === 401 && !isRetry) {
       console.warn('[TORI] 401 Unauthorized from desktop API. Attempting auto-pairing via Native Messaging...');
-      const pairRes = await autoPairWithDesktop();
+      const pairRes = await autoPairWithDesktop(false);
       if (pairRes && pairRes.ok && pairRes.token) {
         return callDesktopApi(endpoint, method, body, customTimeout, port, pairRes.token, true);
       }
@@ -702,53 +715,59 @@ async function callDesktopApi(
     } else if (err.message && err.message.includes('Failed to fetch')) {
       // Auto-recovery: if connection failed on the default/configured port, try candidate ports or auto-launch
       if (!isRetry && !customPort) {
-        // 1. Probe candidate ports (6800-6803)
-        const candidates = [6800, 6801, 6802, 6803].filter((p) => p !== port);
-        for (const candPort of candidates) {
-          try {
-            const probeCtrl = new AbortController();
-            const probeTimer = setTimeout(() => probeCtrl.abort(), 500);
-            const probeHeaders = {};
-            if (token) probeHeaders['X-Tori-Token'] = token;
-            const probeRes = await fetch(`http://127.0.0.1:${candPort}/api/v1/ping`, {
-              headers: probeHeaders,
-              signal: probeCtrl.signal,
-            });
-            clearTimeout(probeTimer);
-            if (probeRes.ok) {
-              const probeData = await probeRes.json().catch(() => ({}));
-              if (
-                probeData &&
-                probeData.status === 'ok' &&
-                probeData.name === 'TORI Download Manager' &&
-                probeData.engine_active === true
-              ) {
-                console.log(`[TORI] Discovered authoritative desktop server on port ${candPort} (authenticated: ${probeData.authenticated})`);
-                extSettings.port = candPort;
-                let activeToken = token;
-                if (!probeData.authenticated) {
-                  // Token expired or mismatched: pair via Native Messaging with local SQLite DB
-                  const pairRes = await autoPairWithDesktop();
-                  if (pairRes && pairRes.ok && pairRes.token) {
-                    activeToken = pairRes.token;
+        const now = Date.now();
+        // 1. Probe candidate ports (6800-6803) with bounded cooldown
+        if (now - lastCandidateSweep >= CANDIDATE_SWEEP_COOLDOWN_MS) {
+          lastCandidateSweep = now;
+          const candidates = [6800, 6801, 6802, 6803].filter((p) => p !== port);
+          for (const candPort of candidates) {
+            try {
+              const probeCtrl = new AbortController();
+              const probeTimer = setTimeout(() => probeCtrl.abort(), 500);
+              const probeHeaders = {};
+              if (token) probeHeaders['X-Tori-Token'] = token;
+              const probeRes = await fetch(`http://127.0.0.1:${candPort}/api/v1/ping`, {
+                headers: probeHeaders,
+                signal: probeCtrl.signal,
+              });
+              clearTimeout(probeTimer);
+              if (probeRes.ok) {
+                const probeData = await probeRes.json().catch(() => ({}));
+                if (
+                  probeData &&
+                  probeData.status === 'ok' &&
+                  probeData.name === 'TORI Download Manager' &&
+                  probeData.engine_active === true
+                ) {
+                  console.log(`[TORI] Discovered authoritative desktop server on port ${candPort} (authenticated: ${probeData.authenticated})`);
+                  extSettings.port = candPort;
+                  let activeToken = token;
+                  if (!probeData.authenticated) {
+                    // Token expired or mismatched: pair via Native Messaging with local SQLite DB
+                    const pairRes = await autoPairWithDesktop(false);
+                    if (pairRes && pairRes.ok && pairRes.token) {
+                      activeToken = pairRes.token;
+                    }
+                  } else {
+                    await chrome.storage.local.set({ tori_settings: extSettings });
                   }
-                } else {
-                  await chrome.storage.local.set({ tori_settings: extSettings });
+                  return callDesktopApi(endpoint, method, body, customTimeout, candPort, activeToken, true);
                 }
-                return callDesktopApi(endpoint, method, body, customTimeout, candPort, activeToken, true);
               }
-            }
-          } catch (_) {}
+            } catch (_) {}
+          }
         }
 
-        // 2. If candidate ports failed, attempt to launch / wake TORI via Native Messaging
-        console.log('[TORI] Desktop unreachable on candidate ports. Attempting auto-launch via Native Messaging...');
-        const launchRes = await autoPairWithDesktop();
-        if (launchRes && launchRes.ok) {
-          // Allow desktop engine HTTP listener a brief moment to bind
-          await new Promise((r) => setTimeout(r, 600));
-          const newPort = launchRes.port || extSettings.port || 6800;
-          return callDesktopApi(endpoint, method, body, customTimeout, newPort, launchRes.token || token, true);
+        // 2. If candidate ports failed, attempt to launch / wake TORI via Native Messaging (bounded by cooldown)
+        if (now - lastAutoPairAttempt >= AUTO_PAIR_COOLDOWN_MS) {
+          console.log('[TORI] Desktop unreachable on candidate ports. Attempting auto-launch via Native Messaging...');
+          const launchRes = await autoPairWithDesktop(false);
+          if (launchRes && launchRes.ok) {
+            // Allow desktop engine HTTP listener a brief moment to bind
+            await new Promise((r) => setTimeout(r, 600));
+            const newPort = launchRes.port || extSettings.port || 6800;
+            return callDesktopApi(endpoint, method, body, customTimeout, newPort, launchRes.token || token, true);
+          }
         }
       }
       errorMsg = 'Could not connect to TORI Desktop at 127.0.0.1:' + port + '. Is TORI running?';
@@ -765,13 +784,13 @@ async function callDesktopApi(
 // Proactive pairing on startup if unconfigured
 chrome.runtime.onInstalled.addListener(() => {
   if (!extSettings.key) {
-    autoPairWithDesktop();
+    autoPairWithDesktop(false);
   }
 });
 
 chrome.runtime.onStartup.addListener(() => {
   if (!extSettings.key) {
-    autoPairWithDesktop();
+    autoPairWithDesktop(false);
   }
 });
 
@@ -1286,8 +1305,19 @@ chrome.webRequest.onHeadersReceived.addListener(
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender.tab?.id || message.tabId;
 
+  if (message.action === 'GET_ALL_MEDIA') {
+    ensureSessionRestored().then(() => {
+      const all = [];
+      for (const candidates of tabMediaCache.values()) {
+        all.push(...candidates);
+      }
+      sendResponse({ status: 'ok', media: all });
+    });
+    return true;
+  }
+
   if (message.action === 'GET_TAB_MEDIA') {
-    const targetTabId = message.tabId || tabId;
+    const targetTabId = message.tabId !== undefined ? message.tabId : sender.tab?.id;
     ensureSessionRestored().then(() => {
       const list = targetTabId ? (tabMediaCache.get(targetTabId) || []) : [];
       sendResponse({ status: 'ok', media: list });
@@ -1318,7 +1348,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'INITIATE_PAIRING') {
-    autoPairWithDesktop().then((res) => {
+    autoPairWithDesktop(true).then((res) => {
       sendResponse(res);
     });
     return true;

@@ -1194,6 +1194,43 @@ async fn handle_delete_download(
     }
 }
 
+async fn handle_open_progress(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let config = state.config.read().await;
+    if !check_auth(&headers, None, &config.token) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"status": "error", "message": "Authentication required"})),
+        ));
+    }
+
+    match state.manager.get_download(&id) {
+        Ok(Some(_)) => {
+            state
+                .manager
+                .event_bus()
+                .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: id.clone() });
+            Ok(Json(serde_json::json!({
+                "status": "ok",
+                "action": "open_progress",
+                "job_id": id,
+                "message": "Progress window requested"
+            })))
+        }
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"status": "error", "message": "Download not found"})),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"status": "error", "message": e.to_string()})),
+        )),
+    }
+}
+
 async fn handle_show_window(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -1366,6 +1403,10 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
         .route(
             "/api/v1/downloads/{id}/delete",
             post(handle_delete_download),
+        )
+        .route(
+            "/api/v1/downloads/{id}/progress",
+            post(handle_open_progress),
         )
         .route("/api/v1/window/show", post(handle_show_window))
         .route("/api/v1/window/hide", post(handle_hide_window))
