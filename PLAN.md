@@ -79,3 +79,14 @@
 - [x] Packaged AMO signing-ready Firefox candidate ZIP: `release/v1.0.1-firefox-candidate/tori-download-manager-firefox-v1.0.1.zip` (**0 web-ext errors**).
 - [x] Staged complete final candidate package in `release/v1.0.1-firefox-final-candidate/` with `FINAL_CANDIDATE_MANIFEST.json`, `INSTALLATION_AND_UPGRADE_NOTES.md`, and `SHA256SUMS.txt`.
 - [x] Authored and delivered formal engineering report `GATE18_3F_2_FIREFOX_NATIVE_INSTALLER_REPORT.md`.
+
+#### Milestone 7: Gate 18.3F.3 Final Release Blocker Closure — COMPLETED
+- [x] Verified package completeness and exact cryptographic hash match (100% byte-for-byte SHA256) across all 9 assets in `release/v1.0.1-firefox-final-candidate/`.
+- [x] Verified Firefox AMO signing readiness: Gecko ID `tori-download-manager@toridm.org`, MV3 manifest validity (`web-ext lint` 0 errors, 0 warnings), unlisted distribution eligibility, and exact `web-ext sign` procedure.
+- [x] Prepared automated Separate Windows PC Installation Acceptance Harness in both PowerShell (`verify_separate_pc_installation.ps1`) and Node.js (`verify_separate_pc_installation.js`) covering all 10 installation/uninstall acceptance criteria.
+- [x] Kept separate PC installation scenarios classified as NOT TESTED in strict compliance with safety rules prohibiting unauthorized primary host registry modification or sandbox usage.
+- [x] Executed full Release Safety & Credential Audit (`audit_release_safety.js`) with **8/8 PASS (100.0%)**: zero leaked secrets, zero debug databases/PDBs, licenses verified, version parity verified, crypto distinction verified.
+- [x] Updated third-party attribution in `resources/LICENSE-THIRD-PARTY.txt` to v1.0.1 and included Tokio, Tauri, and Rust runtime libraries.
+- [x] Authored formal release notes `TORI_V1_0_1_RELEASE_NOTES.md` and pre-release verification checklist `TORI_V1_0_1_FINAL_RELEASE_CHECKLIST.md`.
+- [x] Authored and delivered formal engineering acceptance report `GATE18_3F_3_RELEASE_BLOCKER_REPORT.md`.
+- [x] Stopped cleanly awaiting separate user decision for external signing and physical testing.

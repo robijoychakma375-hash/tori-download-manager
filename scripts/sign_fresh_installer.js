@@ -19,3 +19,4 @@ if (fs.existsSync(sigFile)) {
   console.error('[SIGN] Signature file not found!');
   process.exit(1);
 }
+

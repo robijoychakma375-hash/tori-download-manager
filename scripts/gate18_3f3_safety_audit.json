@@ -1,0 +1,50 @@
+[
+  {
+    "id": "SAFE-01",
+    "category": "Staged File Presence",
+    "status": "PASS",
+    "details": "All 9 final candidate files present"
+  },
+  {
+    "id": "SAFE-02",
+    "category": "Checksum Parity",
+    "status": "PASS",
+    "details": "All staged file SHA256 hashes match SHA256SUMS.txt exactly"
+  },
+  {
+    "id": "SAFE-03",
+    "category": "Credential & Secret Leak Check",
+    "status": "PASS",
+    "details": "Zero sensitive tokens, private keys, or passwords discovered"
+  },
+  {
+    "id": "SAFE-04",
+    "category": "Stray Database / Debug Symbol Check",
+    "status": "PASS",
+    "details": "Zero SQLite / PDB debug files staged"
+  },
+  {
+    "id": "SAFE-05",
+    "category": "Repository Version Synchronization",
+    "status": "PASS",
+    "details": "Cargo: 1.0.1, Tauri: 1.0.1, UI: 1.0.1, Edge: 1.0.1, Firefox: 1.0.1"
+  },
+  {
+    "id": "SAFE-06",
+    "category": "Open-Source License Attributions",
+    "status": "PASS",
+    "details": "MIT: true, FFmpeg (GPL/LGPL): true, yt-dlp: true, Tokio/Rust: true"
+  },
+  {
+    "id": "SAFE-07",
+    "category": "Cryptographic Signing Distinction",
+    "status": "PASS",
+    "details": "Authenticode: UNSIGNED (honest), Updater: ED25519 SIGNED (verified Ed25519)"
+  },
+  {
+    "id": "SAFE-08",
+    "category": "Bundled Runtime Sidecars Audit",
+    "status": "PASS",
+    "details": "6 components accounted for (desktop, native-host, cli, ffmpeg, ffprobe, yt-dlp)"
+  }
+]

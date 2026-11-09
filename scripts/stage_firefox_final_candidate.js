@@ -184,3 +184,4 @@ fs.writeFileSync(
 );
 console.log('Generated INSTALLATION_AND_UPGRADE_NOTES.md');
 console.log('--- Staging Complete ---');
+

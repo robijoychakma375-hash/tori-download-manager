@@ -69,7 +69,7 @@
     "id": "FF-12",
     "description": "Real Firefox Process Launch (Isolated Profile)",
     "status": "PASS",
-    "details": "Firefox PID: 6696, test URL visited successfully"
+    "details": "Firefox PID: 29292, test URL visited successfully"
   },
   {
     "id": "CR-01",
@@ -81,6 +81,6 @@
     "id": "PKG-01",
     "description": "Firefox Release Candidate ZIP Package",
     "status": "PASS",
-    "details": "69,285 bytes, signing-ready for AMO"
+    "details": "69,655 bytes, signing-ready for AMO"
   }
 ]
