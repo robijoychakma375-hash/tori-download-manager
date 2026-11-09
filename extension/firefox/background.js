@@ -1455,6 +1455,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === 'OPEN_OPTIONS') {
+    if (chrome.runtime.openOptionsPage) {
+      chrome.runtime.openOptionsPage(() => {
+        sendResponse({ status: 'ok' });
+      });
+    } else {
+      chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html') }, (tab) => {
+        sendResponse({ status: 'ok', tabId: tab?.id });
+      });
+    }
+    return true;
+  }
+
+  if (message.action === 'OPEN_POPUP_TAB') {
+    chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html') }, (tab) => {
+      sendResponse({ status: 'ok', tabId: tab?.id });
+    });
+    return true;
+  }
+
   if (message.action === 'START_DOWNLOAD') {
     const rawUrl = (message.url || '').trim();
     const lower = rawUrl.toLowerCase();

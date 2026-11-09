@@ -1,5 +1,5 @@
-# TORI Download Manager v1.0.1 — Milestone Plan: Gate 18.3F
-## Production Firefox Extension & Cross-Browser Integration
+# TORI Download Manager v1.0.1 — Milestone Plan: Gate 18.3F & Gate 18.3F.1
+## Production Firefox Extension & Real Interactive Acceptance
 
 ### Objectives
 1. Develop and verify a fully functional Mozilla Firefox desktop extension (`extension/firefox/`).
@@ -10,6 +10,7 @@
 6. Package a production-ready, signing-ready Firefox release candidate in `release/v1.0.1-firefox-candidate/`.
 7. Verify zero regressions in Edge/Chromium extension, Rust workspace test suite (208 tests), clippy, and code formatting.
 8. Deliver formal engineering acceptance report `GATE18_3F_FIREFOX_EXTENSION_REPORT.md`.
+9. **Gate 18.3F.1:** Real interactive Mozilla Firefox `159.0.1.0` GUI verification, HTML5 video overlay injection, options pairing, popup inspection, end-to-end media download, byte-perfect SHA256 integrity, FFprobe bitstream validation, and formal report `GATE18_3F_1_FIREFOX_LIVE_ACCEPTANCE_REPORT.md`.
 
 ---
 
@@ -41,3 +42,24 @@
 - [x] Verified release binary smoke test: `node scripts/smoke_test_release.js` (PASS).
 - [x] Verified Edge/Chromium real browser non-regression via CDP (PASS).
 - [x] Authored and delivered `GATE18_3F_FIREFOX_EXTENSION_REPORT.md`.
+
+#### Milestone 5: Gate 18.3F.1 Real Interactive GUI & Download Acceptance — COMPLETED
+- [x] Fresh release binaries rebuilt containing commit `dd9f14b`: `target/release/tori-download-manager.exe` and `target/release/tdm-native-host.exe`.
+- [x] Stable installed TORI v1.0.0 (`C:\Program Files\Tori Download Manager`) confirmed untouched.
+- [x] Marionette automation harness implemented: temporary add-on installation of `tori-download-manager@toridm.org` into live Mozilla Firefox `159.0.1.0`.
+- [x] Floating video overlays (`data-tori-attached="true"`, `.tori-mp`) injected on multiple HTML5 videos.
+- [x] Options tab paired with isolated Local API (port 19800) using random auth token; status verified `authenticated: true`.
+- [x] Popup tab inspected: direct MP4 and WebM candidates displayed; streaming transport fragments (`.ts`) suppressed.
+- [x] Real media download triggered from Firefox extension (`ffb4ecdd-a0f1-4462-a214-8108d0bd5d9b`).
+- [x] Download completed to disk: `1,535,349` bytes.
+- [x] SHA256 matches fixture byte-for-byte: `DDD9B6D4A24FAAA25837EBC645AC34088797D3504D64DA455023EA3AB833A1DF`.
+- [x] FFprobe validation: H.264 video stream, 1280x720, duration 15.000000s.
+- [x] Real screenshots captured and saved to artifact directory:
+  - `screenshots/firefox_gui_multivideo.png`
+  - `screenshots/firefox_options_paired.png`
+  - `screenshots/firefox_popup_media_list.png`
+- [x] Native Messaging investigated in-browser: observed error `"No such native application com.tori.download_manager"` confirms strict HKCU registry discovery requirement.
+- [x] Local API acceptance separated from Native Messaging acceptance.
+- [x] Exact HKCU registry change specification, backup, and restore commands documented for user authorization.
+- [x] AMO signing-ready ZIP staged: `release/v1.0.1-firefox-candidate/tori-download-manager-firefox-v1.0.1.zip` (69,646 bytes, 0 web-ext errors).
+- [x] Authored and delivered `GATE18_3F_1_FIREFOX_LIVE_ACCEPTANCE_REPORT.md` (20/20 PASS, 100.0%).

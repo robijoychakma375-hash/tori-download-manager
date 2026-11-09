@@ -1665,6 +1665,17 @@ function normalizePlatformUrl(rawUrl) {
   });
 
   // Initial execution
+  try {
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
+      document.documentElement.dataset.toriExtensionUrl = chrome.runtime.getURL('');
+      window.addEventListener('__TORI_DISPATCH__', (e) => {
+        const { action, payload, id } = e.detail || {};
+        chrome.runtime.sendMessage({ action, ...payload }, (res) => {
+          window.dispatchEvent(new CustomEvent('__TORI_RESPONSE__' + id, { detail: res }));
+        });
+      });
+    }
+  } catch (_) {}
   syncSettings();
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', scanForMedia);

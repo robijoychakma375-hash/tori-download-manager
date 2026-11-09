@@ -484,8 +484,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function loadActiveTabMedia() {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || !tab.id) return;
+
+      if (tab.url && (tab.url.startsWith('moz-extension://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge-extension://'))) {
+        const contentTabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+        if (contentTabs && contentTabs.length > 0) {
+          tab = contentTabs[contentTabs.length - 1];
+        }
+      }
 
       if (tab.url && tab.url.toLowerCase().includes('plex.tv')) {
         mediaCountHeader.textContent = 'Protected Streaming Content';

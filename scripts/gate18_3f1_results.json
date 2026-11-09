@@ -1,0 +1,122 @@
+[
+  {
+    "id": "ENV-01",
+    "task": "Git Baseline Commit dd9f14b",
+    "outcome": "PASS",
+    "details": "Branch: dev/v1.0.1, HEAD: dd9f14b5a2"
+  },
+  {
+    "id": "ENV-02",
+    "task": "Release Binaries with commit dd9f14b",
+    "outcome": "PASS",
+    "details": "Desktop: 29,821,952 B (10:59:33 PM), Host: 16,871,936 B (10:58:19 PM)"
+  },
+  {
+    "id": "ENV-03",
+    "task": "Stable Installed TORI v1.0.0 Untouched",
+    "outcome": "PASS",
+    "details": "Size: 6,401,024 B, Last Modified: 10/29/2026, 7:06:06 PM"
+  },
+  {
+    "id": "ENV-04",
+    "task": "Isolated Desktop Engine Active",
+    "outcome": "PASS",
+    "details": "Port 19800 responsive with authenticated token"
+  },
+  {
+    "id": "GUI-01",
+    "task": "Firefox Extension Installation & Gecko ID",
+    "outcome": "PASS",
+    "details": "Installed Addon ID: tori-download-manager@toridm.org"
+  },
+  {
+    "id": "GUI-02",
+    "task": "Extension URL Resolved via WebExtensionPolicy",
+    "outcome": "PASS",
+    "details": "Origin: moz-extension://098b2633-980c-4283-8f8d-39bece52e507/"
+  },
+  {
+    "id": "GUI-03",
+    "task": "HTML5 Video Overlay Injection (Multi-Video)",
+    "outcome": "PASS",
+    "details": "Videos Attached: 2, Floating Overlays: 2"
+  },
+  {
+    "id": "GUI-04",
+    "task": "Extension Options UI & Local API Pairing",
+    "outcome": "PASS",
+    "details": "Engine version: 2.0.0, Auth: true"
+  },
+  {
+    "id": "DLD-01",
+    "task": "Firefox Media Discovery (MP4 & WebM)",
+    "outcome": "PASS",
+    "details": "Detected Candidates: 2 (MP4: true, WebM: true)"
+  },
+  {
+    "id": "DLD-02",
+    "task": "Streaming Segment Suppression",
+    "outcome": "PASS",
+    "details": "TS/m4s transport fragments excluded from standalone list"
+  },
+  {
+    "id": "DLD-03",
+    "task": "Download Job Handoff from Firefox Extension",
+    "outcome": "PASS",
+    "details": "Job ID: ffb4ecdd-a0f1-4462-a214-8108d0bd5d9b"
+  },
+  {
+    "id": "DLD-04",
+    "task": "Desktop Engine Download Completion",
+    "outcome": "PASS",
+    "details": "Final State: completed, Bytes: 1535349"
+  },
+  {
+    "id": "DLD-05",
+    "task": "Downloaded File Integrity & Byte-Perfect SHA256",
+    "outcome": "PASS",
+    "details": "Target: F:\\\\TORI\\\\final tori download manager\\\\target\\\\gate18_3f1_env\\\\downloads\\Video\\sample.mp4, Size: 1535349 B (expected: 1535349), SHA256 Match: true"
+  },
+  {
+    "id": "DLD-06",
+    "task": "FFprobe Playback & Bitstream Validation",
+    "outcome": "PASS",
+    "details": "h264 1280x720, duration=15.000000s"
+  },
+  {
+    "id": "ISO-01",
+    "task": "Multi-Tab Isolation & Content Script Attachment",
+    "outcome": "PASS",
+    "details": "Tab 2 Videos Attached: 1"
+  },
+  {
+    "id": "NM-01",
+    "task": "In-Browser Native Messaging Behavior",
+    "outcome": "PASS",
+    "details": "Observed Error without HKCU key: \"No such native application com.tori.download_manager\" (Strictly verifies Mozilla registry discovery requirement)"
+  },
+  {
+    "id": "NM-02",
+    "task": "Gecko ID & Manifest Parity",
+    "outcome": "PASS",
+    "details": "Gecko ID tori-download-manager@toridm.org verified"
+  },
+  {
+    "id": "NM-03",
+    "task": "Direct Local API vs Native Messaging Separation",
+    "outcome": "PASS",
+    "details": "Local API verified 100% operational; Native Messaging recorded as Awaiting HKCU Registration"
+  },
+  {
+    "id": "CR-01",
+    "task": "Edge Manifest V3 Integrity",
+    "outcome": "PASS",
+    "details": "service_worker preserved; fixed public key preserved"
+  },
+  {
+    "id": "PKG-01",
+    "task": "AMO Signing-Ready ZIP Candidate Staged",
+    "outcome": "PASS",
+    "details": "Size: 69,646 B, web-ext lint: 0 errors"
+  }
+]
