@@ -1,5 +1,5 @@
-# TORI Download Manager v1.0.1 — Milestone Plan: Gate 18.3F & Gate 18.3F.1
-## Production Firefox Extension & Real Interactive Acceptance
+# TORI Download Manager v1.0.1 — Milestone Plan: Gate 18.3F, Gate 18.3F.1 & Gate 18.3F.2
+## Production Firefox Extension, Real Interactive Acceptance & Fresh NSIS Installer Build
 
 ### Objectives
 1. Develop and verify a fully functional Mozilla Firefox desktop extension (`extension/firefox/`).
@@ -11,6 +11,7 @@
 7. Verify zero regressions in Edge/Chromium extension, Rust workspace test suite (208 tests), clippy, and code formatting.
 8. Deliver formal engineering acceptance report `GATE18_3F_FIREFOX_EXTENSION_REPORT.md`.
 9. **Gate 18.3F.1:** Real interactive Mozilla Firefox `159.0.1.0` GUI verification, HTML5 video overlay injection, options pairing, popup inspection, end-to-end media download, byte-perfect SHA256 integrity, FFprobe bitstream validation, and formal report `GATE18_3F_1_FIREFOX_LIVE_ACCEPTANCE_REPORT.md`.
+10. **Gate 18.3F.2:** Complete Firefox Native Messaging audit and NSIS installer registration hooks, verify Edge non-regression suite (12/12 PASS), reconcile repository versions to 1.0.1 (API 2.0.0), compile fresh release binaries, build fresh Windows x64 NSIS installer (`117,018,417 bytes`), sign with Ed25519 updater key (5/5 PASS), lint Firefox extension with `web-ext lint` (0 errors), stage final release package in `release/v1.0.1-firefox-final-candidate/`, and deliver formal report `GATE18_3F_2_FIREFOX_NATIVE_INSTALLER_REPORT.md`.
 
 ---
 
@@ -63,3 +64,18 @@
 - [x] Exact HKCU registry change specification, backup, and restore commands documented for user authorization.
 - [x] AMO signing-ready ZIP staged: `release/v1.0.1-firefox-candidate/tori-download-manager-firefox-v1.0.1.zip` (69,646 bytes, 0 web-ext errors).
 - [x] Authored and delivered `GATE18_3F_1_FIREFOX_LIVE_ACCEPTANCE_REPORT.md` (20/20 PASS, 100.0%).
+
+#### Milestone 6: Gate 18.3F.2 Firefox Native Messaging Closure & Fresh NSIS Installer Build — COMPLETED
+- [x] Audited Native Host registry registration and NSIS hooks (`src-tauri/nsis/hooks.nsh`) for Chrome, Edge, and Firefox.
+- [x] Audited dual Native Messaging manifests: `com.tori.download_manager.json` and `com.tori.download_manager.firefox.json`.
+- [x] Confirmed development host registry safety: no unapproved registry writes executed on primary machine.
+- [x] Verified Firefox functional fallback to Local API when Native Messaging host is not registered in system registry.
+- [x] Executed Microsoft Edge live browser non-regression suite (`scripts/verify_gate18_3f2_edge_regression.js`) via CDP: **12/12 PASS (100.0%)** covering MV3 integrity, isolated engine pairing on port 19700, stdio framing handshake, popup media detection, tab isolation, download handoff, deduplication (`already_exists`), 1.5MB download completion, byte-perfect SHA256 match, and disconnection/reconnection.
+- [x] Reconciled versions across repository: `Cargo.toml` (`1.0.1`), `src-tauri/tauri.conf.json` (`1.0.1`), `ui/package.json` (`1.0.1`), `extension/manifest.json` (`1.0.1`), `extension/firefox/manifest.json` (`1.0.1`), and clarified options page text to `Version 1.0.1 (API v2.0.0)`.
+- [x] Passed full workspace verification: `cargo fmt --all -- --check` (0 diffs), `cargo clippy --workspace --all-targets -j 2 -- -D warnings` (0 warnings), `cargo test --workspace -j 2` (**208 passed; 0 failed** across 28 suites), React UI build (315ms).
+- [x] Fresh release binaries compiled (`cargo build --release --workspace -j 2`) and updated in `resources/bin/` (`tdm-native-host.exe`, `tdm-cli.exe`).
+- [x] Built fresh Windows x64 NSIS installer: `target/release/bundle/nsis/TORI Download Manager_1.0.1_x64-setup.exe` (**117,018,417 bytes**).
+- [x] Cryptographically signed installer with updater key: `TORI Download Manager_1.0.1_x64-setup.exe.sig` (436 bytes), verified via `updater_cryptography_tests` (**5 passed; 0 failed**).
+- [x] Packaged AMO signing-ready Firefox candidate ZIP: `release/v1.0.1-firefox-candidate/tori-download-manager-firefox-v1.0.1.zip` (**0 web-ext errors**).
+- [x] Staged complete final candidate package in `release/v1.0.1-firefox-final-candidate/` with `FINAL_CANDIDATE_MANIFEST.json`, `INSTALLATION_AND_UPGRADE_NOTES.md`, and `SHA256SUMS.txt`.
+- [x] Authored and delivered formal engineering report `GATE18_3F_2_FIREFOX_NATIVE_INSTALLER_REPORT.md`.

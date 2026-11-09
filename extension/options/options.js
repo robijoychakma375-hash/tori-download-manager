@@ -203,7 +203,7 @@ const V = {
     <div class="ab2">
       <span class="logo">${svg(P.dl)}</span>
       <h2 style="margin:0">Tori Extension</h2>
-      <div class="sub0" style="margin:6px 0 16px">Version 2.0.0 · Native Messaging Host: com.tori.download_manager</div>
+      <div class="sub0" style="margin:6px 0 16px">Version 1.0.1 (API v2.0.0) · Native Messaging Host: com.tori.download_manager</div>
       <div style="display:flex;gap:10px;justify-content:center">
         <button class="btn" data-a="toast_updates">Check for updates</button>
         <button class="btn def" data-a="open_desktop">Open Tori</button>
