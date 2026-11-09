@@ -147,15 +147,15 @@ async function restoreSessionStorage() {
         if (extSettings.badge !== false) {
           const count = (tabMediaCache.get(tabId) || []).length;
           if (count > 0) {
-            chrome.action.setBadgeText({ tabId, text: String(count) }).catch(() => {});
-            chrome.action.setBadgeBackgroundColor({ tabId, color: '#6366f1' }).catch(() => {});
+            chrome.action.setBadgeText({ tabId, text: String(count) }).catch(() => { });
+            chrome.action.setBadgeBackgroundColor({ tabId, color: '#6366f1' }).catch(() => { });
           }
         }
       }
     }
 
     if (keysToRemove.length > 0) {
-      await chrome.storage.session.remove(keysToRemove).catch(() => {});
+      await chrome.storage.session.remove(keysToRemove).catch(() => { });
     }
   } catch (err) {
     console.warn('[TORI] Failed to restore session media cache:', err);
@@ -192,7 +192,7 @@ function scheduleSessionWrite(tabId) {
       } else {
         await chrome.storage.session.remove(key);
       }
-    } catch (_) {}
+    } catch (_) { }
   }, 80);
 
   storageWriteTimers.set(tabId, timerId);
@@ -216,10 +216,10 @@ function clearTabMedia(tabId) {
   tabGenerations.set(tabId, nextGen);
 
   if (chrome.storage && chrome.storage.session) {
-    chrome.storage.session.remove(`media_tab_${tabId}`).catch(() => {});
+    chrome.storage.session.remove(`media_tab_${tabId}`).catch(() => { });
   }
   if (extSettings.badge !== false) {
-    chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+    chrome.action.setBadgeText({ tabId, text: '' }).catch(() => { });
   }
 }
 
@@ -233,7 +233,7 @@ function removeTabMedia(tabId) {
   tabGenerations.delete(tabId);
 
   if (chrome.storage && chrome.storage.session) {
-    chrome.storage.session.remove(`media_tab_${tabId}`).catch(() => {});
+    chrome.storage.session.remove(`media_tab_${tabId}`).catch(() => { });
   }
 }
 
@@ -284,7 +284,7 @@ if (chrome.webNavigation && chrome.webNavigation.onHistoryStateUpdated) {
         action: 'MEDIA_NAVIGATED',
         url: details.url,
         generation: nextGen,
-      }).catch(() => {});
+      }).catch(() => { });
     }
   });
 }
@@ -754,7 +754,7 @@ async function callDesktopApi(
                   return callDesktopApi(endpoint, method, body, customTimeout, candPort, activeToken, true);
                 }
               }
-            } catch (_) {}
+            } catch (_) { }
           }
         }
 
@@ -803,7 +803,7 @@ function parseContentDispositionFilename(headerVal) {
   if (utf8Match && utf8Match[1]) {
     try {
       return decodeURIComponent(utf8Match[1].trim());
-    } catch (_) {}
+    } catch (_) { }
   }
   const simpleMatch = headerVal.match(/filename="?([^";]+)"?/i);
   if (simpleMatch && simpleMatch[1]) {
@@ -834,7 +834,7 @@ function extractFilenameFromUrl(rawUrl) {
         return clean;
       }
     }
-  } catch (_) {}
+  } catch (_) { }
   return 'media_file';
 }
 
@@ -1144,7 +1144,7 @@ async function recordCandidate(tabId, candidate) {
     ) {
       return;
     }
-  } catch (_) {}
+  } catch (_) { }
 
   // Check minimum file size if known and candidate is direct
   if (
@@ -1191,10 +1191,10 @@ async function recordCandidate(tabId, candidate) {
   // Update badge if enabled
   if (extSettings.badge !== false) {
     const count = list.length;
-    await chrome.action.setBadgeText({ tabId, text: String(count) }).catch(() => {});
-    await chrome.action.setBadgeBackgroundColor({ tabId, color: '#6366f1' }).catch(() => {});
+    await chrome.action.setBadgeText({ tabId, text: String(count) }).catch(() => { });
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: '#6366f1' }).catch(() => { });
   } else {
-    await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+    await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => { });
   }
 }
 
@@ -1307,8 +1307,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'GET_ALL_MEDIA') {
     // Restrict GET_ALL_MEDIA to internal extension contexts (popup / options).
-    // Reject calls originated from content scripts (where sender.tab is defined) to prevent cross-tab media exposure.
-    if (sender.tab) {
+    // Reject calls originated from content scripts (where sender.tab is defined on a non-extension URL) to prevent cross-tab media exposure.
+    if (sender.tab && sender.url && !sender.url.startsWith('chrome-extension://') && !sender.url.startsWith('extension://')) {
       sendResponse({ status: 'error', message: 'Unauthorized: GET_ALL_MEDIA cannot be called from a content script' });
       return false;
     }
@@ -1343,9 +1343,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         notice: classification.notice,
         detected_at: new Date().toISOString(),
       }).then(() => {
-        try { sendResponse({ status: 'ok' }); } catch (_) {}
+        try { sendResponse({ status: 'ok' }); } catch (_) { }
       }).catch((err) => {
-        try { sendResponse({ status: 'error', message: String(err) }); } catch (_) {}
+        try { sendResponse({ status: 'error', message: String(err) }); } catch (_) { }
       });
       return true;
     }
@@ -1620,7 +1620,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       // If we have an intercepted stream manifest or direct media candidate on a generic site, probe it directly!
       const streamingCandidate = cachedStreams.find((c) => c.type === 'hls' || c.type === 'dash') ||
-                                 cachedStreams.find((c) => c.type === 'direct');
+        cachedStreams.find((c) => c.type === 'direct');
 
       if (!isPlatform && streamingCandidate && streamingCandidate.url) {
         logSanitizedDiagnostic('RESOLVE_STREAM_PROBE', {
@@ -1654,7 +1654,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             status: 'ok',
             metadata: streamRes.data,
             generation,
-          }).catch(() => {});
+          }).catch(() => { });
           return { status: 'ok', metadata: streamRes.data };
         }
       }
@@ -1685,7 +1685,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           status: 'ok',
           metadata: httpRes.data,
           generation,
-        }).catch(() => {});
+        }).catch(() => { });
         return { status: 'ok', metadata: httpRes.data };
       }
 
@@ -1719,7 +1719,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         code,
         message: errorMsg,
         generation,
-      }).catch(() => {});
+      }).catch(() => { });
 
       return { status: 'error', code, message: errorMsg };
     })();

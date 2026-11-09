@@ -396,6 +396,9 @@ fn extract_filename_from_url(url_str: &str) -> String {
     if let Ok(parsed) = Url::parse(url_str) {
         if let Some(mut segments) = parsed.path_segments() {
             if let Some(last) = segments.rfind(|s| !s.is_empty()) {
+                if let Ok(decoded) = urlencoding_decode(last) {
+                    return decoded;
+                }
                 return last.to_string();
             }
         }

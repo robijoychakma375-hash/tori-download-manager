@@ -1,83 +1,86 @@
-# TORI Download Manager v1.0.1 — Milestone Plan: Gate 17.4.2
-## Native Time-Based Download Scheduler
+# TORI Download Manager v1.0.1 — Milestone Plan: Gate 17.5
+## Desktop UI, Settings & Progress Window Functional QA
 
 ### Objective
-Implement a reliable, persistent, one-time time-based Download Scheduler using TORI's existing Rust engine, Tokio runtime, SQLite database, queue management, and Tauri 2 + React desktop interface.
+Perform comprehensive, real desktop functional QA of the Tauri 2 + React interface, including the newly implemented scheduler, download table, settings, themes, dialogs, context menus, and independent progress window. Diagnose and fix any confirmed functional or visual defects without redesigning TORI or altering the existing download architecture.
 
-Preserve all previously validated Gate 15.x, 17.0, 17.1, 17.2, 17.3, 17.4, and 17.4.1 functionality without introducing secondary engines, external daemons, or speculative architecture rewrites.
+Maintain development on `dev/v1.0.1` at commit `d91cfdc`. Preserve stable installed v1.0.0 untouched. Clean Windows Sandbox / installer QA remain deferred.
 
 ---
 
 ### Specific Measurable Milestones
 
-#### Milestone 1: Baseline Checkpoint & Audit (Task 1 & Task 2)
-- [x] Verify Git branch (`dev/v1.0.1`), expected baseline HEAD (`aaa7059`), clean working tree, untracked verification scripts.
+#### Milestone 1: Baseline Checkpoint & Isolated Harness Setup (Task 1)
+- [x] Verify Git branch (`dev/v1.0.1`), HEAD commit (`d91cfdc`), clean working tree.
 - [x] Confirm stable public TORI v1.0.0 exists untouched (`C:\Program Files\Tori Download Manager`).
-- [x] Inspect existing `DownloadManager`, `JobState`, SQLite schema/migrations, startup reconciliation, Tauri commands, Native Host APIs, and UI (`AddDownloadModal.tsx`, `DownloadTable.tsx`).
-- [x] Formulate minimal reliable integration path.
+- [x] Build updated release binary `target/release/tori-download-manager.exe` with embedded `ui/dist`.
+- [x] Create isolated test environment (`target/gate17_5_env`) with disposable data dir, downloads dir, edge profile dir, and test SQLite DB.
 
-#### Milestone 2: Persistent One-Time Scheduler Data Model & SQLite Migration (Task 3)
-- [x] Extend `JobState` enum with `JobState::Scheduled`.
-- [x] Extend `DownloadJob` struct with `scheduled_at: Option<DateTime<Utc>>`.
-- [x] Add backward-compatible SQLite migration in `crates/tdm-core/src/db/schema.rs`: `ALTER TABLE downloads ADD COLUMN scheduled_at TEXT;`.
-- [x] Add index on `idx_downloads_scheduled_at` for efficient lookup of due scheduled jobs.
-- [x] Update `Database::insert_job`, `Database::get_job`, `Database::list_jobs`, and add query methods for scheduled jobs (`get_earliest_scheduled_time()`, `admit_due_scheduled_jobs(now)`).
-- [x] Support rescheduling: `update_job_scheduled_at(id, Option<DateTime<Utc>>)`.
+#### Milestone 2: Actual Desktop UI Inspection via CDP & Headless WebView2 (Task 2)
+- [x] Launch `tori-download-manager.exe` with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"`.
+- [x] Connect via CDP WebSocket to the real running Tauri desktop application.
+- [x] Inspect main window layout: Top toolbar, sidebar, download table, columns, status bar, and icons.
+- [x] Verify right-click context menu positioning, actions, and dismiss behavior.
+- [x] Verify dialogs: Add Download modal, Settings modal, About tab, Delete confirmation modal.
+- [x] Test layout at Windows display scalings (100%, 125%, 150%) and check for clipping, overlap, or scrollbar issues.
+- [x] Capture visual screenshots of key states (`task2_layout_100pct.png`, `task2_layout_125pct.png`, `task2_layout_150pct.png`).
 
-#### Milestone 3: Scheduler Engine Integration in `tdm-core` (Task 4 & Task 5)
-- [x] Implement event-driven Tokio scheduler loop in `DownloadManager`:
-  - Uses `tokio::sync::Notify` to wake up on new schedules, cancels, or reschedules.
-  - Computes sleep duration: `due_time - now_utc`.
-  - Non-busy sleep via `tokio::time::sleep`.
-  - When timer fires or catch-up runs: atomically transitions due jobs from `JobState::Scheduled` to `JobState::Queued` in priority/FIFO order, and calls `process_queue()`.
-  - Overdue catch-up policy on startup: during `reconcile_on_startup()`, any job with `state = 'scheduled'` and `scheduled_at <= now` is transitioned to `JobState::Queued` to execute immediately according to catch-up policy.
-  - If `scheduled_at > now`, job remains `JobState::Scheduled`, and the scheduler timer is armed.
-  - Cancelled or paused scheduled jobs transition cleanly and never start.
+#### Milestone 3: Scheduler UI Acceptance (Task 3)
+- [x] Open Add Download modal. Verify "Download now / manual" default.
+- [x] Select "Schedule for later ⏰". Verify date and time inputs activate.
+- [x] Test past date/time rejection (shows validation warning, disables Add).
+- [x] Submit valid future scheduled download.
+- [x] Verify scheduled job appears in download list with "Scheduled" badge and formatted local time.
+- [x] Test context menu "Reschedule download…" action and verify time updates in DB and UI.
+- [x] Test context menu "Start Download Now" and verify immediate dispatch.
+- [x] Verify downloaded bitstream SHA-256 matches source fixture.
 
-#### Milestone 4: Tauri Commands & Local API Integration (Task 7)
-- [x] Update Tauri commands in `src-tauri/src/commands/`:
-  - `create_download` accepts optional `scheduled_at: Option<String>`.
-  - Add `reschedule_download(id: String, scheduled_at: Option<String>)`.
-  - Add `cancel_download` / `pause_download` handling for scheduled jobs.
-- [x] Update Native Host HTTP server in `crates/tdm-native-host/src/server.rs`:
-  - `CreateDownloadReq` accepts optional `scheduled_at: Option<String>`.
-  - `/api/v1/downloads/{id}/reschedule` endpoint for updating schedule.
-  - Maintain backwards compatibility: immediate download when `scheduled_at` is omitted/null.
+#### Milestone 4: Download Table & Action Matrix (Task 4)
+- [x] Verify handling of Unicode URLs (fixed percent-decoding in probe: `unicode_日本語_test.zip`).
+- [x] Verify handling of long filenames (>150 chars) without layout collapse.
+- [x] Verify handling of unknown file size (chunked streaming) with zero NaN/Infinity values.
+- [x] Verify that removing from list (`deleteFiles: false`) removes history while keeping completed files on disk 100% intact.
 
-#### Milestone 5: Desktop UI Integration (Task 6)
-- [x] In `ui/src/components/AddDownloadModal.tsx`:
-  - Add "Download Now" vs "Schedule Download" toggle.
-  - Local date picker and time picker with minimum validation (cannot be in the past).
-  - Clean validation message and formatted local timezone display.
-- [x] In `ui/src/components/DownloadTable.tsx` / `ContextMenu.tsx`:
-  - Render "Scheduled" badge with formatted local date & time.
-  - Add Reschedule and Start Now buttons/actions for scheduled tasks.
-  - Preserve visual design, Dark/Light theme, and existing actions.
+#### Milestone 5: Settings Persistence & Backend Alignment (Task 5)
+- [x] Inspect SettingsModal controls: `maxa`, `con`, `retries`.
+- [x] Verify settings persist to SQLite database (`engine_settings` table, `app_settings` key).
+- [x] Capture screenshot of Settings modal (`task5_settings_modal.png`).
 
-#### Milestone 6: Automated End-to-End Tests & Safety Validation (Task 8)
-- [x] Create `crates/tdm-core/tests/gate17_4_2_scheduler_tests.rs`:
-  - Test 1: Immediate download default.
-  - Test 2: Near-future scheduled download fires on time and completes.
-  - Test 3: Multiple jobs due simultaneously fire in priority order.
-  - Test 4: Scheduled job respects `max_active_jobs` capacity.
-  - Test 5: Engine restart before due time keeps job scheduled; fires on schedule.
-  - Test 6: Engine restart after due time applies catch-up policy; executes safely.
-  - Test 7: Cancelled scheduled job never starts.
-  - Test 8: Paused scheduled job never starts until resumed.
-  - Test 9: Rescheduled job starts at new time, not old time.
-  - Test 10: Clear schedule to queued executes immediately.
-- [x] Create `scripts/verify_gate17_4_2_scheduler_e2e.js`:
-  - Real end-to-end test against release binary and UI API (4/4 scenarios passed).
-  - SHA256 integrity verification of completed payloads.
+#### Milestone 6: Independent Progress Window (DownloadToast) QA (Task 6)
+- [x] Trigger progress window via `open_progress_window`.
+- [x] Discover dedicated WebView2 toast target (`index.html?window=toast`).
+- [x] Verify `.toast` card, filename, progress ring, and close button `.cx`.
+- [x] Capture screenshot (`task6_progress_toast.png`).
 
-#### Milestone 7: Full Workspace Regression Validation (Task 9)
-- [x] `cargo fmt --all -- --check`
-- [x] `cargo clippy --workspace --all-targets -j 2 -- -D warnings`
-- [x] `cargo test --workspace -j 2`
-- [x] Frontend `cd ui; npm run build`
+#### Milestone 7: Dark / Light Theme QA (Task 7)
+- [x] Switch theme dynamically between Dark and Light.
+- [x] Verify CSS tokens and contrast ratios (`--win: #232326` dark, `--win: #f5f5f8` light).
+- [x] Capture screenshots of both themes (`task7_theme_dark.png`, `task7_theme_light.png`).
 
-#### Milestone 8: Final Report & Clean Local Commit (Task 10)
-- [x] Generate `GATE17_4_2_NATIVE_SCHEDULER_REPORT.md`.
-- [x] Update `IMPLEMENTATION_STATUS.md`.
-- [x] Create clean local commit on `dev/v1.0.1`.
-- [x] STOP after Gate 17.4.2.
+#### Milestone 8: Browser Extension Handoff Verification (Task 8)
+- [x] Launch Microsoft Edge with TORI extension in isolated profile.
+- [x] Verify content script attaches video overlay in DOM (`data-tori-attached`).
+- [x] Verify Native Messaging pairing via `chrome.runtime.sendNativeMessage` returns valid token.
+- [x] Verify HTML5 media candidate discovery in background service worker.
+
+#### Milestone 9: Performance, Memory & Window Lifecycle (Task 9)
+- [x] Measure Rust engine memory (Working Set: 51.03 MB < 75 MB limit; Private Bytes: 12.95 MB < 50 MB limit).
+- [x] Verify single-instance forwarding (secondary instance exits cleanly).
+- [x] Verify zero orphan processes upon exit.
+
+#### Milestone 10: Targeted Bug Fixes & Regression Verification (Task 10 & Task 11)
+- [x] Apply minimal safe fixes:
+  - `crates/tdm-core/src/engine/probe.rs`: Added URL percent decoding for extracted filenames.
+  - `ui/src/components/DownloadTable.tsx`: Added `data-id` attribute on table rows.
+  - `ui/src/components/SettingsModal.tsx`: Added `id="scon"`, `id="smaxa"`, `id="sretries"` on numeric inputs.
+  - `extension/background.js`: Corrected `GET_ALL_MEDIA` check to allow options page tabs.
+- [x] Run `cargo fmt --all -- --check` (PASS).
+- [x] Run `cargo clippy --workspace --all-targets -j 2 -- -D warnings` (PASS).
+- [x] Run `cargo test --workspace -j 2` (PASS, 100% test pass).
+- [x] Run `cd ui; npm run build` (PASS).
+
+#### Milestone 11: Final Report & Clean Local Commit (Task 12)
+- [x] Create `GATE17_5_DESKTOP_UI_FUNCTIONAL_QA_REPORT.md`.
+- [ ] Update `IMPLEMENTATION_STATUS.md`.
+- [ ] Commit locally on `dev/v1.0.1`.
+- [ ] STOP after Gate 17.5.

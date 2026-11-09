@@ -42,6 +42,7 @@ const TableRow = React.memo<TableRowProps>(
     return (
       <div
         className={`tr ${isSelected ? 'sel' : ''}`}
+        data-id={job.id}
         onClick={(e) => onSelect(e, job.id)}
         onDoubleClick={() => onOpenProgress(job)}
         onContextMenu={(e) => onContextMenu(e, job)}

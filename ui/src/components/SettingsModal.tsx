@@ -578,6 +578,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                   <div className="sc">
                     <input
+                      id="scon"
                       className="in"
                       type="number"
                       min={1}
@@ -596,6 +597,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                   <div className="sc">
                     <input
+                      id="smaxa"
                       className="in"
                       type="number"
                       min={1}
@@ -616,6 +618,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                   <div className="sc">
                     <input
+                      id="sretries"
                       className="in"
                       type="number"
                       min={0}
