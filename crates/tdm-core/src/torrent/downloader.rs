@@ -22,6 +22,19 @@ pub async fn download_torrent(
 ) -> Result<()> {
     // 1. Prepare AddTorrent source
     let url_str = job.url.trim();
+    let is_probing_init = url_str.starts_with("magnet:") || job.total_bytes.is_none() || job.total_bytes == Some(0);
+    if is_probing_init {
+        let _ = db.update_job_state(&job.id, JobState::Probing, None);
+        event_bus.emit(DownloadEvent::Progress(DownloadProgress {
+            id: job.id.clone(),
+            downloaded_bytes: 0,
+            total_bytes: None,
+            speed_bps: 0,
+            eta_seconds: None,
+            state: JobState::Probing,
+            error_message: Some("Connecting to peers and retrieving metadata...".to_string()),
+        }));
+    }
     let add_torrent = if url_str.starts_with("magnet:") {
         AddTorrent::from_cli_argument(url_str)
             .map_err(|e| EngineError::InvalidUrl(format!("Invalid magnet URI: {}", e)))?
@@ -69,10 +82,15 @@ pub async fn download_torrent(
         ..Default::default()
     };
 
-    // 3. Add to librqbit session with cooperative cancellation
+    // 3. Add to librqbit session with cooperative cancellation and 60s metadata timeout
     let add_res = tokio::select! {
         _ = cancel_token.cancelled() => {
             return Err(EngineError::Cancelled);
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
+            return Err(EngineError::Other(
+                "Metadata resolution timed out. No active seeders or DHT peers responded for this magnet link.".into(),
+            ));
         }
         res = session.add_torrent(add_torrent, Some(add_opts)) => {
             res.map_err(|e| EngineError::Other(format!("Failed to add torrent to session: {}", e)))?

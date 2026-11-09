@@ -981,10 +981,18 @@ impl DownloadManager {
             .unwrap()
             .insert(id.to_string(), stop_token.clone());
 
-        db.update_job_state(id, JobState::Downloading, None)?;
+        let initial_state = if (job.job_type == JobType::Torrent && (job.total_bytes.is_none() || job.total_bytes == Some(0)))
+            || job.url.starts_with("magnet:")
+        {
+            JobState::Probing
+        } else {
+            JobState::Downloading
+        };
+
+        db.update_job_state(id, initial_state, None)?;
         event_bus.emit(DownloadEvent::StateChanged {
             id: id.to_string(),
-            state: JobState::Downloading,
+            state: initial_state,
             error: None,
         });
 
