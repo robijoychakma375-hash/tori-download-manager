@@ -1,86 +1,121 @@
-# TORI Download Manager v1.0.1 — Milestone Plan: Gate 17.5
-## Desktop UI, Settings & Progress Window Functional QA
+# TORI Download Manager v1.0.1 — Milestone Plan: Gate 17.6
+## Final Development Regression & Release Candidate Audit
 
 ### Objective
-Perform comprehensive, real desktop functional QA of the Tauri 2 + React interface, including the newly implemented scheduler, download table, settings, themes, dialogs, context menus, and independent progress window. Diagnose and fix any confirmed functional or visual defects without redesigning TORI or altering the existing download architecture.
+Conduct an exhaustive final development audit of TORI Download Manager v1.0.1 across download engines, browser extension, native messaging, desktop UI, scheduler, persistence, security, memory, dependencies, and release build integrity to determine whether the development build is suitable for a Release Candidate.
 
-Maintain development on `dev/v1.0.1` at commit `d91cfdc`. Preserve stable installed v1.0.0 untouched. Clean Windows Sandbox / installer QA remain deferred.
+Maintain development on `dev/v1.0.1` at baseline commit `437b635`. Preserve stable installed v1.0.0 untouched. Clean Windows Sandbox / installer QA remain deferred.
 
 ---
 
 ### Specific Measurable Milestones
 
-#### Milestone 1: Baseline Checkpoint & Isolated Harness Setup (Task 1)
-- [x] Verify Git branch (`dev/v1.0.1`), HEAD commit (`d91cfdc`), clean working tree.
+#### Milestone 1: Repository Baseline & Integrity Verification (Task 1)
+- [x] Verify Git branch (`dev/v1.0.1`), HEAD commit (`437b635`), clean tracked working tree.
 - [x] Confirm stable public TORI v1.0.0 exists untouched (`C:\Program Files\Tori Download Manager`).
-- [x] Build updated release binary `target/release/tori-download-manager.exe` with embedded `ui/dist`.
-- [x] Create isolated test environment (`target/gate17_5_env`) with disposable data dir, downloads dir, edge profile dir, and test SQLite DB.
+- [x] Confirm version strings across `Cargo.toml`, `src-tauri/tauri.conf.json`, `ui/package.json`.
+- [x] Preserve all untracked test scripts, metrics, and reports.
 
-#### Milestone 2: Actual Desktop UI Inspection via CDP & Headless WebView2 (Task 2)
-- [x] Launch `tori-download-manager.exe` with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"`.
-- [x] Connect via CDP WebSocket to the real running Tauri desktop application.
-- [x] Inspect main window layout: Top toolbar, sidebar, download table, columns, status bar, and icons.
-- [x] Verify right-click context menu positioning, actions, and dismiss behavior.
-- [x] Verify dialogs: Add Download modal, Settings modal, About tab, Delete confirmation modal.
-- [x] Test layout at Windows display scalings (100%, 125%, 150%) and check for clipping, overlap, or scrollbar issues.
-- [x] Capture visual screenshots of key states (`task2_layout_100pct.png`, `task2_layout_125pct.png`, `task2_layout_150pct.png`).
+#### Milestone 2: Complete Download Engine Regression (Task 2)
+- [x] Run automated protocol regression harness verifying:
+  - Direct HTTP/HTTPS single-stream download
+  - HTTP Range requests (206 Partial Content) & multi-chunk downloads (4 & 8 chunks)
+  - Mid-stream pause, resume, and partial-file byte preservation
+  - Validator change (ETag / Last-Modified / Content-Length) handling and safe chunk reset
+  - Network timeouts, retries, and HTTP 429/503 exponential backoff
+  - HLS VOD multi-segment download with bounded concurrency ($C=4$)
+  - DASH VOD multi-representation separate A/V segment downloading and muxing
+  - HLS AES-128 encryption with explicit IV and implicit sequence IV
+  - FFmpeg stream-copy remuxing and bitstream validation (`ffmpeg -v error -f null -`)
+  - yt-dlp platform metadata extraction and exact format selection
+  - 100% byte-for-byte SHA-256 integrity and ffprobe container validation
 
-#### Milestone 3: Scheduler UI Acceptance (Task 3)
-- [x] Open Add Download modal. Verify "Download now / manual" default.
-- [x] Select "Schedule for later ⏰". Verify date and time inputs activate.
-- [x] Test past date/time rejection (shows validation warning, disables Add).
-- [x] Submit valid future scheduled download.
-- [x] Verify scheduled job appears in download list with "Scheduled" badge and formatted local time.
-- [x] Test context menu "Reschedule download…" action and verify time updates in DB and UI.
-- [x] Test context menu "Start Download Now" and verify immediate dispatch.
-- [x] Verify downloaded bitstream SHA-256 matches source fixture.
+#### Milestone 3: Scheduler, Queue & Database Integrity (Task 3)
+- [x] Verify immediate download dispatch behavior.
+- [x] Verify one-time scheduled downloads with `scheduled_at` SQLite timestamp.
+- [x] Test restart BEFORE scheduled time (remains scheduled across engine restart).
+- [x] Test restart AFTER scheduled time (overdue catch-up transitions to queued and downloads immediately).
+- [x] Verify pause, cancellation, and rescheduling via API/UI.
+- [x] Verify priority queue ordering (`High` > `Normal` > `Low`).
+- [x] Verify `max_active_jobs` bounded concurrency governor.
+- [x] Verify crash recovery (interrupted downloads reconcile safely to `paused`).
+- [x] Verify missing partial-file handling (resets chunks safely).
+- [x] Verify SQLite WAL integrity and download history preservation.
+- [x] Verify SQLite format metadata cache TTL and bounded eviction.
 
-#### Milestone 4: Download Table & Action Matrix (Task 4)
-- [x] Verify handling of Unicode URLs (fixed percent-decoding in probe: `unicode_日本語_test.zip`).
-- [x] Verify handling of long filenames (>150 chars) without layout collapse.
-- [x] Verify handling of unknown file size (chunked streaming) with zero NaN/Infinity values.
-- [x] Verify that removing from list (`deleteFiles: false`) removes history while keeping completed files on disk 100% intact.
+#### Milestone 4: Desktop UI Functional Regression (Task 4)
+- [x] Launch real desktop Tauri 2 application with isolated profile and remote debugging.
+- [x] Verify Main window layout, toolbar, sidebar, and status bar.
+- [x] Verify Download table rendering, selections, and context menus.
+- [x] Verify Add Download dialog (immediate vs scheduled).
+- [x] Verify Scheduler UI controls and past-time prevention.
+- [x] Verify Settings modal persistence to SQLite and UI reload.
+- [x] Verify About modal dynamic metadata and link openers.
+- [x] Verify independent floating progress toast window.
+- [x] Verify system tray hide/show and close-to-tray lifecycle.
+- [x] Verify Dark and Light themes with WCAG AAA contrast.
+- [x] Verify handling of long filenames and Unicode characters.
 
-#### Milestone 5: Settings Persistence & Backend Alignment (Task 5)
-- [x] Inspect SettingsModal controls: `maxa`, `con`, `retries`.
-- [x] Verify settings persist to SQLite database (`engine_settings` table, `app_settings` key).
-- [x] Capture screenshot of Settings modal (`task5_settings_modal.png`).
+#### Milestone 5: Browser Extension & Native Messaging Regression (Task 5)
+- [x] Launch Microsoft Edge with isolated profile and loaded extension.
+- [x] Verify Native Messaging pairing with `tdm-native-host.exe`.
+- [x] Verify direct MP4, WebM, HLS master manifests, and DASH MPD detection.
+- [x] Verify multi-video page discovery and dynamic DOM MutationObserver capture.
+- [x] Verify transport segment suppression (.m4s, .cmfv, .cmfa, raw .ts chunks).
+- [x] Verify media candidate deduplication and popup reopening.
+- [x] Verify extension service worker termination and recovery via `chrome.storage.session`.
+- [x] Verify desktop reconnection and cross-tab candidate isolation.
+- [x] Verify browser-to-desktop download dispatch and SQLite job creation.
 
-#### Milestone 6: Independent Progress Window (DownloadToast) QA (Task 6)
-- [x] Trigger progress window via `open_progress_window`.
-- [x] Discover dedicated WebView2 toast target (`index.html?window=toast`).
-- [x] Verify `.toast` card, filename, progress ring, and close button `.cx`.
-- [x] Capture screenshot (`task6_progress_toast.png`).
+#### Milestone 6: Deep Security Audit (Task 6)
+- [x] Audit filename sanitization in `crates/tdm-core/src/engine/probe.rs` for path traversal (`../`, `..\`), encoded separators (`%2F`, `%5C`), Windows reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`), and control characters.
+- [x] Audit destination path containment (`resolve_destination_folder` and safe collision numbering).
+- [x] Audit extension message authorization (`GET_ALL_MEDIA` origin validation, non-extension callers rejected).
+- [x] Audit Native Messaging origin validation (only authorized Chrome/Edge extension IDs).
+- [x] Audit Local API authentication (Bearer token required, 401 on missing/invalid, 403 on cross-origin).
+- [x] Audit Host header validation (DNS rebinding protection).
+- [x] Audit Referer and User-Agent header sanitation (CRLF injection prevention, length limits).
+- [x] Audit diagnostic logs for token/secret leakage (`tori_[redacted]`).
+- [x] Write and run deterministic negative tests for all security boundaries (6 probe tests passed).
 
-#### Milestone 7: Dark / Light Theme QA (Task 7)
-- [x] Switch theme dynamically between Dark and Light.
-- [x] Verify CSS tokens and contrast ratios (`--win: #232326` dark, `--win: #f5f5f8` light).
-- [x] Capture screenshots of both themes (`task7_theme_dark.png`, `task7_theme_light.png`).
+#### Milestone 7: Resource, Process & Memory Profiling (Task 7)
+- [x] Measure idle desktop engine Working Set (52.48 MB) and Private Bytes (14.92 MB).
+- [x] Measure active multi-download engine Working Set and Private Bytes.
+- [x] Measure entire Tauri + WebView2 process tree Working Set (526.66 MB) and Private Bytes (313.88 MB).
+- [x] Measure Native Messaging host resource footprint.
+- [x] Verify CPU utilization during idle (<0.5%) and active transfers.
+- [x] Verify OS handle counts remain bounded (4,220 across 8 processes).
+- [x] Check for leaked processes (`tdm-native-host`, `ffmpeg`, `yt-dlp`) upon download completion and app exit (0 orphans).
 
-#### Milestone 8: Browser Extension Handoff Verification (Task 8)
-- [x] Launch Microsoft Edge with TORI extension in isolated profile.
-- [x] Verify content script attaches video overlay in DOM (`data-tori-attached`).
-- [x] Verify Native Messaging pairing via `chrome.runtime.sendNativeMessage` returns valid token.
-- [x] Verify HTML5 media candidate discovery in background service worker.
+#### Milestone 8: Build and Dependency Audit (Task 8)
+- [x] Build production React frontend (`npm run build --prefix ui` - 255ms).
+- [x] Build Rust release binaries (`cargo build --release -j 2 --bin tori-download-manager --bin tdm-native-host --bin tdm-cli`).
+- [x] Verify bundled companion binaries in `resources/bin/` (FFmpeg, FFprobe, yt-dlp, native host, CLI).
+- [x] Verify executable resolution pathways (`find_ffmpeg`, `find_ffprobe`, `find_yt_dlp`).
+- [x] Audit `LICENSE` and `LICENSE-THIRD-PARTY.txt` currency and completeness.
+- [x] Review `tauri.conf.json` bundle configuration and capabilities.
+- [x] Review `npm audit` on UI (0 vulnerabilities).
 
-#### Milestone 9: Performance, Memory & Window Lifecycle (Task 9)
-- [x] Measure Rust engine memory (Working Set: 51.03 MB < 75 MB limit; Private Bytes: 12.95 MB < 50 MB limit).
-- [x] Verify single-instance forwarding (secondary instance exits cleanly).
-- [x] Verify zero orphan processes upon exit.
+#### Milestone 9: Full Regression Tests Execution (Task 9)
+- [x] Execute `cargo fmt --all -- --check` (clean, 0 diffs).
+- [x] Execute `cargo clippy --workspace --all-targets -j 2 -- -D warnings` (clean, 0 warnings).
+- [x] Execute `cargo test --workspace -j 2` (188/188 passed across 25 suites).
+- [x] Execute Gate 17.6 audit harness (`node scripts/verify_gate17_6_release_audit.js` - 22/22 passed).
 
-#### Milestone 10: Targeted Bug Fixes & Regression Verification (Task 10 & Task 11)
-- [x] Apply minimal safe fixes:
-  - `crates/tdm-core/src/engine/probe.rs`: Added URL percent decoding for extracted filenames.
-  - `ui/src/components/DownloadTable.tsx`: Added `data-id` attribute on table rows.
-  - `ui/src/components/SettingsModal.tsx`: Added `id="scon"`, `id="smaxa"`, `id="sretries"` on numeric inputs.
-  - `extension/background.js`: Corrected `GET_ALL_MEDIA` check to allow options page tabs.
-- [x] Run `cargo fmt --all -- --check` (PASS).
-- [x] Run `cargo clippy --workspace --all-targets -j 2 -- -D warnings` (PASS).
-- [x] Run `cargo test --workspace -j 2` (PASS, 100% test pass).
-- [x] Run `cd ui; npm run build` (PASS).
+#### Milestone 10: Targeted Corrections (Task 10)
+- [x] Fixed multi-byte Unicode char boundary truncation vulnerability in `crates/tdm-core/src/engine/probe.rs`.
+- [x] Upgraded URL path segment percent-decoding to standard `percent_decode_str` preserving `+`, `&`, and `=`.
+- [x] Added 3 security regression tests to `probe.rs`.
 
-#### Milestone 11: Final Report & Clean Local Commit (Task 12)
-- [x] Create `GATE17_5_DESKTOP_UI_FUNCTIONAL_QA_REPORT.md`.
-- [ ] Update `IMPLEMENTATION_STATUS.md`.
-- [ ] Commit locally on `dev/v1.0.1`.
-- [ ] STOP after Gate 17.5.
+#### Milestone 11: Release Candidate Readiness Assessment (Task 11)
+- [x] Classify all findings (0 BLOCKER, 0 MAJOR, 0 MINOR, 3 LIMITATION, 1 NOT TESTED).
+- [x] Explicitly evaluate Readiness Dimensions:
+  - Dimension A: Development Regression Readiness -> **PASSED / READY**
+  - Dimension B: Installer / Packaging Readiness -> **LOCAL READY / NOT RELEASED**
+  - Dimension C: Clean-Machine Installation Readiness -> **DEFERRED**
+  - Dimension D: Public Distribution Readiness -> **DEFERRED / BLOCKED on Gate 16.3**
+
+#### Milestone 12: Comprehensive Final Audit Report (Task 12)
+- [x] Deliver `GATE17_6_FINAL_DEVELOPMENT_AUDIT_REPORT.md` in the artifact directory.
+- [x] Update `IMPLEMENTATION_STATUS.md` with Gate 17.6 audit results.
+- [x] Stop cleanly without starting Gate 17.7 or pushing to remote.

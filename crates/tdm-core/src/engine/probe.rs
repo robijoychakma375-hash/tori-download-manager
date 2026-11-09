@@ -372,7 +372,7 @@ fn parse_content_disposition_filename(cd: &str) -> Option<String> {
             let clean = stripped.trim_matches('"');
             if let Some(idx) = clean.find("''") {
                 let name = &clean[idx + 2..];
-                if let Ok(decoded) = urlencoding_decode(name) {
+                if let Some(decoded) = percent_decode_str(name) {
                     return Some(decoded);
                 }
                 return Some(name.to_string());
@@ -385,18 +385,31 @@ fn parse_content_disposition_filename(cd: &str) -> Option<String> {
     None
 }
 
-fn urlencoding_decode(s: &str) -> std::result::Result<String, ()> {
-    url::form_urlencoded::parse(s.as_bytes())
-        .next()
-        .map(|(k, _)| k.to_string())
-        .ok_or(())
+pub fn percent_decode_str(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let h1 = (bytes[i + 1] as char).to_digit(16);
+            let h2 = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h1), Some(h2)) = (h1, h2) {
+                out.push(((h1 << 4) | h2) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).ok()
 }
 
 fn extract_filename_from_url(url_str: &str) -> String {
     if let Ok(parsed) = Url::parse(url_str) {
         if let Some(mut segments) = parsed.path_segments() {
             if let Some(last) = segments.rfind(|s| !s.is_empty()) {
-                if let Ok(decoded) = urlencoding_decode(last) {
+                if let Some(decoded) = percent_decode_str(last) {
                     return decoded;
                 }
                 return last.to_string();
@@ -441,7 +454,15 @@ pub fn sanitize_filename(name: &str) -> String {
     }
 
     if clean.len() > 255 {
-        clean.truncate(255);
+        let mut end = 255;
+        while !clean.is_char_boundary(end) {
+            end -= 1;
+        }
+        clean.truncate(end);
+        clean = clean.trim().trim_end_matches('.').trim().to_string();
+        if clean.is_empty() {
+            return "download.bin".to_string();
+        }
     }
 
     clean
@@ -462,6 +483,66 @@ mod tests {
         assert_eq!(sanitize_filename("trailing_dots..."), "trailing_dots");
         assert_eq!(sanitize_filename("   "), "download.bin");
         assert_eq!(sanitize_filename("nul"), "_nul");
+    }
+
+    #[test]
+    fn test_sanitize_filename_char_boundary_truncation() {
+        // Multi-byte Unicode characters (crab emoji: 4 bytes)
+        // With 1 byte prefix 'a' + 70 crabs (280 bytes) = 281 bytes.
+        // Byte 255 is within the 64th crab (bytes 253..257).
+        // Must truncate safely to byte 253 without panicking!
+        let input = format!("a{}", "🦀".repeat(70));
+        let sanitized = sanitize_filename(&input);
+        assert!(sanitized.len() <= 255);
+        assert_eq!(sanitized.len(), 253);
+        assert!(sanitized.starts_with('a'));
+
+        // Japanese characters (3 bytes each)
+        let jp_input = format!("b{}", "日本語".repeat(40));
+        let jp_sanitized = sanitize_filename(&jp_input);
+        assert!(jp_sanitized.len() <= 255);
+        assert!(jp_sanitized.starts_with('b'));
+    }
+
+    #[test]
+    fn test_sanitize_filename_security_path_traversal_and_nul() {
+        // Path traversal attempts
+        assert_eq!(sanitize_filename("../../etc/passwd"), ".._.._etc_passwd");
+        assert_eq!(
+            sanitize_filename("..\\..\\windows\\system32\\cmd.exe"),
+            ".._.._windows_system32_cmd.exe"
+        );
+        assert_eq!(sanitize_filename(".."), "download.bin");
+        assert_eq!(sanitize_filename("..."), "download.bin");
+
+        // NUL bytes and control characters
+        assert_eq!(sanitize_filename("evil\0file.exe"), "evil_file.exe");
+        assert_eq!(sanitize_filename("file\r\nname.txt"), "file__name.txt");
+
+        // Windows reserved devices with extensions
+        assert_eq!(sanitize_filename("aux.json"), "_aux.json");
+        assert_eq!(sanitize_filename("com1.txt"), "_com1.txt");
+        assert_eq!(sanitize_filename("lpt9.bin"), "_lpt9.bin");
+    }
+
+    #[test]
+    fn test_percent_decode_and_extract_filename() {
+        // Unicode percent decoding
+        let u1 = "https://example.com/unicode_%E6%97%A5%E6%9C%AC%E8%AA%9E_test.zip";
+        assert_eq!(extract_filename_from_url(u1), "unicode_日本語_test.zip");
+
+        // Preservation of '+' and '&' in URL paths
+        let u2 = "https://example.com/file+with+plus&and.bin";
+        assert_eq!(extract_filename_from_url(u2), "file+with+plus&and.bin");
+
+        // Invalid percent encoding fallback
+        assert!(percent_decode_str("test%FF%FEinvalid").is_none());
+
+        // Fallback for empty segment
+        assert_eq!(
+            extract_filename_from_url("https://example.com/"),
+            "download.bin"
+        );
     }
 
     #[tokio::test]
