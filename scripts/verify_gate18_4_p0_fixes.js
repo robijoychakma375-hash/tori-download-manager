@@ -81,7 +81,7 @@ assert(bgCode.includes('DOWNLOAD_MIME_MAP'), 'background.js defines MIME to exte
 assert(bgCode.includes('isDomainExcluded'), 'background.js implements site exclusion check');
 assert(bgCode.includes('recentlyInterceptedDownloadIds'), 'background.js implements loop/dedup tracking');
 assert(bgCode.includes('chrome.downloads.cancel'), 'background.js cancels browser download upon confirmed TORI handoff');
-assert(bgCode.includes('chrome.downloads.erase'), 'background.js erases canceled download from shelf history');
+assert(!bgCode.includes('chrome.downloads.erase('), 'background.js avoids automatic deletion of browser download history');
 
 // Functional simulation of the interception decision logic
 const testSettings = {

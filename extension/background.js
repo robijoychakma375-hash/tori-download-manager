@@ -1378,6 +1378,12 @@ async function handleBrowserDownload(item) {
     return;
   }
 
+  // 1b. Check browser danger warnings: respect security boundaries
+  if (item.danger && item.danger !== 'safe' && item.danger !== 'accepted') {
+    console.debug('[TORI] Download has browser danger status:', item.danger);
+    return;
+  }
+
   const rawUrl = item.url || item.finalUrl || '';
   if (!rawUrl) return;
   const lowerUrl = rawUrl.toLowerCase();
@@ -1449,8 +1455,20 @@ async function handleBrowserDownload(item) {
     const httpRes = await callDesktopApi('/api/v1/downloads', 'POST', payload, 3500);
     let handoffSuccess = false;
 
-    if (httpRes && httpRes.ok && httpRes.data && (httpRes.data.status === 'ok' || httpRes.data.status === 'already_exists' || httpRes.data.job_id)) {
-      handoffSuccess = true;
+    if (httpRes && httpRes.ok && httpRes.data) {
+      const data = httpRes.data;
+      if (data.status === 'ok' && data.job_id) {
+        handoffSuccess = true;
+      } else if (data.status === 'already_exists' && data.job_id) {
+        // Strict verification: verify existing job state can complete or has completed the download
+        const validStates = ['downloading', 'queued', 'paused', 'completed', 'probing', 'scheduled'];
+        if (data.state && validStates.includes(data.state.toLowerCase())) {
+          handoffSuccess = true;
+        } else {
+          // If existing job is failed, cancelled, or unknown, do NOT cancel browser download
+          handoffSuccess = false;
+        }
+      }
     } else if (httpRes && httpRes.status === 401) {
       // Unpaired or bad token: do NOT cancel browser download
       handoffSuccess = false;
@@ -1461,8 +1479,13 @@ async function handleBrowserDownload(item) {
         ...payload,
       }).catch(() => null);
 
-      if (nmRes && (nmRes.status === 'ok' || nmRes.job_id)) {
+      if (nmRes && nmRes.status === 'ok' && nmRes.job_id) {
         handoffSuccess = true;
+      } else if (nmRes && nmRes.status === 'already_exists' && nmRes.job_id) {
+        const validStates = ['downloading', 'queued', 'paused', 'completed', 'probing', 'scheduled'];
+        if (nmRes.state && validStates.includes((nmRes.state || '').toLowerCase())) {
+          handoffSuccess = true;
+        }
       }
     }
 
@@ -1477,13 +1500,10 @@ async function handleBrowserDownload(item) {
         }
       }
 
-      // Cancel the browser's internal download
+      // Cancel the browser's internal download while PRESERVING browser download history
       if (chrome.downloads && typeof chrome.downloads.cancel === 'function') {
         chrome.downloads.cancel(item.id, () => {
-          // Erase canceled item from browser download history to avoid canceled clutter
-          if (chrome.downloads && typeof chrome.downloads.erase === 'function') {
-            chrome.downloads.erase({ id: item.id }, () => {});
-          }
+          // Intentionally do NOT erase: keep record in browser download history for user transparency
         });
       }
     }
