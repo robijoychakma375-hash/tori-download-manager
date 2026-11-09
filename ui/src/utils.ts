@@ -170,6 +170,8 @@ export function stateLabel(state: string): string {
       return 'Paused';
     case 'queued':
       return 'Queued';
+    case 'scheduled':
+      return 'Scheduled';
     case 'completed':
       return 'Complete';
     case 'failed':
@@ -184,6 +186,21 @@ export function stateLabel(state: string): string {
       return 'Pausing';
     default:
       return state;
+  }
+}
+
+export function formatScheduledTime(isoDate?: string | null): string {
+  if (!isoDate) return '';
+  try {
+    const d = new Date(isoDate);
+    return d.toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return isoDate;
   }
 }
 

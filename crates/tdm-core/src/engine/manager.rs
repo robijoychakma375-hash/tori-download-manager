@@ -39,6 +39,7 @@ pub struct DownloadManager {
     dynamic_segmentation: Arc<std::sync::atomic::AtomicBool>,
     default_download_dir: Arc<Mutex<Option<String>>>,
     use_category_by_default: Arc<std::sync::atomic::AtomicBool>,
+    scheduler_notify: Arc<tokio::sync::Notify>,
 }
 
 impl DownloadManager {
@@ -79,23 +80,137 @@ impl DownloadManager {
             });
         }
 
-        Ok(Self {
+        let scheduler_notify = Arc::new(tokio::sync::Notify::new());
+
+        let active_tokens = Arc::new(Mutex::new(HashMap::new()));
+        let stop_tokens = Arc::new(Mutex::new(HashMap::new()));
+        let max_active_jobs = Arc::new(AtomicUsize::new(4));
+        let rate_limiter = Arc::new(BandwidthLimiter::new(0));
+        let max_connections_per_download = Arc::new(AtomicUsize::new(16));
+        let max_retries = Arc::new(AtomicUsize::new(3));
+        let dynamic_segmentation = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let default_download_dir = Arc::new(Mutex::new(None));
+        let use_category_by_default = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let governor = ConcurrencyGovernor::new(gov_config);
+        let adaptive_scheduler = Arc::new(AdaptiveScheduler::new(adaptive_config));
+        let torrent_manager = Arc::new(tokio::sync::OnceCell::new());
+
+        // Event-driven background download scheduler loop
+        let db_sched = db.clone();
+        let notify_sched = scheduler_notify.clone();
+        let event_bus_sched = event_bus.clone();
+        let active_tokens_sched = Arc::clone(&active_tokens);
+        let stop_tokens_sched = Arc::clone(&stop_tokens);
+        let max_jobs_sched = Arc::clone(&max_active_jobs);
+        let client_sched = client.clone();
+        let governor_sched = Arc::clone(&governor);
+        let adaptive_sched = Arc::clone(&adaptive_scheduler);
+        let torrent_sched = Arc::clone(&torrent_manager);
+        let rate_limiter_sched = Arc::clone(&rate_limiter);
+        let max_retries_sched = Arc::clone(&max_retries);
+        let dynamic_seg_sched = Arc::clone(&dynamic_segmentation);
+
+        let scheduler_loop = async move {
+            loop {
+                let earliest = db_sched.get_earliest_scheduled_time().unwrap_or(None);
+                let sleep_duration = match earliest {
+                    Some(due) => {
+                        let now = chrono::Utc::now();
+                        if due <= now {
+                            std::time::Duration::ZERO
+                        } else {
+                            (due - now)
+                                .to_std()
+                                .unwrap_or(std::time::Duration::from_millis(50))
+                        }
+                    }
+                    None => std::time::Duration::from_secs(86400 * 365),
+                };
+
+                tokio::select! {
+                    _ = tokio::time::sleep(sleep_duration) => {
+                        let now = chrono::Utc::now();
+                        if let Ok(admitted_ids) = db_sched.admit_due_scheduled_jobs(now) {
+                            for id in &admitted_ids {
+                                event_bus_sched.emit(DownloadEvent::StateChanged {
+                                    id: id.clone(),
+                                    state: JobState::Queued,
+                                    error: None,
+                                });
+                            }
+                            if !admitted_ids.is_empty() {
+                                let max_jobs = max_jobs_sched.load(Ordering::SeqCst);
+                                let mut current_active = active_tokens_sched.lock().unwrap().len();
+                                while current_active < max_jobs {
+                                    if let Ok(Some(next_job)) = db_sched.get_next_queued_job() {
+                                        let _ = Self::start_job_internal(
+                                            &next_job.id,
+                                            &db_sched,
+                                            &event_bus_sched,
+                                            &client_sched,
+                                            &governor_sched,
+                                            &adaptive_sched,
+                                            &torrent_sched,
+                                            &active_tokens_sched,
+                                            &stop_tokens_sched,
+                                            &max_jobs_sched,
+                                            &rate_limiter_sched,
+                                            &max_retries_sched,
+                                            &dynamic_seg_sched,
+                                        );
+                                        let new_active = active_tokens_sched.lock().unwrap().len();
+                                        if new_active <= current_active {
+                                            break;
+                                        }
+                                        current_active = new_active;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ = notify_sched.notified() => {}
+                }
+            }
+        };
+
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(scheduler_loop);
+        } else {
+            std::thread::spawn(move || {
+                if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    rt.block_on(scheduler_loop);
+                }
+            });
+        }
+
+        let mgr = Self {
             client,
             db,
             event_bus,
-            governor: ConcurrencyGovernor::new(gov_config),
-            adaptive_scheduler: Arc::new(AdaptiveScheduler::new(adaptive_config)),
-            torrent_manager: Arc::new(tokio::sync::OnceCell::new()),
-            active_tokens: Arc::new(Mutex::new(HashMap::new())),
-            stop_tokens: Arc::new(Mutex::new(HashMap::new())),
-            max_active_jobs: Arc::new(AtomicUsize::new(4)),
-            rate_limiter: Arc::new(BandwidthLimiter::new(0)),
-            max_connections_per_download: Arc::new(AtomicUsize::new(16)),
-            max_retries: Arc::new(AtomicUsize::new(3)),
-            dynamic_segmentation: Arc::new(std::sync::atomic::AtomicBool::new(true)),
-            default_download_dir: Arc::new(Mutex::new(None)),
-            use_category_by_default: Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        })
+            governor,
+            adaptive_scheduler,
+            torrent_manager,
+            active_tokens,
+            stop_tokens,
+            max_active_jobs,
+            rate_limiter,
+            max_connections_per_download,
+            max_retries,
+            dynamic_segmentation,
+            default_download_dir,
+            use_category_by_default,
+            scheduler_notify,
+        };
+
+        // Automatically process queue on startup to start any queued or overdue downloads
+        let _ = mgr.process_queue();
+
+        Ok(mgr)
     }
 
     pub fn rate_limiter(&self) -> &Arc<BandwidthLimiter> {
@@ -338,6 +453,85 @@ impl DownloadManager {
         &self.adaptive_scheduler
     }
 
+    pub fn notify_scheduler(&self) {
+        self.scheduler_notify.notify_one();
+    }
+
+    pub fn check_scheduled_jobs(&self) -> Result<Vec<String>> {
+        let now = chrono::Utc::now();
+        let admitted_ids = self.db.admit_due_scheduled_jobs(now)?;
+        for id in &admitted_ids {
+            self.event_bus.emit(DownloadEvent::StateChanged {
+                id: id.clone(),
+                state: JobState::Queued,
+                error: None,
+            });
+        }
+        if !admitted_ids.is_empty() {
+            let _ = self.process_queue();
+        }
+        Ok(admitted_ids)
+    }
+
+    pub fn reschedule_download(
+        &self,
+        id: &str,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<()> {
+        let job = match self.db.get_job(id)? {
+            Some(j) => j,
+            None => return Err(EngineError::JobNotFound(id.to_string())),
+        };
+
+        if job.state.is_terminal() {
+            return Err(EngineError::Other(format!(
+                "Cannot reschedule terminal download (state: {:?})",
+                job.state
+            )));
+        }
+
+        // Cancel running worker token if active
+        let mut tokens = self.active_tokens.lock().unwrap();
+        if let Some(token) = tokens.remove(id) {
+            token.cancel();
+        }
+        drop(tokens);
+
+        let now = chrono::Utc::now();
+        if let Some(sched_time) = scheduled_at {
+            if sched_time <= now {
+                // Time has already passed: admit to queue immediately
+                self.db.update_job_scheduled_at(id, None)?;
+                self.event_bus.emit(DownloadEvent::StateChanged {
+                    id: id.to_string(),
+                    state: JobState::Queued,
+                    error: None,
+                });
+                let _ = self.process_queue();
+            } else {
+                // Future time: transition to Scheduled
+                self.db.update_job_scheduled_at(id, Some(sched_time))?;
+                self.event_bus.emit(DownloadEvent::StateChanged {
+                    id: id.to_string(),
+                    state: JobState::Scheduled,
+                    error: None,
+                });
+                self.notify_scheduler();
+            }
+        } else {
+            // Cleared schedule: transition to Queued
+            self.db.update_job_scheduled_at(id, None)?;
+            self.event_bus.emit(DownloadEvent::StateChanged {
+                id: id.to_string(),
+                state: JobState::Queued,
+                error: None,
+            });
+            let _ = self.process_queue();
+        }
+
+        Ok(())
+    }
+
     pub async fn create_download<P: AsRef<Path>>(
         &self,
         url: &str,
@@ -375,6 +569,26 @@ impl DownloadManager {
         priority: Priority,
         referer: Option<String>,
         user_agent: Option<String>,
+    ) -> Result<DownloadJob> {
+        self.create_download_with_all_options_scheduled(
+            url,
+            destination_dir,
+            priority,
+            referer,
+            user_agent,
+            None,
+        )
+        .await
+    }
+
+    pub async fn create_download_with_all_options_scheduled<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        destination_dir: P,
+        priority: Priority,
+        referer: Option<String>,
+        user_agent: Option<String>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<DownloadJob> {
         let clean_referer = referer
             .as_deref()
@@ -457,6 +671,12 @@ impl DownloadManager {
             con,
         );
 
+        let now = chrono::Utc::now();
+        let (initial_state, final_sched) = match scheduled_at {
+            Some(time) if time > now => (JobState::Scheduled, Some(time)),
+            _ => (JobState::Queued, None),
+        };
+
         let job = DownloadJob {
             id: id.clone(),
             url: url.to_string(),
@@ -471,7 +691,7 @@ impl DownloadManager {
             temp_path: temp_path.to_string_lossy().to_string(),
             total_bytes: probe.total_bytes,
             downloaded_bytes: 0,
-            state: JobState::Queued,
+            state: initial_state,
             job_type,
             priority,
             etag: probe.etag,
@@ -479,11 +699,12 @@ impl DownloadManager {
             is_resumable: probe.supports_ranges,
             chunk_count: chunks.len(),
             error_message: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            created_at: now,
+            updated_at: now,
             thumbnail_url: extract_thumbnail_from_url(url),
             referer: clean_referer,
             user_agent: clean_user_agent,
+            scheduled_at: final_sched,
         };
 
         self.db.insert_job(&job)?;
@@ -491,9 +712,13 @@ impl DownloadManager {
 
         self.event_bus.emit(DownloadEvent::StateChanged {
             id: id.clone(),
-            state: JobState::Queued,
+            state: initial_state,
             error: None,
         });
+
+        if initial_state == JobState::Scheduled {
+            self.notify_scheduler();
+        }
 
         Ok(job)
     }
@@ -555,6 +780,33 @@ impl DownloadManager {
         referer: Option<String>,
         user_agent: Option<String>,
     ) -> Result<DownloadJob> {
+        self.create_managed_media_download_with_all_options_scheduled(
+            url,
+            format_id,
+            filename,
+            destination_dir,
+            priority,
+            thumbnail_url,
+            referer,
+            user_agent,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_managed_media_download_with_all_options_scheduled<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        format_id: &str,
+        filename: &str,
+        destination_dir: P,
+        priority: Priority,
+        thumbnail_url: Option<String>,
+        referer: Option<String>,
+        user_agent: Option<String>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<DownloadJob> {
         let clean_referer = referer
             .as_deref()
             .and_then(|r| crate::engine::referer::sanitize_and_validate_referer(r, url));
@@ -594,6 +846,12 @@ impl DownloadManager {
         let id = Uuid::new_v4().to_string();
         let thumb = thumbnail_url.or_else(|| extract_thumbnail_from_url(url));
 
+        let now = chrono::Utc::now();
+        let (initial_state, final_sched) = match scheduled_at {
+            Some(time) if time > now => (JobState::Scheduled, Some(time)),
+            _ => (JobState::Queued, None),
+        };
+
         let job = DownloadJob {
             id: id.clone(),
             url: url.to_string(),
@@ -608,7 +866,7 @@ impl DownloadManager {
             temp_path: temp_path.to_str().unwrap().to_string(),
             total_bytes: None,
             downloaded_bytes: 0,
-            state: JobState::Queued,
+            state: initial_state,
             job_type: JobType::ManagedMedia,
             priority,
             etag: None,
@@ -616,22 +874,27 @@ impl DownloadManager {
             is_resumable: true,
             chunk_count: 1,
             error_message: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            created_at: now,
+            updated_at: now,
             thumbnail_url: thumb,
             referer: clean_referer,
             user_agent: clean_user_agent,
+            scheduled_at: final_sched,
         };
 
         self.db.insert_job(&job)?;
 
         self.event_bus.emit(DownloadEvent::StateChanged {
             id: id.clone(),
-            state: JobState::Queued,
+            state: initial_state,
             error: None,
         });
 
-        let _ = self.process_queue();
+        if initial_state == JobState::Scheduled {
+            self.notify_scheduler();
+        } else {
+            let _ = self.process_queue();
+        }
 
         Ok(job)
     }
@@ -683,6 +946,10 @@ impl DownloadManager {
 
         if job.state == JobState::Completed || job.state == JobState::Cancelled {
             return Ok(());
+        }
+
+        if job.scheduled_at.is_some() {
+            let _ = db.update_job_scheduled_at(id, None);
         }
 
         let mut tokens = active_tokens.lock().unwrap();
@@ -839,6 +1106,10 @@ impl DownloadManager {
                 // Live streams cannot be paused; pausing finalizes the recording
                 return self.stop_recording(id);
             }
+            if job.scheduled_at.is_some() {
+                let _ = self.db.update_job_scheduled_at(id, None);
+                self.notify_scheduler();
+            }
         }
 
         let mut tokens = self.active_tokens.lock().unwrap();
@@ -866,6 +1137,8 @@ impl DownloadManager {
             token.cancel();
         }
         drop(tokens);
+        let _ = self.db.update_job_scheduled_at(id, None);
+        self.notify_scheduler();
         self.db.update_job_state(id, JobState::Cancelled, None)?;
         self.event_bus.emit(DownloadEvent::StateChanged {
             id: id.to_string(),

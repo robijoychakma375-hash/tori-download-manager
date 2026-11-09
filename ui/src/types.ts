@@ -2,6 +2,7 @@ export type JobState =
   | 'created'
   | 'probing'
   | 'queued'
+  | 'scheduled'
   | 'downloading'
   | 'pausing'
   | 'paused'
@@ -31,6 +32,7 @@ export interface DownloadJob {
   error_message: string | null;
   created_at: string;
   updated_at: string;
+  scheduled_at?: string | null;
   thumbnail_url?: string | null;
   // Transient UI metrics
   speed_bps?: number;

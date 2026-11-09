@@ -20,6 +20,8 @@ pub struct NativeMessage {
     pub referer: Option<String>,
     #[serde(default)]
     pub user_agent: Option<String>,
+    #[serde(default)]
+    pub scheduled_at: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

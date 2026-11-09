@@ -63,6 +63,12 @@ pub struct CreateDownloadReq {
     pub user_agent: Option<String>,
     pub thumbnail_url: Option<String>,
     pub referer: Option<String>,
+    pub scheduled_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RescheduleReq {
+    pub scheduled_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -96,6 +102,7 @@ pub struct CreateMediaDownloadReq {
     pub direct_stream_url: Option<String>,
     pub referer: Option<String>,
     pub user_agent: Option<String>,
+    pub scheduled_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -531,14 +538,21 @@ async fn handle_create_download(
         .as_deref()
         .and_then(tdm_core::sanitize_and_validate_user_agent);
 
+    let parsed_sched = payload
+        .scheduled_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+
     match state
         .manager
-        .create_download_with_all_options(
+        .create_download_with_all_options_scheduled(
             raw_url,
             &dest_path,
             prio,
             clean_referer,
             clean_user_agent,
+            parsed_sched,
         )
         .await
     {
@@ -548,18 +562,24 @@ async fn handle_create_download(
             if let Some(ref thumb) = payload.thumbnail_url {
                 let _ = state.db.update_thumbnail_url(&job_id, thumb);
             }
-            let _ = state.manager.start_download(&job_id);
-            state
-                .manager
-                .event_bus()
-                .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: job_id.clone() });
+            if job.state != tdm_core::JobState::Scheduled {
+                let _ = state.manager.start_download(&job_id);
+                state
+                    .manager
+                    .event_bus()
+                    .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: job_id.clone() });
+            }
 
             Ok(Json(CreateDownloadResp {
                 status: "ok".to_string(),
                 job_id: Some(job_id),
                 filename: Some(fname),
-                state: Some("downloading".to_string()),
-                message: Some("Download created and started in TORI".to_string()),
+                state: Some(format!("{:?}", job.state).to_lowercase()),
+                message: Some(if job.state == tdm_core::JobState::Scheduled {
+                    "Download scheduled in TORI".to_string()
+                } else {
+                    "Download created and started in TORI".to_string()
+                }),
             }))
         }
         Err(e) => {
@@ -822,9 +842,15 @@ async fn handle_create_media_download(
         .as_deref()
         .and_then(tdm_core::sanitize_and_validate_user_agent);
 
+    let parsed_sched = payload
+        .scheduled_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+
     match state
         .manager
-        .create_managed_media_download_with_options(
+        .create_managed_media_download_with_all_options_scheduled(
             target_media_url,
             format_id,
             &initial_filename,
@@ -833,24 +859,31 @@ async fn handle_create_media_download(
             payload.thumbnail_url,
             clean_referer,
             clean_user_agent,
+            parsed_sched,
         )
         .await
     {
         Ok(job) => {
             let job_id = job.id.clone();
             let fname = job.filename.clone();
-            let _ = state.manager.start_download(&job_id);
-            state
-                .manager
-                .event_bus()
-                .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: job_id.clone() });
+            if job.state != tdm_core::JobState::Scheduled {
+                let _ = state.manager.start_download(&job_id);
+                state
+                    .manager
+                    .event_bus()
+                    .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: job_id.clone() });
+            }
 
             Ok(Json(CreateDownloadResp {
                 status: "ok".to_string(),
                 job_id: Some(job_id),
                 filename: Some(fname),
-                state: Some("downloading".to_string()),
-                message: Some("Managed media download started in TORI".to_string()),
+                state: Some(format!("{:?}", job.state).to_lowercase()),
+                message: Some(if job.state == tdm_core::JobState::Scheduled {
+                    "Managed media download scheduled in TORI".to_string()
+                } else {
+                    "Managed media download started in TORI".to_string()
+                }),
             }))
         }
         Err(e) => {
@@ -1172,6 +1205,51 @@ async fn handle_retry_download(
     }
 }
 
+async fn handle_reschedule_download(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(payload): Json<RescheduleReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let config = state.config.read().await;
+    if !check_auth(&headers, None, &config.token) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"status": "error", "message": "Authentication required."})),
+        ));
+    }
+
+    let parsed_time = match payload.scheduled_at {
+        Some(ref s) if !s.trim().is_empty() => {
+            match chrono::DateTime::parse_from_rfc3339(s.trim()) {
+                Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+                Err(_) => {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "status": "error",
+                            "message": "Invalid scheduled_at format. RFC 3339 UTC string required."
+                        })),
+                    ));
+                }
+            }
+        }
+        _ => None,
+    };
+
+    match state.manager.reschedule_download(&id, parsed_time) {
+        Ok(_) => Ok(Json(serde_json::json!({
+            "status": "ok",
+            "job_id": id,
+            "scheduled_at": parsed_time.map(|t| t.to_rfc3339())
+        }))),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"status": "error", "message": e.to_string()})),
+        )),
+    }
+}
+
 async fn handle_delete_download(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -1400,6 +1478,10 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
             post(handle_cancel_download),
         )
         .route("/api/v1/downloads/{id}/retry", post(handle_retry_download))
+        .route(
+            "/api/v1/downloads/{id}/reschedule",
+            post(handle_reschedule_download),
+        )
         .route(
             "/api/v1/downloads/{id}/delete",
             post(handle_delete_download),

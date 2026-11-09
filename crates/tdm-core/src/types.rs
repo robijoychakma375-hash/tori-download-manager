@@ -14,6 +14,7 @@ pub enum JobState {
     Completed,
     Failed,
     Cancelled,
+    Scheduled,
 }
 
 impl JobState {
@@ -29,6 +30,7 @@ impl JobState {
             JobState::Completed => "completed",
             JobState::Failed => "failed",
             JobState::Cancelled => "cancelled",
+            JobState::Scheduled => "scheduled",
         }
     }
 
@@ -66,6 +68,7 @@ impl std::str::FromStr for JobState {
             "completed" => Ok(JobState::Completed),
             "failed" => Ok(JobState::Failed),
             "cancelled" => Ok(JobState::Cancelled),
+            "scheduled" => Ok(JobState::Scheduled),
             _ => Err(()),
         }
     }
@@ -172,6 +175,8 @@ pub struct DownloadJob {
     pub referer: Option<String>,
     #[serde(default)]
     pub user_agent: Option<String>,
+    #[serde(default)]
+    pub scheduled_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

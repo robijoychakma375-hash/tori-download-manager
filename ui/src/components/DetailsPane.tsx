@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { ChunkRecord, DownloadJob } from '../types';
-import { fmtB, fmtSp, fmtT, stateLabel } from '../utils';
+import { fmtB, fmtSp, fmtT, stateLabel, formatScheduledTime } from '../utils';
 
 interface DetailsPaneProps {
   selectedJob: DownloadJob | null;
@@ -99,6 +99,8 @@ export const DetailsPane: React.FC<DetailsPaneProps> = ({ selectedJob, visible }
         <span className="mut">
           {isDownloading
             ? `${fmtSp(selectedJob.speed_bps)}   ${fmtT(selectedJob.eta_seconds)} left`
+            : selectedJob.state === 'scheduled'
+            ? `Scheduled for ${formatScheduledTime(selectedJob.scheduled_at)}`
             : stateLabel(selectedJob.state)}
         </span>
       </div>

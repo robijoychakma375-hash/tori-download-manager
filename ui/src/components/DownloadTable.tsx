@@ -1,6 +1,6 @@
 import React from 'react';
 import type { DownloadJob } from '../types';
-import { typeOfJob, getChipSrc, fmtB, fmtSp, fmtT, formatAdded, stateLabel } from '../utils';
+import { typeOfJob, getChipSrc, fmtB, fmtSp, fmtT, formatAdded, stateLabel, formatScheduledTime } from '../utils';
 
 interface DownloadTableProps {
   downloads: DownloadJob[];
@@ -25,8 +25,9 @@ const TableRow = React.memo<TableRowProps>(
     const total = job.total_bytes || 0;
     const downloaded = job.downloaded_bytes || 0;
     const isComplete = job.state === 'completed';
+    const isScheduled = job.state === 'scheduled';
     const isPaused =
-      job.state === 'paused' || job.state === 'queued' || job.state === 'failed';
+      job.state === 'paused' || job.state === 'queued' || job.state === 'failed' || isScheduled;
     const isDownloading = job.state === 'downloading';
     const hasKnownTotal = total > 0;
     const isFinishing = isDownloading && hasKnownTotal && downloaded >= total;
@@ -99,6 +100,8 @@ const TableRow = React.memo<TableRowProps>(
             ? 'Finishing…'
             : isDownloading
             ? fmtT(job.eta_seconds)
+            : isScheduled
+            ? `⏰ ${formatScheduledTime(job.scheduled_at)}`
             : stateLabel(job.state)}
         </span>
 

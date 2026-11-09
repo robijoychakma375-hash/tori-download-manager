@@ -35,8 +35,8 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at, thumbnail_url, referer, user_agent
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                created_at, updated_at, thumbnail_url, referer, user_agent, scheduled_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 job.id,
                 job.url,
@@ -59,6 +59,7 @@ impl Database {
                 job.thumbnail_url,
                 job.referer,
                 job.user_agent,
+                job.scheduled_at.map(|t| t.to_rfc3339()),
             ],
         )?;
         Ok(())
@@ -213,7 +214,7 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at, thumbnail_url, referer, user_agent
+                created_at, updated_at, thumbnail_url, referer, user_agent, scheduled_at
              FROM downloads WHERE id = ?1",
         )?;
 
@@ -253,6 +254,15 @@ impl Database {
                     thumbnail_url: row.get(18).ok().flatten(),
                     referer: row.get(19).ok().flatten(),
                     user_agent: row.get(20).ok().flatten(),
+                    scheduled_at: row
+                        .get::<_, Option<String>>(21)
+                        .ok()
+                        .flatten()
+                        .and_then(|s| {
+                            chrono::DateTime::parse_from_rfc3339(&s)
+                                .ok()
+                                .map(|dt| dt.with_timezone(&Utc))
+                        }),
                 })
             })
             .optional()?;
@@ -267,7 +277,7 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at, thumbnail_url, referer, user_agent
+                created_at, updated_at, thumbnail_url, referer, user_agent, scheduled_at
              FROM downloads
              WHERE state = 'queued'
              ORDER BY
@@ -317,6 +327,15 @@ impl Database {
                     thumbnail_url: row.get(18).ok().flatten(),
                     referer: row.get(19).ok().flatten(),
                     user_agent: row.get(20).ok().flatten(),
+                    scheduled_at: row
+                        .get::<_, Option<String>>(21)
+                        .ok()
+                        .flatten()
+                        .and_then(|s| {
+                            chrono::DateTime::parse_from_rfc3339(&s)
+                                .ok()
+                                .map(|dt| dt.with_timezone(&Utc))
+                        }),
                 })
             })
             .optional()?;
@@ -331,7 +350,7 @@ impl Database {
                 id, url, resolved_url, filename, target_path, temp_path,
                 total_bytes, downloaded_bytes, state, job_type, priority, etag,
                 last_modified, is_resumable, chunk_count, error_message,
-                created_at, updated_at, thumbnail_url, referer, user_agent
+                created_at, updated_at, thumbnail_url, referer, user_agent, scheduled_at
              FROM downloads
              ORDER BY created_at DESC",
         )?;
@@ -371,6 +390,15 @@ impl Database {
                 thumbnail_url: row.get(18).ok().flatten(),
                 referer: row.get(19).ok().flatten(),
                 user_agent: row.get(20).ok().flatten(),
+                scheduled_at: row
+                    .get::<_, Option<String>>(21)
+                    .ok()
+                    .flatten()
+                    .and_then(|s| {
+                        chrono::DateTime::parse_from_rfc3339(&s)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&Utc))
+                    }),
             })
         })?;
 
@@ -454,7 +482,9 @@ impl Database {
 
     pub fn reconcile_on_startup(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        // Any job that was actively downloading, probing or pausing when the process terminated
+        let now = Utc::now().to_rfc3339();
+
+        // 1. Any job that was actively downloading, probing or pausing when the process terminated
         // should be safely marked as Paused so the user or scheduler can resume without false completed state.
         conn.execute(
             "UPDATE downloads
@@ -462,7 +492,98 @@ impl Database {
              WHERE state IN ('downloading', 'probing', 'pausing', 'verifying')",
             [],
         )?;
+
+        // 2. Overdue catch-up policy: any scheduled job whose scheduled time arrived while offline
+        // transitions to queued to become immediately eligible for execution.
+        conn.execute(
+            "UPDATE downloads
+             SET state = 'queued', updated_at = ?1
+             WHERE state = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ?1",
+            params![now],
+        )?;
+
         Ok(())
+    }
+
+    pub fn update_job_scheduled_at(
+        &self,
+        id: &str,
+        scheduled_at: Option<chrono::DateTime<Utc>>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        let sched_str = scheduled_at.map(|t| t.to_rfc3339());
+        let new_state = if scheduled_at.is_some() {
+            JobState::Scheduled.as_str()
+        } else {
+            JobState::Queued.as_str()
+        };
+
+        conn.execute(
+            "UPDATE downloads
+             SET scheduled_at = ?1, state = ?2, updated_at = ?3
+             WHERE id = ?4",
+            params![sched_str, new_state, now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_earliest_scheduled_time(&self) -> Result<Option<chrono::DateTime<Utc>>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT scheduled_at FROM downloads
+             WHERE state = 'scheduled' AND scheduled_at IS NOT NULL
+             ORDER BY scheduled_at ASC
+             LIMIT 1",
+        )?;
+
+        let res = stmt
+            .query_row([], |row| {
+                let s: String = row.get(0)?;
+                Ok(s)
+            })
+            .optional()?;
+
+        Ok(res.and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        }))
+    }
+
+    pub fn admit_due_scheduled_jobs(&self, now: chrono::DateTime<Utc>) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let now_str = now.to_rfc3339();
+
+        let mut stmt = conn.prepare(
+            "SELECT id FROM downloads
+             WHERE state = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ?1
+             ORDER BY
+                CASE priority
+                    WHEN 'high' THEN 1
+                    WHEN 'normal' THEN 2
+                    WHEN 'low' THEN 3
+                    ELSE 4
+                END ASC,
+                scheduled_at ASC,
+                created_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![now_str], |row| row.get::<_, String>(0))?;
+        let ids: Vec<String> = rows.filter_map(|r| r.ok()).collect();
+
+        if !ids.is_empty() {
+            let mut update_stmt = conn.prepare(
+                "UPDATE downloads
+                 SET state = 'queued', updated_at = ?1
+                 WHERE id = ?2 AND state = 'scheduled'",
+            )?;
+            for id in &ids {
+                let _ = update_stmt.execute(params![now_str, id]);
+            }
+        }
+
+        Ok(ids)
     }
 
     pub fn get_setting(&self, key: &str) -> Result<Option<String>> {

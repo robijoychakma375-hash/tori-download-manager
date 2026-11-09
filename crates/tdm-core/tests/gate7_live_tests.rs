@@ -181,6 +181,7 @@ async fn test_live_stream_udp_transport_real_recording() {
         thumbnail_url: None,
         referer: None,
         user_agent: None,
+        scheduled_at: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -285,6 +286,7 @@ async fn test_live_stream_tcp_recording_to_mkv() {
         thumbnail_url: None,
         referer: None,
         user_agent: None,
+        scheduled_at: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -414,6 +416,7 @@ async fn test_live_stream_sliding_window_hls_recording() {
         thumbnail_url: None,
         referer: None,
         user_agent: None,
+        scheduled_at: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -662,6 +665,7 @@ async fn test_live_stream_fragmented_mp4_partial_recovery() {
         thumbnail_url: None,
         referer: None,
         user_agent: None,
+        scheduled_at: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -759,6 +763,7 @@ async fn test_live_stream_bounded_resources_and_throughput() {
         thumbnail_url: None,
         referer: None,
         user_agent: None,
+        scheduled_at: None,
     };
     db.insert_job(&job).unwrap();
 

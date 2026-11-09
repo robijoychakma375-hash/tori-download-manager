@@ -16,6 +16,7 @@ interface ContextMenuProps {
   onRetry: (job: DownloadJob) => void;
   onVerifyChecksum: (path: string) => void;
   onDelete: (jobs: DownloadJob[]) => void;
+  onReschedule?: (job: DownloadJob) => void;
 }
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -33,6 +34,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onRetry,
   onVerifyChecksum,
   onDelete,
+  onReschedule,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -115,8 +117,25 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           onClose();
         }}
       >
-        {isComplete ? 'Open file' : isDownloading ? 'Pause' : 'Resume'}
+        {isComplete
+          ? 'Open file'
+          : isDownloading
+            ? 'Pause'
+            : job.state === 'scheduled'
+              ? 'Start Download Now'
+              : 'Resume'}
       </div>
+
+      {job.state === 'scheduled' && onReschedule && (
+        <div
+          onClick={() => {
+            onReschedule(job);
+            onClose();
+          }}
+        >
+          Reschedule download…
+        </div>
+      )}
 
       <div
         onClick={() => {

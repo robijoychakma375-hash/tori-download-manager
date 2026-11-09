@@ -78,6 +78,11 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     let _ = conn.execute("ALTER TABLE downloads ADD COLUMN thumbnail_url TEXT", []);
     let _ = conn.execute("ALTER TABLE downloads ADD COLUMN referer TEXT", []);
     let _ = conn.execute("ALTER TABLE downloads ADD COLUMN user_agent TEXT", []);
+    let _ = conn.execute("ALTER TABLE downloads ADD COLUMN scheduled_at TEXT", []);
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_downloads_scheduled_at ON downloads(scheduled_at)",
+        [],
+    );
 
     Ok(())
 }

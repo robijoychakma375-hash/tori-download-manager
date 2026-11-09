@@ -45,6 +45,7 @@ pub async fn create_download(
     priority: Option<String>,
     referer: Option<String>,
     user_agent: Option<String>,
+    scheduled_at: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<DownloadJob, String> {
     let dest_dir = state
@@ -64,10 +65,15 @@ pub async fn create_download(
         .as_deref()
         .and_then(tdm_core::sanitize_and_validate_user_agent);
 
+    let parsed_sched = scheduled_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+
     let job = if is_media_portal_url(&url) {
         state
             .manager
-            .create_managed_media_download_with_options(
+            .create_managed_media_download_with_all_options_scheduled(
                 &url,
                 "best",
                 "media_download.mp4",
@@ -76,28 +82,32 @@ pub async fn create_download(
                 None,
                 clean_referer,
                 clean_user_agent,
+                parsed_sched,
             )
             .await
             .map_err(|e| e.to_string())?
     } else {
         state
             .manager
-            .create_download_with_all_options(
+            .create_download_with_all_options_scheduled(
                 &url,
                 &dest_dir,
                 prio,
                 clean_referer,
                 clean_user_agent,
+                parsed_sched,
             )
             .await
             .map_err(|e| e.to_string())?
     };
 
-    // Auto-start download upon creation
-    state
-        .manager
-        .start_download(&job.id)
-        .map_err(|e| e.to_string())?;
+    // Auto-start download upon creation if not scheduled
+    if job.state != tdm_core::JobState::Scheduled {
+        state
+            .manager
+            .start_download(&job.id)
+            .map_err(|e| e.to_string())?;
+    }
 
     Ok(job)
 }
@@ -1087,6 +1097,8 @@ pub struct CreateMediaDownloadArgs {
     pub thumbnail_url: Option<String>,
     pub start_immediately: Option<bool>,
     pub direct_stream_url: Option<String>,
+    #[serde(default)]
+    pub scheduled_at: Option<String>,
 }
 
 #[tauri::command]
@@ -1150,21 +1162,30 @@ pub async fn create_media_download(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(raw_url);
 
+    let parsed_sched = args
+        .scheduled_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+
     let job = state
         .manager
-        .create_managed_media_download(
+        .create_managed_media_download_with_all_options_scheduled(
             target_media_url,
             &format_id,
             &filename_with_ext,
             &dest_path,
             prio,
             args.thumbnail_url,
+            None,
+            None,
+            parsed_sched,
         )
         .await
         .map_err(|e| e.to_string())?;
 
     let start_now = args.start_immediately.unwrap_or(true);
-    if start_now {
+    if start_now && job.state != tdm_core::JobState::Scheduled {
         state
             .manager
             .start_download(&job.id)
@@ -1174,4 +1195,26 @@ pub async fn create_media_download(
     }
 
     Ok(job)
+}
+
+#[tauri::command]
+pub async fn reschedule_download(
+    id: String,
+    scheduled_at: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let parsed_sched = match scheduled_at {
+        Some(ref s) if !s.trim().is_empty() => {
+            match chrono::DateTime::parse_from_rfc3339(s.trim()) {
+                Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+                Err(e) => return Err(format!("Invalid scheduled_at RFC 3339 format: {}", e)),
+            }
+        }
+        _ => None,
+    };
+
+    state
+        .manager
+        .reschedule_download(&id, parsed_sched)
+        .map_err(|e| e.to_string())
 }

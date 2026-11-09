@@ -200,6 +200,7 @@ async fn test_torrent_local_seeder_and_leecher_real_download() {
         thumbnail_url: None,
         referer: None,
         user_agent: None,
+        scheduled_at: None,
     };
     db.insert_job(&job).unwrap();
 
@@ -429,6 +430,7 @@ async fn test_torrent_engine_cancellation_and_cleanup() {
         thumbnail_url: None,
         referer: None,
         user_agent: None,
+        scheduled_at: None,
     };
     db.insert_job(&job).unwrap();
 

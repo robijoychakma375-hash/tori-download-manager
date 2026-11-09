@@ -9,7 +9,13 @@ interface AddDownloadModalProps {
   defaultDir: string;
   defaultConnections: number;
   onClose: () => void;
-  onSubmit: (urls: string[], dir: string, connections: number, startImmediately: boolean) => Promise<void>;
+  onSubmit: (
+    urls: string[],
+    dir: string,
+    connections: number,
+    startImmediately: boolean,
+    scheduledAt?: string | null
+  ) => Promise<void>;
   onSubmitMedia?: (args: {
     url: string;
     formatId: string;
@@ -17,6 +23,7 @@ interface AddDownloadModalProps {
     destination: string;
     startImmediately: boolean;
     thumbnailUrl?: string | null;
+    scheduledAt?: string | null;
   }) => Promise<void>;
   onOpenPlaylist?: (url: string) => void;
 }
@@ -41,6 +48,19 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Scheduling state
+  const [isScheduled, setIsScheduled] = useState(false);
+  const [scheduledDate, setScheduledDate] = useState(() => {
+    const d = new Date();
+    return d.toISOString().split('T')[0];
+  });
+  const [scheduledTime, setScheduledTime] = useState(() => {
+    const d = new Date(Date.now() + 3600000);
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  });
+
   // Managed media state
   const [resolvedMedia, setResolvedMedia] = useState<MediaMetadata | null>(null);
   const [isResolvingMedia, setIsResolvingMedia] = useState(false);
@@ -52,6 +72,22 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
   const isMedia = isSingleLine && isMediaPageUrl(trimmedUrl);
   const hasPlaylist = isPlaylistUrl(trimmedUrl);
   const hasBoth = isMedia && hasPlaylist;
+
+  const scheduledIso = useMemo(() => {
+    if (!isScheduled) return null;
+    try {
+      const dt = new Date(`${scheduledDate}T${scheduledTime}`);
+      if (isNaN(dt.getTime())) return null;
+      return dt.toISOString();
+    } catch {
+      return null;
+    }
+  }, [isScheduled, scheduledDate, scheduledTime]);
+
+  const isScheduleInPast = useMemo(() => {
+    if (!isScheduled || !scheduledIso) return false;
+    return new Date(scheduledIso).getTime() <= Date.now();
+  }, [isScheduled, scheduledIso]);
 
   // Asynchronously resolve media formats when a supported video page URL is entered
   useEffect(() => {
@@ -159,8 +195,18 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
       return;
     }
 
+    if (isScheduled) {
+      if (!scheduledIso || isScheduleInPast) {
+        setError('Please select a valid future date and time for the scheduled download.');
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
+      const finalScheduledAt = isScheduled ? scheduledIso : null;
+      const finalStart = isScheduled ? false : startImmediately;
+
       if (isMedia && urls.length === 1 && onSubmitMedia) {
         const filename = customFilename.trim() || resolvedMedia?.title || 'video.mp4';
         await onSubmitMedia({
@@ -168,11 +214,12 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
           formatId: selectedFormatId,
           filename,
           destination: saveDir,
-          startImmediately,
+          startImmediately: finalStart,
           thumbnailUrl: resolvedMedia?.thumbnail_url || null,
+          scheduledAt: finalScheduledAt,
         });
       } else {
-        await onSubmit(urls, saveDir, connections, startImmediately);
+        await onSubmit(urls, saveDir, connections, finalStart, finalScheduledAt);
       }
       onClose();
     } catch (err: unknown) {
@@ -191,7 +238,7 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
         style={{
           width: 600,
           minHeight: 350,
-          height: isMedia && resolvedMedia ? 460 : 360,
+          height: isMedia && resolvedMedia ? (isScheduled ? 520 : 460) : (isScheduled ? 430 : 370),
           boxShadow: '0 12px 36px rgba(0,0,0,0.35)',
         }}
       >
@@ -443,28 +490,92 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
               )}
             </div>
           </div>
+
+          {/* Time-based Download Scheduler */}
+          <div className="fr" style={{ alignItems: 'flex-start' }}>
+            <span className="k" style={{ paddingTop: 4 }}>Schedule</span>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="schedule_mode"
+                    checked={!isScheduled}
+                    onChange={() => setIsScheduled(false)}
+                  />
+                  <span>Download now / manual</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="schedule_mode"
+                    checked={isScheduled}
+                    onChange={() => setIsScheduled(true)}
+                  />
+                  <span>Schedule for later ⏰</span>
+                </label>
+              </div>
+
+              {isScheduled && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+                  <input
+                    type="date"
+                    className="in"
+                    style={{ flex: 1, height: 28, fontSize: 12 }}
+                    value={scheduledDate}
+                    onChange={(e) => setScheduledDate(e.target.value)}
+                  />
+                  <input
+                    type="time"
+                    className="in"
+                    style={{ flex: 1, height: 28, fontSize: 12 }}
+                    value={scheduledTime}
+                    onChange={(e) => setScheduledTime(e.target.value)}
+                  />
+                </div>
+              )}
+              {isScheduled && isScheduleInPast && (
+                <span style={{ fontSize: 11, color: 'var(--bad, #ef4444)' }}>
+                  ⚠️ Selected time is in the past. Please choose a future date/time.
+                </span>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="foot">
           <button className="btn" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </button>
-          <button
-            className="btn"
-            id="alater"
-            onClick={() => handleSubmit(false)}
-            disabled={isSubmitting}
-          >
-            Download Later
-          </button>
-          <button
-            className="btn def"
-            id="ago"
-            onClick={() => handleSubmit(true)}
-            disabled={isSubmitting}
-          >
-            {isSubmitting ? 'Starting...' : 'Start Download'}
-          </button>
+          {isScheduled ? (
+            <button
+              className="btn def"
+              id="asched"
+              onClick={() => handleSubmit(false)}
+              disabled={isSubmitting || isScheduleInPast}
+            >
+              {isSubmitting ? 'Scheduling...' : 'Schedule Download'}
+            </button>
+          ) : (
+            <>
+              <button
+                className="btn"
+                id="alater"
+                onClick={() => handleSubmit(false)}
+                disabled={isSubmitting}
+              >
+                Download Later
+              </button>
+              <button
+                className="btn def"
+                id="ago"
+                onClick={() => handleSubmit(true)}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? 'Starting...' : 'Start Download'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </>

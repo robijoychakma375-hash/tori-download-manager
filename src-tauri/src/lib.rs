@@ -42,6 +42,7 @@ pub fn run() {
                     job_id: None,
                     referer: None,
                     user_agent: None,
+                    scheduled_at: None,
                 };
                 let _ = tdm_native_host::ipc::forward_to_persistent_engine(&msg).await;
                 true
@@ -201,6 +202,7 @@ pub fn run() {
             resume_download,
             cancel_download,
             retry_download,
+            reschedule_download,
             list_downloads,
             delete_download,
             delete_downloads,

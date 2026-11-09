@@ -579,6 +579,7 @@ export function App() {
     destination: string;
     startImmediately: boolean;
     thumbnailUrl?: string | null;
+    scheduledAt?: string | null;
   }) => {
     try {
       const job = await invoke<DownloadJob>('create_media_download', {
@@ -590,6 +591,7 @@ export function App() {
           priority: 'normal',
           thumbnail_url: args.thumbnailUrl || null,
           start_immediately: args.startImmediately,
+          scheduled_at: args.scheduledAt || null,
         },
       });
 
@@ -599,7 +601,9 @@ export function App() {
 
       await loadDownloads();
       showToast(
-        args.startImmediately
+        args.scheduledAt
+          ? `Scheduled media download: ${job.filename}`
+          : args.startImmediately
           ? `Started media download: ${job.filename}`
           : `Queued media download: ${job.filename}`
       );
@@ -613,7 +617,8 @@ export function App() {
     urls: string[],
     dir: string,
     _connections: number,
-    startImmediately: boolean
+    startImmediately: boolean,
+    scheduledAt?: string | null
   ) => {
     let createdCount = 0;
     for (const url of urls) {
@@ -628,6 +633,7 @@ export function App() {
               priority: 'normal',
               thumbnail_url: null,
               start_immediately: startImmediately,
+              scheduled_at: scheduledAt || null,
             },
           });
         } else {
@@ -635,8 +641,11 @@ export function App() {
             url,
             destination: dir || null,
             priority: 'normal',
+            referer: null,
+            userAgent: null,
+            scheduledAt: scheduledAt || null,
           });
-          if (!startImmediately) {
+          if (!startImmediately && !scheduledAt) {
             await invoke('pause_download', { id: job.id });
           }
         }
@@ -650,7 +659,11 @@ export function App() {
       setCurrentCategory('all');
     }
     await loadDownloads();
-    showToast(`Added ${createdCount} download(s)`);
+    showToast(
+      scheduledAt
+        ? `Scheduled ${createdCount} download(s)`
+        : `Added ${createdCount} download(s)`
+    );
   };
 
   const handleTogglePause = async (job: DownloadJob) => {
@@ -700,6 +713,44 @@ export function App() {
       showToast(`Cancelled ${job.filename}`);
     } catch (err) {
       showToast(`Cancel failed: ${String(err)}`);
+    }
+  };
+
+  const handleReschedule = async (job: DownloadJob) => {
+    const defaultVal = job.scheduled_at
+      ? new Date(job.scheduled_at).toISOString().slice(0, 16)
+      : new Date(Date.now() + 3600000).toISOString().slice(0, 16);
+
+    const promptValue = window.prompt(
+      'Enter new scheduled date and time (YYYY-MM-DDTHH:MM), or leave empty to clear schedule and queue for download:',
+      defaultVal
+    );
+    if (promptValue === null) return; // user cancelled
+
+    let isoScheduled: string | null = null;
+    if (promptValue.trim() !== '') {
+      const parsed = new Date(promptValue.trim());
+      if (isNaN(parsed.getTime())) {
+        showToast('Invalid date/time format.');
+        return;
+      }
+      if (parsed.getTime() <= Date.now()) {
+        showToast('Scheduled time must be in the future.');
+        return;
+      }
+      isoScheduled = parsed.toISOString();
+    }
+
+    try {
+      await invoke('reschedule_download', { id: job.id, scheduledAt: isoScheduled });
+      await loadDownloads();
+      showToast(
+        isoScheduled
+          ? `Rescheduled ${job.filename}`
+          : `Schedule cleared — queued ${job.filename}`
+      );
+    } catch (err) {
+      showToast(`Error rescheduling: ${String(err)}`);
     }
   };
 
@@ -1118,6 +1169,7 @@ export function App() {
           onRetry={handleRetry}
           onVerifyChecksum={handleVerifyChecksum}
           onDelete={(jobs) => setDeleteConfirmJobs(jobs)}
+          onReschedule={handleReschedule}
         />
       )}
 

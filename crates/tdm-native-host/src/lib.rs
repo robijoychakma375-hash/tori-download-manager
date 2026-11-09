@@ -321,25 +321,38 @@ pub async fn handle_message(
                 .as_deref()
                 .and_then(tdm_core::sanitize_and_validate_user_agent);
 
+            let parsed_sched = msg
+                .scheduled_at
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+
             match manager
-                .create_download_with_all_options(
+                .create_download_with_all_options_scheduled(
                     trimmed_url,
                     &dest_dir,
                     priority,
                     clean_referer,
                     clean_user_agent,
+                    parsed_sched,
                 )
                 .await
             {
                 Ok(job) => {
-                    let _ = manager.start_download(&job.id);
+                    if job.state != tdm_core::JobState::Scheduled {
+                        let _ = manager.start_download(&job.id);
+                    }
                     NativeResponse {
                         status: "ok".to_string(),
                         action: "start_download".to_string(),
                         job_id: Some(job.id),
                         filename: Some(job.filename),
-                        state: Some("downloading".to_string()),
-                        message: Some("Download created and started successfully".to_string()),
+                        state: Some(job.state.as_str().to_string()),
+                        message: Some(if job.state == tdm_core::JobState::Scheduled {
+                            "Download scheduled successfully".to_string()
+                        } else {
+                            "Download created and started successfully".to_string()
+                        }),
                         ..Default::default()
                     }
                 }
@@ -362,6 +375,7 @@ pub async fn handle_message(
                             "url": j.url,
                             "filename": j.filename,
                             "state": j.state.as_str(),
+                            "scheduled_at": j.scheduled_at.map(|t| t.to_rfc3339()),
                             "total_bytes": j.total_bytes,
                             "downloaded_bytes": j.downloaded_bytes,
                             "priority": j.priority.as_str(),
@@ -462,6 +476,44 @@ pub async fn handle_message(
                     message: Some("Missing 'job_id'".to_string()),
                     ..Default::default()
                 }
+            }
+        }
+
+        "reschedule_download" => {
+            let Some(ref id) = msg.job_id else {
+                return NativeResponse {
+                    status: "error".to_string(),
+                    action: "reschedule_download".to_string(),
+                    message: Some("Missing 'job_id'".to_string()),
+                    ..Default::default()
+                };
+            };
+            let parsed_sched = msg
+                .scheduled_at
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+
+            match manager.reschedule_download(id, parsed_sched) {
+                Ok(_) => NativeResponse {
+                    status: "ok".to_string(),
+                    action: "reschedule_download".to_string(),
+                    job_id: Some(id.clone()),
+                    state: Some(if parsed_sched.is_some() {
+                        "scheduled".to_string()
+                    } else {
+                        "queued".to_string()
+                    }),
+                    message: Some("Download rescheduled successfully".to_string()),
+                    ..Default::default()
+                },
+                Err(e) => NativeResponse {
+                    status: "error".to_string(),
+                    action: "reschedule_download".to_string(),
+                    job_id: Some(id.clone()),
+                    message: Some(format!("Failed to reschedule download: {}", e)),
+                    ..Default::default()
+                },
             }
         }
 
