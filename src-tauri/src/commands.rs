@@ -395,7 +395,9 @@ pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn window_minimize(window: tauri::Window) -> Result<(), String> {
-    window.minimize().map_err(|e| e.to_string())
+    let res = window.minimize().map_err(|e| e.to_string());
+    crate::lifecycle::trim_memory();
+    res
 }
 
 #[tauri::command]
