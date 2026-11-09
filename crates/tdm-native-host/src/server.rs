@@ -205,7 +205,37 @@ pub fn is_allowed_origin(origin_str: &str, allowed_ids: &[String]) -> bool {
             .any(|allowed| allowed.trim().eq_ignore_ascii_case(clean_id));
     }
 
-    // 2. Trusted local desktop app / Tauri origins (exact match, with optional trailing slash)
+    // 2. Firefox extension validation (moz-extension://<uuid>)
+    if let Some(rest) = lower.strip_prefix("moz-extension://") {
+        let clean_id = rest.strip_suffix('/').unwrap_or(rest);
+
+        // Reject empty or allowlist-empty configurations
+        if allowed_ids.is_empty() || clean_id.is_empty() {
+            return false;
+        }
+
+        // Firefox assigns an internal UUID for each installed extension: exactly 36 chars (8-4-4-4-12 hex format)
+        if clean_id.len() == 36 {
+            let bytes = clean_id.as_bytes();
+            let is_uuid = bytes[8] == b'-'
+                && bytes[13] == b'-'
+                && bytes[18] == b'-'
+                && bytes[23] == b'-'
+                && bytes.iter().enumerate().all(|(i, &b)| {
+                    if i == 8 || i == 13 || i == 18 || i == 23 {
+                        b == b'-'
+                    } else {
+                        b.is_ascii_hexdigit()
+                    }
+                });
+            if is_uuid {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 3. Trusted local desktop app / Tauri origins (exact match, with optional trailing slash)
     let clean_origin = lower.strip_suffix('/').unwrap_or(&lower);
     if clean_origin == "tauri://localhost"
         || clean_origin == "tauri://"
@@ -1546,6 +1576,7 @@ pub async fn start_server(
     let mut allowed_extension_ids = vec![
         "jfnfgmcbgapcpieaonbaolgebjaejcdm".to_string(), // Deterministic Chrome/Edge extension ID
         "bflchfddfgkfglmjapohkjmldepflkbe".to_string(),
+        crate::registry::DEFAULT_FIREFOX_EXTENSION_ID.to_string(), // Firefox Gecko Add-on ID
     ];
 
     // Support trusted development extension ID from database setting or environment variable
@@ -1764,5 +1795,44 @@ mod tests {
         assert!(!is_allowed_origin("https://youtube.com", &allowed));
         assert!(!is_allowed_origin("http://localhost:3000", &allowed));
         assert!(!is_allowed_origin("http://127.0.0.1:8080", &allowed));
+    }
+
+    #[test]
+    fn test_is_allowed_origin_firefox() {
+        let allowed = vec![
+            "jfnfgmcbgapcpieaonbaolgebjaejcdm".to_string(),
+            "tori-download-manager@toridm.org".to_string(),
+        ];
+        // Standard Firefox UUID origin
+        assert!(is_allowed_origin(
+            "moz-extension://a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+            &allowed
+        ));
+        assert!(is_allowed_origin(
+            "moz-extension://a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d/",
+            &allowed
+        ));
+        assert!(is_allowed_origin(
+            "MOZ-EXTENSION://A1B2C3D4-E5F6-7A8B-9C0D-1E2F3A4B5C6D",
+            &allowed
+        ));
+
+        // Empty allowlist rejects Firefox origins
+        let empty: Vec<String> = vec![];
+        assert!(!is_allowed_origin(
+            "moz-extension://a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+            &empty
+        ));
+
+        // Malformed or spoofed Firefox origins
+        assert!(!is_allowed_origin("moz-extension://", &allowed));
+        assert!(!is_allowed_origin(
+            "moz-extension://invalid-uuid-too-short",
+            &allowed
+        ));
+        assert!(!is_allowed_origin(
+            "moz-extension://a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d@attacker.com",
+            &allowed
+        ));
     }
 }

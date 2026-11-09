@@ -1234,6 +1234,8 @@ chrome.webRequest.onHeadersReceived.addListener(
     if (
       url.startsWith('chrome:') ||
       url.startsWith('edge:') ||
+      url.startsWith('about:') ||
+      url.startsWith('moz-extension:') ||
       url.startsWith('blob:') ||
       url.startsWith('data:') ||
       isLikelyAdOrTracker(url)
@@ -1308,7 +1310,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'GET_ALL_MEDIA') {
     // Restrict GET_ALL_MEDIA to internal extension contexts (popup / options).
     // Reject calls originated from content scripts (where sender.tab is defined on a non-extension URL) to prevent cross-tab media exposure.
-    if (sender.tab && sender.url && !sender.url.startsWith('chrome-extension://') && !sender.url.startsWith('extension://')) {
+    if (sender.tab && sender.url && !sender.url.startsWith('chrome-extension://') && !sender.url.startsWith('edge-extension://') && !sender.url.startsWith('moz-extension://') && !sender.url.startsWith('extension://')) {
       sendResponse({ status: 'error', message: 'Unauthorized: GET_ALL_MEDIA cannot be called from a content script' });
       return false;
     }

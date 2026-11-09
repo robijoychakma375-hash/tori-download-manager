@@ -21,6 +21,7 @@ postinstall_fallback:
   CreateDirectory "$APPDATA\tori-download-manager"
   WriteRegStr HKCU "Software\Google\Chrome\NativeMessagingHosts\com.tori.download_manager" "" "$APPDATA\tori-download-manager\com.tori.download_manager.json"
   WriteRegStr HKCU "Software\Microsoft\Edge\NativeMessagingHosts\com.tori.download_manager" "" "$APPDATA\tori-download-manager\com.tori.download_manager.json"
+  WriteRegStr HKCU "Software\Mozilla\NativeMessagingHosts\com.tori.download_manager" "" "$APPDATA\tori-download-manager\com.tori.download_manager.firefox.json"
 
 postinstall_done:
 !macroend
@@ -45,9 +46,11 @@ preuninstall_done:
   ; Clean up browser registry registrations
   DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\com.tori.download_manager"
   DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\com.tori.download_manager"
+  DeleteRegKey HKCU "Software\Mozilla\NativeMessagingHosts\com.tori.download_manager"
   
-  ; Remove host manifest while preserving user downloads and SQLite database
+  ; Remove host manifests while preserving user downloads and SQLite database
   Delete "$APPDATA\tori-download-manager\com.tori.download_manager.json"
+  Delete "$APPDATA\tori-download-manager\com.tori.download_manager.firefox.json"
 !macroend
 
 

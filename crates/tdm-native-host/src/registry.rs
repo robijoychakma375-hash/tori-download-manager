@@ -14,6 +14,7 @@ fn silent_reg_command() -> Command {
 
 pub const HOST_NAME: &str = "com.tori.download_manager";
 pub const DEFAULT_EXTENSION_ID: &str = "jfnfgmcbgapcpieaonbaolgebjaejcdm";
+pub const DEFAULT_FIREFOX_EXTENSION_ID: &str = "tori-download-manager@toridm.org";
 
 pub fn get_manifest_path() -> PathBuf {
     let base = if let Ok(app_data) = std::env::var("APPDATA") {
@@ -23,6 +24,16 @@ pub fn get_manifest_path() -> PathBuf {
     };
     let _ = fs::create_dir_all(&base);
     base.join(format!("{}.json", HOST_NAME))
+}
+
+pub fn get_firefox_manifest_path() -> PathBuf {
+    let base = if let Ok(app_data) = std::env::var("APPDATA") {
+        PathBuf::from(app_data).join("tori-download-manager")
+    } else {
+        PathBuf::from(".tdm-data")
+    };
+    let _ = fs::create_dir_all(&base);
+    base.join(format!("{}.firefox.json", HOST_NAME))
 }
 
 pub fn register_host(custom_extension_id: Option<&str>) -> std::io::Result<()> {
@@ -51,9 +62,25 @@ pub fn register_host(custom_extension_id: Option<&str>) -> std::io::Result<()> {
         serde_json::to_string_pretty(&manifest_json)?,
     )?;
 
+    // Write Firefox-specific Native Messaging manifest
+    let firefox_manifest_path = get_firefox_manifest_path();
+    let firefox_manifest_json = serde_json::json!({
+        "name": HOST_NAME,
+        "description": "TORI Download Manager Native Messaging Host (Firefox)",
+        "path": exe_path.to_string_lossy(),
+        "type": "stdio",
+        "allowed_extensions": [DEFAULT_FIREFOX_EXTENSION_ID]
+    });
+
+    fs::write(
+        &firefox_manifest_path,
+        serde_json::to_string_pretty(&firefox_manifest_json)?,
+    )?;
+
     #[cfg(windows)]
     {
         let manifest_str = manifest_path.to_string_lossy();
+        let firefox_manifest_str = firefox_manifest_path.to_string_lossy();
 
         // Register for Chrome
         let _ = silent_reg_command()
@@ -88,6 +115,20 @@ pub fn register_host(custom_extension_id: Option<&str>) -> std::io::Result<()> {
                 "/f",
             ])
             .output();
+
+        // Register for Firefox
+        let _ = silent_reg_command()
+            .args([
+                "add",
+                &format!(r"HKCU\Software\Mozilla\NativeMessagingHosts\{}", HOST_NAME),
+                "/ve",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &firefox_manifest_str,
+                "/f",
+            ])
+            .output();
     }
 
     eprintln!(
@@ -95,15 +136,26 @@ pub fn register_host(custom_extension_id: Option<&str>) -> std::io::Result<()> {
         HOST_NAME,
         manifest_path.display()
     );
+    eprintln!(
+        "[TORI] Firefox Native Messaging manifest registered at: {}",
+        firefox_manifest_path.display()
+    );
     eprintln!("[TORI] Target binary: {}", exe_path.display());
-    eprintln!("[TORI] Allowed Extension ID: {}", ext_id);
+    eprintln!("[TORI] Allowed Extension ID (Chrome/Edge): {}", ext_id);
+    eprintln!(
+        "[TORI] Allowed Extension ID (Firefox): {}",
+        DEFAULT_FIREFOX_EXTENSION_ID
+    );
 
     Ok(())
 }
 
 pub fn unregister_host() -> std::io::Result<()> {
     let manifest_path = get_manifest_path();
-    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(&manifest_path);
+
+    let firefox_manifest_path = get_firefox_manifest_path();
+    let _ = fs::remove_file(&firefox_manifest_path);
 
     #[cfg(windows)]
     {
@@ -128,8 +180,19 @@ pub fn unregister_host() -> std::io::Result<()> {
                 "/f",
             ])
             .output();
+
+        let _ = silent_reg_command()
+            .args([
+                "delete",
+                &format!(r"HKCU\Software\Mozilla\NativeMessagingHosts\{}", HOST_NAME),
+                "/f",
+            ])
+            .output();
     }
 
-    eprintln!("[TORI] Unregistered Native Messaging host '{}'", HOST_NAME);
+    eprintln!(
+        "[TORI] Unregistered Native Messaging host '{}' from Chrome, Edge, and Firefox",
+        HOST_NAME
+    );
     Ok(())
 }

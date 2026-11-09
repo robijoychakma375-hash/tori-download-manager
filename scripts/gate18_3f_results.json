@@ -1,0 +1,86 @@
+[
+  {
+    "id": "FF-01",
+    "description": "Firefox MV3 Manifest Structure",
+    "status": "PASS",
+    "details": "Gecko ID: tori-download-manager@toridm.org, min_version: 142.0"
+  },
+  {
+    "id": "FF-02",
+    "description": "web-ext lint 0 Errors",
+    "status": "PASS",
+    "details": "Mozilla official linter reported 0 errors"
+  },
+  {
+    "id": "FF-03",
+    "description": "Native Host Stdio Framing Ping/Pong",
+    "status": "PASS",
+    "details": "Supported protocols: http, https, hls, dash, torrent, magnet, rtsp, rtmp, rtmps, srt, rist, rtp, udp, mms, live"
+  },
+  {
+    "id": "FF-04",
+    "description": "Native Host Pairing Handshake",
+    "status": "PASS",
+    "details": "Returned auth token (20 chars), Port: 6800"
+  },
+  {
+    "id": "FF-05",
+    "description": "Firefox UUID Origin Authorized",
+    "status": "PASS",
+    "details": "Standard 36-char moz-extension:// accepted for local API"
+  },
+  {
+    "id": "FF-06",
+    "description": "Web Page Origin Strictly Rejected",
+    "status": "PASS",
+    "details": "Arbitrary origins (https://...) blocked with 403 Forbidden"
+  },
+  {
+    "id": "FF-07",
+    "description": "Direct MP4 & WebM Media Detection",
+    "status": "PASS",
+    "details": "Direct audio/video MIME and extension signatures active"
+  },
+  {
+    "id": "FF-08",
+    "description": "HLS (.m3u8) & DASH (.mpd) Manifest Discovery",
+    "status": "PASS",
+    "details": "Streaming manifest interception and format classification active"
+  },
+  {
+    "id": "FF-09",
+    "description": "Fragment / Segment Suppression Logic",
+    "status": "PASS",
+    "details": ".m4s, .cmfv, and numeric .ts fragments suppressed in display"
+  },
+  {
+    "id": "FF-10",
+    "description": "Popup HTML & Controls Structure",
+    "status": "PASS",
+    "details": "Compact layout, media list, and empty state cards verified"
+  },
+  {
+    "id": "FF-11",
+    "description": "Options Page HTML & Controls Structure",
+    "status": "PASS",
+    "details": "Port and API Key pairing inputs verified"
+  },
+  {
+    "id": "FF-12",
+    "description": "Real Firefox Process Launch (Isolated Profile)",
+    "status": "PASS",
+    "details": "Firefox PID: 6696, test URL visited successfully"
+  },
+  {
+    "id": "CR-01",
+    "description": "Edge / Chromium Manifest V3 Intact",
+    "status": "PASS",
+    "details": "service_worker preserved; fixed public key preserved"
+  },
+  {
+    "id": "PKG-01",
+    "description": "Firefox Release Candidate ZIP Package",
+    "status": "PASS",
+    "details": "69,285 bytes, signing-ready for AMO"
+  }
+]
