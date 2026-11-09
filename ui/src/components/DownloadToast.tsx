@@ -900,7 +900,9 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
           subtext = `${fmtB(total)} · Finishing…`;
         } else {
           // Active states: downloading, probing, verifying
-          if (downloaded === 0) {
+          if (job.state === 'probing') {
+            subtext = 'Connecting to peers…';
+          } else if (downloaded === 0) {
             subtext = 'Starting…';
           } else if (hasKnownTotal) {
             subtext = `${fmtProgressBytes(downloaded, total)}${speedPart}`;
@@ -926,7 +928,10 @@ export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId 
           etaSub = 'Sync';
         } else {
           // Active downloading
-          if (downloaded === 0) {
+          if (job.state === 'probing') {
+            etaNum = 'Peers';
+            etaSub = 'resolving';
+          } else if (downloaded === 0) {
             etaNum = 'Starting…';
             etaSub = '';
           } else if (!hasKnownTotal) {

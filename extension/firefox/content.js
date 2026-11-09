@@ -424,7 +424,7 @@ function normalizePlatformUrl(rawUrl) {
     return null;
   }
 
-  // Extract direct HTML5 video src, source elements, and OpenGraph video tags from DOM
+  // Extract direct HTML5 video src, source elements, and OpenGraph/JSON-LD video tags from DOM
   function extractDomMediaCandidates(videoEl = null) {
     const candidates = new Set();
     try {
@@ -435,22 +435,41 @@ function normalizePlatformUrl(rawUrl) {
         if (videoEl.src && !videoEl.src.startsWith('blob:') && !videoEl.src.startsWith('data:')) {
           candidates.add(videoEl.src);
         }
+        // Check custom attributes used by video players (data-src, data-url, data-video-url)
+        const customAttrs = ['data-src', 'data-url', 'data-video-url', 'data-orig-src', 'data-mp4', 'data-hls'];
+        for (const attr of customAttrs) {
+          const val = videoEl.getAttribute(attr);
+          if (val && !val.startsWith('blob:') && !val.startsWith('data:')) {
+            try {
+              candidates.add(new URL(val, window.location.href).href);
+            } catch (_) {}
+          }
+        }
         const sources = videoEl.querySelectorAll('source');
         for (const s of sources) {
           const src = s.src || s.getAttribute('src');
           if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
             candidates.add(src);
           }
+          for (const attr of customAttrs) {
+            const val = s.getAttribute(attr);
+            if (val && !val.startsWith('blob:') && !val.startsWith('data:')) {
+              try {
+                candidates.add(new URL(val, window.location.href).href);
+              } catch (_) {}
+            }
+          }
         }
       }
 
-      // Check OpenGraph and Twitter video metadata tags
+      // Check OpenGraph, Twitter, and Link video metadata tags
       const metaSelectors = [
         'meta[property="og:video"]',
         'meta[property="og:video:url"]',
         'meta[property="og:video:secure_url"]',
         'meta[name="twitter:player:stream"]',
         'link[rel="video_src"]',
+        'link[rel="preload"][as="video"]',
       ];
       for (const sel of metaSelectors) {
         const el = document.querySelector(sel);
@@ -459,6 +478,25 @@ function normalizePlatformUrl(rawUrl) {
           candidates.add(val);
         }
       }
+
+      // Inspect JSON-LD for VideoObject contentUrl
+      document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
+        try {
+          const json = JSON.parse(script.textContent || '{}');
+          const parseObj = (o) => {
+            if (!o || typeof o !== 'object') return;
+            if (o['@type'] === 'VideoObject' || o.contentUrl) {
+              if (o.contentUrl && typeof o.contentUrl === 'string' && !o.contentUrl.startsWith('blob:')) {
+                candidates.add(o.contentUrl);
+              }
+            }
+            if (Array.isArray(o['@graph'])) {
+              o['@graph'].forEach(parseObj);
+            }
+          };
+          parseObj(json);
+        } catch (_) {}
+      });
     } catch (_) {}
     return Array.from(candidates);
   }
@@ -605,6 +643,10 @@ function normalizePlatformUrl(rawUrl) {
                    videoEl.closest('.jwplayer') ||
                    videoEl.closest('.video-js') ||
                    videoEl.closest('.vjs-tech')?.parentElement ||
+                   videoEl.closest('.dmp_VideoPlayer') ||
+                   videoEl.closest('[data-player-root]') ||
+                   videoEl.closest('[class*="player"]') ||
+                   videoEl.closest('[class*="Player"]') ||
                    videoEl.parentElement;
     if (!anchor) return;
 
@@ -649,10 +691,18 @@ function normalizePlatformUrl(rawUrl) {
     mp.appendChild(pn);
     anchor.appendChild(mp);
 
-    // Stop propagation on clicks inside the panel so player does not intercept
-    pn.addEventListener('click', (e) => {
-      e.stopPropagation();
-    });
+    // Isolate ALL mouse, pointer, touch, and click events so video player controls never intercept
+    const isolateEvents = (el) => {
+      ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'touchstart', 'touchend', 'contextmenu'].forEach((evt) => {
+        el.addEventListener(evt, (e) => {
+          e.stopPropagation();
+        });
+      });
+    };
+
+    isolateEvents(mp);
+    isolateEvents(pill);
+    isolateEvents(pn);
 
     let activeTab = settings.kind === 'Audio only' ? 'Audio' : 'Video';
     let selectedIdx = 0;

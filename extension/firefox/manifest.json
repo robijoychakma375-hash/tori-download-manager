@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TORI Download Manager — Media Interceptor",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "High-performance automatic media detection and one-click downloader for TORI Download Manager",
   "icons": {
     "16": "icons/icon-16.png",
@@ -41,6 +41,7 @@
     }
   ],
   "permissions": [
+    "downloads",
     "nativeMessaging",
     "webRequest",
     "storage",

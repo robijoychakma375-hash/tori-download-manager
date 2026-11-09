@@ -50,29 +50,31 @@
   line-height: normal;
   pointer-events: auto;
   user-select: none;
+  width: max-content;
+  height: max-content;
 }
 
 .tori-mp.pos-top-right {
-  top: 12px;
-  right: 12px;
+  top: 14px;
+  right: 14px;
   align-items: flex-end;
 }
 
 .tori-mp.pos-top-left {
-  top: 12px;
-  left: 12px;
+  top: 14px;
+  left: 14px;
   align-items: flex-start;
 }
 
 .tori-mp.pos-bottom-right {
-  bottom: 48px;
-  right: 12px;
+  bottom: 56px;
+  right: 14px;
   align-items: flex-end;
 }
 
 .tori-mp.pos-bottom-left {
-  bottom: 48px;
-  left: 12px;
+  bottom: 56px;
+  left: 14px;
   align-items: flex-start;
 }
 

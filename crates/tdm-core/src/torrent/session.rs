@@ -48,6 +48,12 @@ impl TorrentSessionManager {
         let dht = if config.dht_enabled {
             Some(DhtSessionConfig {
                 port: Some(0),
+                bootstrap_addrs: Some(vec![
+                    "router.bittorrent.com:6881".to_string(),
+                    "dht.transmissionbt.com:6881".to_string(),
+                    "router.utorrent.com:6881".to_string(),
+                    "dht.aelitis.com:6881".to_string(),
+                ]),
                 ..Default::default()
             })
         } else {

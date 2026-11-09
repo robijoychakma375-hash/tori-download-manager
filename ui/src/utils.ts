@@ -179,7 +179,7 @@ export function stateLabel(state: string): string {
     case 'cancelled':
       return 'Cancelled';
     case 'probing':
-      return 'Probing';
+      return 'Finding peers';
     case 'verifying':
       return 'Verifying';
     case 'pausing':

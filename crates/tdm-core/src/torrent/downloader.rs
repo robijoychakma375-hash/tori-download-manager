@@ -93,15 +93,19 @@ pub async fn download_torrent(
     // 4. Progress and monitoring loop
     let mut last_checkpoint = Instant::now();
     let mut last_bytes = 0u64;
+    let start_time = Instant::now();
+    let metadata_timeout = std::time::Duration::from_secs(60);
 
     loop {
         if cancel_token.is_cancelled() {
             let _ = session.pause(&handle).await;
+            let _ = session.delete(handle.id().into(), false).await;
             return Err(EngineError::Cancelled);
         }
 
         let stats = handle.stats();
         if let Some(err) = stats.error {
+            let _ = session.delete(handle.id().into(), false).await;
             return Err(EngineError::Other(format!("Torrent error: {}", err)));
         }
 
@@ -110,6 +114,23 @@ pub async fn download_torrent(
             Some(stats.total_bytes)
         } else {
             job.total_bytes
+        };
+
+        // Determine if we are still probing/fetching metadata
+        let is_probing = (total.is_none() || total == Some(0)) && downloaded == 0;
+
+        if is_probing && start_time.elapsed() >= metadata_timeout {
+            let _ = session.pause(&handle).await;
+            let _ = session.delete(handle.id().into(), false).await;
+            return Err(EngineError::Other(
+                "Metadata resolution timed out. No active seeders or DHT peers responded for this magnet link.".into(),
+            ));
+        }
+
+        let current_state = if is_probing {
+            JobState::Probing
+        } else {
+            JobState::Downloading
         };
 
         let elapsed = last_checkpoint.elapsed();
@@ -123,6 +144,7 @@ pub async fn download_torrent(
             last_bytes = downloaded;
 
             let _ = db.update_downloaded_bytes(&job.id, downloaded);
+            let _ = db.update_job_state(&job.id, current_state, None);
             event_bus.emit(DownloadEvent::Progress(DownloadProgress {
                 id: job.id.clone(),
                 downloaded_bytes: downloaded,
@@ -135,8 +157,12 @@ pub async fn download_torrent(
                         None
                     }
                 }),
-                state: JobState::Downloading,
-                error_message: None,
+                state: current_state,
+                error_message: if is_probing {
+                    Some("Connecting to peers and retrieving metadata...".to_string())
+                } else {
+                    None
+                },
             }));
         }
 
@@ -147,6 +173,7 @@ pub async fn download_torrent(
         tokio::select! {
             _ = cancel_token.cancelled() => {
                 let _ = session.pause(&handle).await;
+                let _ = session.delete(handle.id().into(), false).await;
                 return Err(EngineError::Cancelled);
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}

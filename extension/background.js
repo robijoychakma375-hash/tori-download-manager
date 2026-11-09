@@ -1268,6 +1268,8 @@ chrome.webRequest.onHeadersReceived.addListener(
     const lowerUrl = url.toLowerCase();
     const lowerMime = contentType.toLowerCase();
     const baseMime = lowerMime.split(';')[0].trim();
+    const dispFilename = parseContentDispositionFilename(contentDisposition);
+    const hasMediaDisp = dispFilename && DIRECT_MEDIA_EXTS.some((e) => dispFilename.toLowerCase().endsWith(e));
 
     // Check if matching media
     const isMediaMime =
@@ -1276,11 +1278,12 @@ chrome.webRequest.onHeadersReceived.addListener(
       STREAMING_MIMES.some((m) => lowerMime.includes(m));
     const hasMediaExt =
       DIRECT_MEDIA_EXTS.some((e) => lowerUrl.includes(e)) ||
-      STREAMING_MANIFEST_EXTS.some((e) => lowerUrl.includes(e));
+      STREAMING_MANIFEST_EXTS.some((e) => lowerUrl.includes(e)) ||
+      hasMediaDisp;
 
     if (isMediaMime || hasMediaExt) {
       const classification = classifyMedia(url, contentType, details.responseHeaders, details.statusCode, details.tabId);
-      const filename = parseContentDispositionFilename(contentDisposition) || extractFilenameFromUrl(url);
+      const filename = dispFilename || extractFilenameFromUrl(url);
 
       recordCandidate(details.tabId, {
         id: `${details.tabId}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -1300,6 +1303,210 @@ chrome.webRequest.onHeadersReceived.addListener(
   { urls: ['<all_urls>'] },
   ['responseHeaders']
 );
+
+// -------------------------------------------------------------------------
+// Browser Download Interception (ISO, RAR, EXE, 7Z, ZIP, PDF, etc.)
+// -------------------------------------------------------------------------
+const recentlyInterceptedDownloadIds = new Set();
+const recentlyInterceptedUrls = new Map(); // url -> timestamp
+
+// Mapping of MIME types to file extensions
+const DOWNLOAD_MIME_MAP = {
+  'application/zip': 'zip',
+  'application/x-zip-compressed': 'zip',
+  'application/x-rar-compressed': 'rar',
+  'application/vnd.rar': 'rar',
+  'application/x-7z-compressed': '7z',
+  'application/x-iso9660-image': 'iso',
+  'application/x-msdownload': 'exe',
+  'application/vnd.microsoft.portable-executable': 'exe',
+  'application/pdf': 'pdf',
+  'application/x-apple-diskimage': 'dmg',
+  'application/x-tar': 'tar',
+  'application/gzip': 'gz',
+  'application/x-bzip2': 'bz2',
+  'application/x-xz': 'xz',
+  'video/mp4': 'mp4',
+  'video/x-matroska': 'mkv',
+  'audio/mpeg': 'mp3',
+};
+
+function extractExtensionFromDownloadItem(item) {
+  let name = item.filename ? item.filename.replace(/^.*[\\\/]/, '') : '';
+  if (!name && item.url) {
+    try {
+      const p = new URL(item.url).pathname;
+      name = p.substring(p.lastIndexOf('/') + 1);
+    } catch (_) {}
+  }
+  if (name) {
+    name = name.split('?')[0].split('#')[0];
+    const dot = name.lastIndexOf('.');
+    if (dot !== -1) {
+      return name.substring(dot + 1).toLowerCase();
+    }
+  }
+  return '';
+}
+
+function isDomainExcluded(urlStr, referrerStr) {
+  const excluded = Array.isArray(extSettings.sites) ? extSettings.sites : [];
+  if (excluded.length === 0) return false;
+  const check = (s) => {
+    if (!s) return false;
+    try {
+      const h = new URL(s).hostname.toLowerCase();
+      return excluded.some((d) => {
+        const ld = (d || '').toLowerCase();
+        return h === ld || h.endsWith('.' + ld);
+      });
+    } catch (_) {
+      return false;
+    }
+  };
+  return check(urlStr) || check(referrerStr);
+}
+
+async function handleBrowserDownload(item) {
+  if (!item || !item.id) return;
+  if (recentlyInterceptedDownloadIds.has(item.id)) return;
+
+  await ensureSettingsLoaded();
+
+  // 1. Check if download capture is enabled by user
+  if (extSettings.cap === false) {
+    return;
+  }
+
+  const rawUrl = item.url || item.finalUrl || '';
+  if (!rawUrl) return;
+  const lowerUrl = rawUrl.toLowerCase();
+
+  // 2. Ignore browser-internal schemes and inline data
+  if (
+    lowerUrl.startsWith('blob:') ||
+    lowerUrl.startsWith('data:') ||
+    lowerUrl.startsWith('about:') ||
+    lowerUrl.startsWith('chrome:') ||
+    lowerUrl.startsWith('edge:') ||
+    lowerUrl.startsWith('moz-extension:') ||
+    lowerUrl.startsWith('chrome-extension:')
+  ) {
+    return;
+  }
+
+  // 3. Check site exclusion list
+  if (isDomainExcluded(rawUrl, item.referrer)) {
+    return;
+  }
+
+  // 4. Rate-limit / loop prevention for same URL within 15 seconds
+  const now = Date.now();
+  if (recentlyInterceptedUrls.has(rawUrl)) {
+    const lastTime = recentlyInterceptedUrls.get(rawUrl);
+    if (now - lastTime < 15000) {
+      return;
+    }
+  }
+
+  // 5. Match file extension or MIME type against user configured types
+  const userTypes = (Array.isArray(extSettings.types) ? extSettings.types : [
+    'zip', 'rar', '7z', 'iso', 'exe', 'dmg', 'pdf', 'mp4', 'mp3'
+  ]).map((t) => t.toLowerCase().replace(/^\./, ''));
+
+  const ext = extractExtensionFromDownloadItem(item);
+  const baseMime = (item.mime || '').toLowerCase().split(';')[0].trim();
+  const mimeExt = DOWNLOAD_MIME_MAP[baseMime] || '';
+
+  const matched = (ext && userTypes.includes(ext)) || (mimeExt && userTypes.includes(mimeExt));
+  if (!matched) {
+    return;
+  }
+
+  // 6. Check minimum file size threshold (extSettings.min in MB)
+  const minBytes = (parseFloat(extSettings.min) || 0) * 1024 * 1024;
+  const totalBytes = item.totalBytes > 0 ? item.totalBytes : (item.fileSize > 0 ? item.fileSize : 0);
+  if (minBytes > 0 && totalBytes > 0 && totalBytes < minBytes) {
+    // Smaller than user threshold, leave in browser
+    return;
+  }
+
+  // 7. Dispatch download to TORI Desktop Engine
+  let rawFilename = item.filename ? item.filename.replace(/^.*[\\\/]/, '') : '';
+  if (!rawFilename) {
+    rawFilename = extractFilenameFromUrl(rawUrl) || `download.${ext || mimeExt || 'bin'}`;
+  }
+
+  const payload = {
+    url: rawUrl,
+    filename: rawFilename,
+    referer: item.referrer || '',
+    user_agent: navigator.userAgent,
+    priority: 'normal',
+  };
+
+  try {
+    const httpRes = await callDesktopApi('/api/v1/downloads', 'POST', payload, 3500);
+    let handoffSuccess = false;
+
+    if (httpRes && httpRes.ok && httpRes.data && (httpRes.data.status === 'ok' || httpRes.data.status === 'already_exists' || httpRes.data.job_id)) {
+      handoffSuccess = true;
+    } else if (httpRes && httpRes.status === 401) {
+      // Unpaired or bad token: do NOT cancel browser download
+      handoffSuccess = false;
+    } else {
+      // Try Native Messaging fallback
+      const nmRes = await sendNativeMessage({
+        action: 'start_download',
+        ...payload,
+      }).catch(() => null);
+
+      if (nmRes && (nmRes.status === 'ok' || nmRes.job_id)) {
+        handoffSuccess = true;
+      }
+    }
+
+    if (handoffSuccess) {
+      recentlyInterceptedDownloadIds.add(item.id);
+      recentlyInterceptedUrls.set(rawUrl, now);
+
+      // Clean up old entries in recentlyInterceptedUrls periodically
+      if (recentlyInterceptedUrls.size > 200) {
+        for (const [u, t] of recentlyInterceptedUrls.entries()) {
+          if (now - t > 60000) recentlyInterceptedUrls.delete(u);
+        }
+      }
+
+      // Cancel the browser's internal download
+      if (chrome.downloads && typeof chrome.downloads.cancel === 'function') {
+        chrome.downloads.cancel(item.id, () => {
+          // Erase canceled item from browser download history to avoid canceled clutter
+          if (chrome.downloads && typeof chrome.downloads.erase === 'function') {
+            chrome.downloads.erase({ id: item.id }, () => {});
+          }
+        });
+      }
+    }
+  } catch (err) {
+    // Desktop engine offline or error: ALWAYS leave browser download active!
+    console.debug('[TORI] Failed to intercept download to TORI desktop, preserving browser download:', err);
+  }
+}
+
+if (chrome.downloads && chrome.downloads.onCreated) {
+  chrome.downloads.onCreated.addListener((downloadItem) => {
+    handleBrowserDownload(downloadItem);
+  });
+}
+
+// In Chromium, onDeterminingFilename provides the final filename for downloads with Content-Disposition
+if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
+  chrome.downloads.onDeterminingFilename.addListener((item) => {
+    if (!recentlyInterceptedDownloadIds.has(item.id)) {
+      handleBrowserDownload(item);
+    }
+  });
+}
 
 // -------------------------------------------------------------------------
 // Runtime Message Listener (Popup & Content Script interaction)
