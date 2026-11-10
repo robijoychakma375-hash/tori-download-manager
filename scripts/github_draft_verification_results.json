@@ -1,0 +1,101 @@
+{
+  "releaseId": 440552231,
+  "draftHtmlUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/tag/untagged-ae5653bb95efa8bd2176",
+  "tag": "v1.0.1",
+  "targetCommit": "48d083d1b42b9c7edf76202abde599e6beb87b2e",
+  "draft": true,
+  "prerelease": true,
+  "verifiedAssets": [
+    {
+      "file": "TORI Download Manager_1.0.1_x64-setup.exe",
+      "uploadedName": "TORI.Download.Manager_1.0.1_x64-setup.exe",
+      "assetId": 731951112,
+      "size": 117044352,
+      "sha256": "dfd87d3800556d9c4cc41cb3dcbd1fbe14c2bb51586655196df52330ba34e41b",
+      "status": "VERIFIED",
+      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/untagged-ae5653bb95efa8bd2176/TORI.Download.Manager_1.0.1_x64-setup.exe"
+    },
+    {
+      "file": "TORI Download Manager_1.0.1_x64-setup.exe.sig",
+      "uploadedName": "TORI.Download.Manager_1.0.1_x64-setup.exe.sig",
+      "assetId": 732008718,
+      "size": 436,
+      "sha256": "e1401deef5483ab9a3c459bc79f69aa63bb4159a3124b8a4bda413bf5c0a50f1",
+      "status": "VERIFIED",
+      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/untagged-ae5653bb95efa8bd2176/TORI.Download.Manager_1.0.1_x64-setup.exe.sig"
+    },
+    {
+      "file": "tori-download-manager-firefox-v1.0.2.xpi",
+      "uploadedName": "tori-download-manager-firefox-v1.0.2.xpi",
+      "assetId": 732008782,
+      "size": 86743,
+      "sha256": "520424ff38ddb1bf84152e7fd3c9bf4678ce6af1542995a6d4b58c4dc4fbb8d0",
+      "status": "VERIFIED",
+      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/untagged-ae5653bb95efa8bd2176/tori-download-manager-firefox-v1.0.2.xpi"
+    },
+    {
+      "file": "tori-download-manager-extension-v1.0.2.zip",
+      "uploadedName": "tori-download-manager-extension-v1.0.2.zip",
+      "assetId": 732008967,
+      "size": 71971,
+      "sha256": "788bbb16f38356109a8ea529809e9acc708f0c97dbfac939dca68cdc0bd11805",
+      "status": "VERIFIED",
+      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/untagged-ae5653bb95efa8bd2176/tori-download-manager-extension-v1.0.2.zip"
+    },
+    {
+      "file": "tori-download-manager-firefox-v1.0.2.zip",
+      "uploadedName": "tori-download-manager-firefox-v1.0.2.zip",
+      "assetId": 732009094,
+      "size": 72284,
+      "sha256": "a4bcce6f041df4529979deb8f54f84342362732aa456c0390f1b85baf367b848",
+      "status": "VERIFIED",
+      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/untagged-ae5653bb95efa8bd2176/tori-download-manager-firefox-v1.0.2.zip"
+    },
+    {
+      "file": "SHA256SUMS.txt",
+      "uploadedName": "SHA256SUMS.txt",
+      "assetId": 732009207,
+      "size": 888,
+      "sha256": "3b16d689e90c77c9eeb8ef2eab753c91296448c74ec0710875c29f6200c2b901",
+      "status": "VERIFIED",
+      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/untagged-ae5653bb95efa8bd2176/SHA256SUMS.txt"
+    },
+    {
+      "file": "RELEASE_NOTES.md",
+      "uploadedName": "RELEASE_NOTES.md",
+      "assetId": 732009369,
+      "size": 3878,
+      "sha256": "cce72738ffecf6a146b45211dc714e98d861c1907a177b89e74fced3bcbf5faa",
+      "status": "VERIFIED",
+      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/untagged-ae5653bb95efa8bd2176/RELEASE_NOTES.md"
+    },
+    {
+      "file": "LICENSE-GPLv3.txt",
+      "uploadedName": "LICENSE-GPLv3.txt",
+      "assetId": 732009519,
+      "size": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+      "status": "VERIFIED",
+      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/untagged-ae5653bb95efa8bd2176/LICENSE-GPLv3.txt"
+    },
+    {
+      "file": "LICENSE-THIRD-PARTY.txt",
+      "uploadedName": "LICENSE-THIRD-PARTY.txt",
+      "assetId": 732009651,
+      "size": 4421,
+      "sha256": "4f05486cb940a151e9b010ff3d033b7fb06370c665d174eb5d54d48433eb6035",
+      "status": "VERIFIED",
+      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/untagged-ae5653bb95efa8bd2176/LICENSE-THIRD-PARTY.txt"
+    },
+    {
+      "file": "RELEASE_MANIFEST.json",
+      "uploadedName": "RELEASE_MANIFEST.json",
+      "assetId": 732009743,
+      "size": 4473,
+      "sha256": "cc661146cbaa092761c47b8e4f7149e93c070883a6cfda01313c961191b75735",
+      "status": "VERIFIED",
+      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/untagged-ae5653bb95efa8bd2176/RELEASE_MANIFEST.json"
+    }
+  ],
+  "timestamp": "2026-11-10T15:54:01.733Z"
+}
