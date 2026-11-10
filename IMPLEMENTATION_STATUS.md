@@ -430,8 +430,38 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
   - Dimension D: Public Distribution Readiness -> **DEFERRED / BLOCKED on clean-machine QA**
 - **Known Limitations**:
   - Windows Sandbox and clean-machine installer QA are strictly deferred per user instructions.
-  - Public stable TORI v1.0.0 at `C:\Program Files\Tori Download Manager` is strictly untouched.
-  - Maintained locally on `dev/v1.0.1` with zero remote push, zero tags, zero public releases.
+  
+## Gate 18.7.1: Critical Close-to-Tray & Background Execution Fix
+
+- **Status**: **VERIFIED**
+- **Feature**: Comprehensive root cause analysis, architecture fix, and background verification for TitleBar Close (X) button behavior, system tray lifecycle management ("Show TORI", "Hide TORI", "Exit TORI", active download count, pause/resume all), download/scheduler execution while hidden, and clean exit handling.
+- **Root Cause Identified**:
+  - `is_close_to_tray_enabled(&state.manager)` in `src-tauri/src/tray.rs` reads `closeToTray` from SQLite table `engine_settings` under key `app_settings`.
+  - Historical test data in SQLite had stored `closeToTray: false`.
+  - `commands::window_close` and `WindowEvent::CloseRequested` in Rust unconditionally called `app.exit(0)` when `close_to_tray` was false, completely exiting the process without checking for active downloads.
+  - The tray menu was missing "Hide TORI", and the setup lacked duplicate icon guard.
+  - Frontend `DEFAULT_SETTINGS` merged settings without an explicit fallback ensuring `closeToTray` defaults strictly to `true`.
+- **Changes Implemented**:
+  - `src-tauri/src/tray.rs`: Added support for `TORI_CLOSE_TO_TRAY` environment variable override; added duplicate tray icon guard; added "Show TORI" and "Hide TORI" menu items; added `hide_main_window` helper with `lifecycle::trim_memory()`; added `perform_clean_exit` which checks active downloads and prompts the user before exiting.
+  - `src-tauri/src/commands.rs`: Updated `window_close` to call `perform_clean_exit` when `close_to_tray` is false (preventing abrupt exit during downloads); added `hide_main_window` Tauri command.
+  - `src-tauri/src/lib.rs`: Updated `on_window_event` for `CloseRequested` to call `tray::perform_clean_exit(app_handle, &state.manager)` when `close_to_tray` is false; registered `hide_main_window` command.
+  - `ui/src/App.tsx`: Updated `loadStoredSettings()` and `syncSettings()` to ensure `closeToTray` defaults to `true` if undefined.
+- **Core Verification Commands**:
+  - Gate 18.7.1 Suite: `node scripts/verify_gate18_7_1_tray_and_background.js` (24/24 checks passed, 100% pass rate).
+  - Linter: `cargo clippy --workspace --all-targets -j 2 -- -D warnings` (clean, 0 warnings).
+  - Formatter: `cargo fmt --all -- --check` (clean, 0 diffs).
+  - Unit & Integration Tests: `cargo test --workspace -j 2` (clean pass across all workspace crates).
+  - Frontend Build: `npm run build --prefix ui` (clean pass in 268ms).
+- **Observed Results**:
+  - In-flight 5 MB download continued transferring and completed while window was hidden to tray, verifying exact SHA-256 match.
+  - Scheduler timer triggered and executed automatically while window was hidden.
+  - Local HTTP API and Native Messaging remained fully responsive while hidden.
+  - Window Minimize (-) operates independently to Windows Taskbar; Close (X) hides to System Tray.
+  - Clean exit via Tray releases ports and leaves 0 orphan background processes.
+  - Setting `closeToTray=false` verified: process exits cleanly when no downloads active, or prompts if active.
+- **Packaging Impact**:
+  - Gate 18.7 NSIS installer is explicitly marked **SUPERSEDED** due to code changes in `src-tauri` and `ui`. A fresh rebuild will be executed in Gate 18.8 before physical installation QA.
+
 
 
 

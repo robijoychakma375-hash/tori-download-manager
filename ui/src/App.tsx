@@ -52,7 +52,12 @@ function loadStoredSettings(): AppSettings {
   try {
     const raw = localStorage.getItem('tori_settings_v2');
     if (raw) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_SETTINGS,
+        ...parsed,
+        closeToTray: parsed.closeToTray !== undefined ? parsed.closeToTray : true,
+      };
     }
   } catch (err) {
     console.error('Failed to parse stored settings:', err);
@@ -367,6 +372,9 @@ export function App() {
         if (backendSettings) {
           setSettings((prev) => {
             const merged = { ...prev, ...backendSettings };
+            if (merged.closeToTray === undefined) {
+              merged.closeToTray = true;
+            }
             try {
               localStorage.setItem('tori_settings_v2', JSON.stringify(merged));
             } catch {

@@ -189,7 +189,8 @@ pub fn run() {
                         let _ = window.hide();
                         lifecycle::trim_memory();
                     } else {
-                        app_handle.exit(0);
+                        api.prevent_close();
+                        tray::perform_clean_exit(app_handle, &state.manager);
                     }
                 }
             }
@@ -219,6 +220,7 @@ pub fn run() {
             window_maximize,
             window_close,
             show_main_window,
+            hide_main_window,
             exit_app,
             update_engine_settings,
             get_engine_settings,

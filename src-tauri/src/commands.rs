@@ -394,6 +394,12 @@ pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn hide_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    crate::tray::hide_main_window(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn window_minimize(window: tauri::Window) -> Result<(), String> {
     let res = window.minimize().map_err(|e| e.to_string());
     crate::lifecycle::trim_memory();
@@ -427,7 +433,7 @@ pub async fn window_close(
             res
         } else {
             let app = window.app_handle().clone();
-            app.exit(0);
+            crate::tray::perform_clean_exit(&app, &state.manager);
             Ok(())
         }
     } else {

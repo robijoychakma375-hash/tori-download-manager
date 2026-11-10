@@ -10,6 +10,13 @@ use crate::lifecycle;
 pub const TRAY_ID: &str = "tori-system-tray";
 
 pub fn is_close_to_tray_enabled(manager: &DownloadManager) -> bool {
+    if let Ok(val) = std::env::var("TORI_CLOSE_TO_TRAY") {
+        if val == "0" || val.eq_ignore_ascii_case("false") {
+            return false;
+        } else if val == "1" || val.eq_ignore_ascii_case("true") {
+            return true;
+        }
+    }
     if let Ok(Some(saved)) = manager.database().get_setting("app_settings") {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&saved) {
             if let Some(close_to_tray) = val.get("closeToTray").and_then(|v| v.as_bool()) {
@@ -37,11 +44,72 @@ pub fn show_main_window(app: &AppHandle) {
     }
 }
 
+pub fn hide_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        lifecycle::log_event("WINDOW", "HIDE_MAIN", "Hiding main window to tray");
+        let _ = window.hide();
+        lifecycle::trim_memory();
+    }
+}
+
+pub fn perform_clean_exit(app: &AppHandle, manager: &Arc<DownloadManager>) {
+    let active = count_active_downloads(manager);
+    if active > 0 {
+        let app_handle = app.clone();
+        let mgr_clone = manager.clone();
+        app.dialog()
+            .message(format!(
+                "TORI is currently downloading {} file(s).\n\nDo you want to pause active downloads and exit?",
+                active
+            ))
+            .title("Active Downloads in Progress")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::YesNo)
+            .show(move |confirmed| {
+                if confirmed {
+                    lifecycle::log_event(
+                        "APP",
+                        "EXIT_CONFIRMED",
+                        "User confirmed exit with active downloads",
+                    );
+                    if let Ok(jobs) = mgr_clone.list_downloads() {
+                        for j in jobs {
+                            if j.state.is_active() {
+                                let _ = mgr_clone.pause_download(&j.id);
+                            }
+                        }
+                    }
+                    app_handle.exit(0);
+                } else {
+                    lifecycle::log_event(
+                        "APP",
+                        "EXIT_CANCELLED",
+                        "User opted to keep TORI running",
+                    );
+                }
+            });
+    } else {
+        lifecycle::log_event("APP", "EXIT_CLEAN", "Exiting TORI cleanly");
+        app.exit(0);
+    }
+}
+
 pub fn setup_system_tray(
     app: &AppHandle,
     manager: Arc<DownloadManager>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let open_i = MenuItem::with_id(app, "open", "Open TORI", true, None::<&str>)?;
+    if app.tray_by_id(TRAY_ID).is_some() {
+        lifecycle::log_event(
+            "TRAY",
+            "EXISTS",
+            "Tray icon already exists; skipping duplicate setup",
+        );
+        return Ok(());
+    }
+
+    let show_i = MenuItem::with_id(app, "show", "Show TORI", true, None::<&str>)?;
+    let hide_i = MenuItem::with_id(app, "hide", "Hide TORI", true, None::<&str>)?;
+    let sep0 = PredefinedMenuItem::separator(app)?;
     let active_i = MenuItem::with_id(
         app,
         "active_downloads",
@@ -58,7 +126,9 @@ pub fn setup_system_tray(
     let menu = Menu::with_items(
         app,
         &[
-            &open_i,
+            &show_i,
+            &hide_i,
+            &sep0,
             &active_i,
             &sep1,
             &pause_all_i,
@@ -84,8 +154,11 @@ pub fn setup_system_tray(
             let id = event.id().as_ref();
             lifecycle::log_event("TRAY", "MENU_CLICK", id);
             match id {
-                "open" => {
+                "show" | "open" => {
                     show_main_window(app);
+                }
+                "hide" => {
+                    hide_main_window(app);
                 }
                 "pause_all" => {
                     if let Ok(jobs) = mgr_for_menu.list_downloads() {
@@ -106,45 +179,7 @@ pub fn setup_system_tray(
                     }
                 }
                 "exit" => {
-                    let active = count_active_downloads(&mgr_for_menu);
-                    if active > 0 {
-                        let app_handle = app.clone();
-                        let mgr_clone = mgr_for_menu.clone();
-                        app.dialog()
-                            .message(format!(
-                                "TORI is currently downloading {} file(s).\n\nDo you want to pause active downloads and exit?",
-                                active
-                            ))
-                            .title("Active Downloads in Progress")
-                            .kind(MessageDialogKind::Warning)
-                            .buttons(MessageDialogButtons::YesNo)
-                            .show(move |confirmed| {
-                                if confirmed {
-                                    lifecycle::log_event(
-                                        "APP",
-                                        "EXIT_CONFIRMED",
-                                        "User confirmed exit with active downloads",
-                                    );
-                                    if let Ok(jobs) = mgr_clone.list_downloads() {
-                                        for j in jobs {
-                                            if j.state.is_active() {
-                                                let _ = mgr_clone.pause_download(&j.id);
-                                            }
-                                        }
-                                    }
-                                    app_handle.exit(0);
-                                } else {
-                                    lifecycle::log_event(
-                                        "APP",
-                                        "EXIT_CANCELLED",
-                                        "User opted to keep TORI running",
-                                    );
-                                }
-                            });
-                    } else {
-                        lifecycle::log_event("APP", "EXIT_CLEAN", "Exiting TORI from tray menu");
-                        app.exit(0);
-                    }
+                    perform_clean_exit(app, &mgr_for_menu);
                 }
                 _ => {}
             }
