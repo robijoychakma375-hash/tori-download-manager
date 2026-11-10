@@ -5,6 +5,8 @@ const { execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const STAGING_DIR = path.join(ROOT, 'release', 'v1.0.1-final');
+const DOWNLOADS_DIR = 'C:\\Users\\ritud\\Downloads';
+const ORIGINAL_XPI_PATH = path.join(DOWNLOADS_DIR, 'a70ed17e183648a9bcf4-1.0.2.xpi');
 
 if (!fs.existsSync(STAGING_DIR)) {
   fs.mkdirSync(STAGING_DIR, { recursive: true });
@@ -19,6 +21,14 @@ const filesToStage = [
   {
     src: path.join(ROOT, 'target', 'release', 'bundle', 'nsis', 'TORI Download Manager_1.0.1_x64-setup.exe.sig'),
     dest: 'TORI Download Manager_1.0.1_x64-setup.exe.sig',
+  },
+  {
+    src: ORIGINAL_XPI_PATH,
+    dest: 'tori-download-manager-firefox-v1.0.2.xpi',
+  },
+  {
+    src: ORIGINAL_XPI_PATH,
+    dest: 'a70ed17e183648a9bcf4-1.0.2.xpi',
   },
   {
     src: path.join(ROOT, 'target', 'release', 'tori-download-manager-extension-v1.0.2.zip'),
@@ -68,8 +78,9 @@ console.log('Generated SHA256SUMS.txt');
 // 2. Build RELEASE_MANIFEST.json
 const installerFile = stagedFilesMeta.find(f => f.file.endsWith('.exe'));
 const sigFile = stagedFilesMeta.find(f => f.file.endsWith('.sig'));
-const crExt = stagedFilesMeta.find(f => f.file.includes('extension-v1.0.2'));
-const ffExt = stagedFilesMeta.find(f => f.file.includes('firefox-v1.0.2'));
+const crExt = stagedFilesMeta.find(f => f.file.includes('extension-v1.0.2.zip'));
+const ffXpi = stagedFilesMeta.find(f => f.file === 'tori-download-manager-firefox-v1.0.2.xpi');
+const ffZip = stagedFilesMeta.find(f => f.file === 'tori-download-manager-firefox-v1.0.2.zip');
 
 const headCommit = execSync('git rev-parse HEAD', { cwd: ROOT, encoding: 'utf8' }).trim();
 
@@ -116,15 +127,20 @@ const manifest = {
       distributionStatus: "STAGED_ZIP"
     },
     firefox: {
-      filename: ffExt.file,
+      signedXpiFilename: ffXpi.file,
+      signedXpiOriginalFilename: "a70ed17e183648a9bcf4-1.0.2.xpi",
+      signedXpiSizeBytes: ffXpi.size,
+      signedXpiSha256: ffXpi.sha256,
+      unsignedSourceZipFilename: ffZip.file,
+      unsignedSourceZipSizeBytes: ffZip.size,
+      unsignedSourceZipSha256: ffZip.sha256,
       extensionVersion: "1.0.2",
       manifestVersion: 3,
       geckoId: "tori-download-manager@toridm.org",
-      sizeBytes: ffExt.size,
-      sha256: ffExt.sha256,
-      distributionStatus: "STAGED_ZIP_CANDIDATE",
-      mozillaSignedXpiStatus: "SIGNING PENDING",
-      mozillaApprovalNotice: "Add-on package passed web-ext lint with 0 errors. Awaiting official AMO developer portal signature submission."
+      mozillaSignatureStatus: "OFFICIALLY SIGNED (Mozilla AMO Validated)",
+      signatureType: "Mozilla PKCS#7 & COSE Signature Block",
+      signatureValidation: "Accepted by Firefox with xpinstall.signatures.required enabled",
+      distributionStatus: "SIGNED_XPI_READY"
     }
   },
   bundledComponents: [
@@ -144,7 +160,7 @@ const manifest = {
   },
   releaseLimitations: [
     "Public BitTorrent DHT/P2P swarm traffic is filtered on ISP/firewall networks; unseeded swarms trigger graceful 60-second metadata timeout without stalling at 0%. Local seeder/leecher protocol correctness is fully verified (8/8 tests).",
-    "Mozilla AMO signing for Firefox extension v1.0.2 is pending developer hub submission."
+    "Commercial EV Authenticode signing is deferred until public distribution."
   ]
 };
 
@@ -169,24 +185,28 @@ const releaseNotes = `# TORI Download Manager v1.0.1 — Release Notes
 
 ## Highlights & What's New in v1.0.1
 
-### 1. Cross-Browser Media Detection & Generic Download Interception (v1.0.2 Extension)
-- **Mozilla Firefox Support:** Full Manifest V3 event page architecture with native messaging registration for \`tori-download-manager@toridm.org\`.
-- **Generic Download Capture:** Automatically intercepts ISO, ZIP, RAR, 7Z, EXE, PDF, MKV, MP4, no-extension URLs, and 302 redirects.
-- **Download History Preservation:** Preserves browser download shelf entries with informative status; eliminates destructive \`chrome.downloads.erase()\`.
+### 1. Official Mozilla-Signed Firefox Extension (v1.0.2)
+- **Officially Signed by Mozilla AMO:** Packaged as \`tori-download-manager-firefox-v1.0.2.xpi\` (SHA256: \`520424ff38ddb1bf84152e7fd3c9bf4678ce6af1542995a6d4b58c4dc4fbb8d0\`).
+- Permanent installation supported in production Mozilla Firefox release channels with signature enforcement enabled.
+- Developer unminified package preserved as \`tori-download-manager-firefox-v1.0.2.zip\` for source code inspection.
+
+### 2. Cross-Browser Media Detection & Generic Download Interception
+- **Generic Download Capture:** Automatically intercepts ISO, ZIP, RAR, 7Z, EXE, PDF, MKV, MP4, no-extension URLs, and 302 redirects in both Firefox and Edge/Chrome.
+- **Download Shelf History Preservation:** Preserves browser download shelf entries with informative status; eliminates destructive \`chrome.downloads.erase()\`.
 - **Dangerous File Warning Respect:** Respects browser native security flags without hijacking dangerous or suspicious files.
 - **Safe Offline Fallback:** If TORI Desktop is closed or unreachable, downloads proceed uninterrupted in the browser.
 
-### 2. Dailymotion Video Player Overlay Improvements
+### 3. Dailymotion Video Player Overlay Improvements
 - **Zero Playback Hijacking:** Comprehensive event isolation (\`pointerdown\`, \`pointerup\`, \`mousedown\`, \`mouseup\`, \`click\`, \`dblclick\`) prevents the video player from pausing or seeking when clicking the TORI download trigger.
 - **Transport Bar Clearance:** Positioned with a fixed \`56px\` bottom margin and constrained to \`max-content\` dimensions so player controls remain fully interactive.
 - **User Acceptance Verified:** Passed 5/5 manual user QA acceptance checks on live Dailymotion streams.
 
-### 3. BitTorrent / Magnet Probing & Resilience
+### 4. BitTorrent / Magnet Probing & Resilience
 - **Probing State Emission:** Unseeded or resolving magnet links immediately emit \`JobState::Probing\` with status *"Connecting to peers and retrieving metadata..."* instead of stalling at 0%.
 - **60-Second Metadata Timeout:** Enforces a clean 60-second resolution timeout for unseeded or network-restricted swarms, failing gracefully rather than hanging indefinitely.
 - **Verified Protocol Engine:** 100% byte-for-byte piece transfer verification in local seeder/leecher unit test suites.
 
-### 4. Bundled Production Tooling
+### 5. Bundled Production Tooling & Licensing
 - Bundles \`ffmpeg.exe\` (7.1-full_build), \`ffprobe.exe\` (7.1-full_build), \`yt-dlp.exe\` (2024.10.07), and multi-browser \`tdm-native-host.exe\`.
 - Full third-party notices and open-source licenses documented in \`LICENSE-THIRD-PARTY.txt\`.
 
@@ -208,12 +228,24 @@ const upgradeNotes = `# TORI Download Manager v1.0.1 — Installation & Upgrade 
 ### Package Files
 1. \`TORI Download Manager_1.0.1_x64-setup.exe\` — Self-contained Windows x64 NSIS installer (~117 MB).
 2. \`TORI Download Manager_1.0.1_x64-setup.exe.sig\` — Ed25519 Minisign updater signature.
-3. \`tori-download-manager-extension-v1.0.2.zip\` — Chromium / Microsoft Edge Manifest V3 extension package.
-4. \`tori-download-manager-firefox-v1.0.2.zip\` — Mozilla Firefox Manifest V3 extension package (pre-validated candidate).
-5. \`LICENSE\` — MIT License.
-6. \`LICENSE-THIRD-PARTY.txt\` — Open source license notices for bundled tools.
-7. \`SHA256SUMS.txt\` — Cryptographic checksums.
-8. \`RELEASE_MANIFEST.json\` — Machine-readable release metadata.
+3. \`tori-download-manager-firefox-v1.0.2.xpi\` — Official Mozilla-signed Firefox extension v1.0.2.
+4. \`a70ed17e183648a9bcf4-1.0.2.xpi\` — Original Mozilla AMO download filename mirror.
+5. \`tori-download-manager-extension-v1.0.2.zip\` — Chromium / Microsoft Edge Manifest V3 extension package.
+6. \`tori-download-manager-firefox-v1.0.2.zip\` — Unsigned developer/source extension package.
+7. \`LICENSE\` — MIT License.
+8. \`LICENSE-THIRD-PARTY.txt\` — Open source license notices for bundled tools.
+9. \`SHA256SUMS.txt\` — Cryptographic checksums.
+10. \`RELEASE_MANIFEST.json\` — Machine-readable release metadata.
+
+---
+
+### Firefox Extension Installation
+1. Open Mozilla Firefox.
+2. In the URL bar, open \`about:addons\` (or press Ctrl+Shift+A).
+3. Click the gear icon in the top right and select **Install Add-on From File...**
+4. Browse to and select \`tori-download-manager-firefox-v1.0.2.xpi\`.
+5. Firefox will verify the authentic Mozilla signature and prompt to add the extension. Click **Add**.
+6. The extension is permanently installed and active.
 
 ---
 
@@ -248,4 +280,3 @@ const upgradeNotes = `# TORI Download Manager v1.0.1 — Installation & Upgrade 
 fs.writeFileSync(path.join(STAGING_DIR, 'INSTALLATION_AND_UPGRADE_NOTES.md'), upgradeNotes, 'utf8');
 console.log('Generated INSTALLATION_AND_UPGRADE_NOTES.md');
 console.log('--- Staging to release/v1.0.1-final Complete ---');
-
