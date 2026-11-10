@@ -9,13 +9,16 @@ open-source software as standalone helper executables.
 1. FFmpeg and FFprobe (ffmpeg.exe, ffprobe.exe)
 --------------------------------------------------------------------------------
 License: GNU General Public License version 3 (GPLv3)
+Full License Text: See accompanying LICENSE-GPLv3.txt
 Build: FFmpeg Git snapshot autobuild by yt-dlp / BtbN (ffmpeg-N-126374-g089a48eb36-win64-gpl)
-Source Code Availability:
-Under the terms of the GNU General Public License v3, source code for FFmpeg is freely
-available at:
-  - Official FFmpeg repository: https://ffmpeg.org/download.html (commit 089a48eb36)
-  - yt-dlp FFmpeg-Builds scripts & recipes: https://github.com/yt-dlp/FFmpeg-Builds
-  - Upstream BtbN FFmpeg-Builds repository: https://github.com/BtbN/FFmpeg-Builds
+Source Code Availability & Access (GPLv3 Section 6):
+Under the terms of the GNU General Public License v3, the Corresponding Source
+for this exact build of FFmpeg and FFprobe is available via:
+  - Git repository clone & checkout:
+      git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg-source
+      cd ffmpeg-source && git checkout 089a48eb36
+  - Official FFmpeg download: https://ffmpeg.org/download.html
+  - Upstream build recipes & source tarballs: https://github.com/yt-dlp/FFmpeg-Builds/releases
 TORI Download Manager executes FFmpeg and FFprobe as standalone, separate companion
 processes via standard operating system process pipes (Command execution). No TORI
 source code links directly to FFmpeg dynamic or static C libraries.

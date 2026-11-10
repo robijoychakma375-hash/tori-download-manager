@@ -431,36 +431,27 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
 - **Known Limitations**:
   - Windows Sandbox and clean-machine installer QA are strictly deferred per user instructions.
   
-## Gate 18.7.1: Critical Close-to-Tray & Background Execution Fix
+## Gate 18.8: Fresh Installer, GitHub Pre-release & Website Preparation
 
 - **Status**: **VERIFIED**
-- **Feature**: Comprehensive root cause analysis, architecture fix, and background verification for TitleBar Close (X) button behavior, system tray lifecycle management ("Show TORI", "Hide TORI", "Exit TORI", active download count, pause/resume all), download/scheduler execution while hidden, and clean exit handling.
-- **Root Cause Identified**:
-  - `is_close_to_tray_enabled(&state.manager)` in `src-tauri/src/tray.rs` reads `closeToTray` from SQLite table `engine_settings` under key `app_settings`.
-  - Historical test data in SQLite had stored `closeToTray: false`.
-  - `commands::window_close` and `WindowEvent::CloseRequested` in Rust unconditionally called `app.exit(0)` when `close_to_tray` was false, completely exiting the process without checking for active downloads.
-  - The tray menu was missing "Hide TORI", and the setup lacked duplicate icon guard.
-  - Frontend `DEFAULT_SETTINGS` merged settings without an explicit fallback ensuring `closeToTray` defaults strictly to `true`.
-- **Changes Implemented**:
-  - `src-tauri/src/tray.rs`: Added support for `TORI_CLOSE_TO_TRAY` environment variable override; added duplicate tray icon guard; added "Show TORI" and "Hide TORI" menu items; added `hide_main_window` helper with `lifecycle::trim_memory()`; added `perform_clean_exit` which checks active downloads and prompts the user before exiting.
-  - `src-tauri/src/commands.rs`: Updated `window_close` to call `perform_clean_exit` when `close_to_tray` is false (preventing abrupt exit during downloads); added `hide_main_window` Tauri command.
-  - `src-tauri/src/lib.rs`: Updated `on_window_event` for `CloseRequested` to call `tray::perform_clean_exit(app_handle, &state.manager)` when `close_to_tray` is false; registered `hide_main_window` command.
-  - `ui/src/App.tsx`: Updated `loadStoredSettings()` and `syncSettings()` to ensure `closeToTray` defaults to `true` if undefined.
+- **Feature**: End-to-end production packaging, installer rebuild incorporating Gate 18.7.1 Close-to-Tray bug fixes, Ed25519 updater signing, Mozilla-signed Firefox XPI validation, GPLv3 compliance audit, GitHub Pre-release draft staging, and official website preparation.
 - **Core Verification Commands**:
-  - Gate 18.7.1 Suite: `node scripts/verify_gate18_7_1_tray_and_background.js` (24/24 checks passed, 100% pass rate).
-  - Linter: `cargo clippy --workspace --all-targets -j 2 -- -D warnings` (clean, 0 warnings).
-  - Formatter: `cargo fmt --all -- --check` (clean, 0 diffs).
-  - Unit & Integration Tests: `cargo test --workspace -j 2` (clean pass across all workspace crates).
-  - Frontend Build: `npm run build --prefix ui` (clean pass in 268ms).
+  - Fresh Windows Build: `cargo tauri build --bundles nsis` (117,044,352 bytes).
+  - Updater Signing: `cargo tauri signer sign` via `scripts/sign_fresh_installer.js` (436 bytes, 5/5 crypto tests pass).
+  - Browser Extensions Validation: Firefox signed XPI `520424ff38ddb1bf84152e7fd3c9bf4678ce6af1542995a6d4b58c4dc4fbb8d0` and Chromium ZIP `788bbb16f38356109a8ea529809e9acc708f0c97dbfac939dca68cdc0bd11805`.
+  - Release Staging: `node scripts/stage_v1_0_1_final_release.js` (all artifacts staged in `release/v1.0.1-final/`).
+  - Pre-release Draft Engine: `node scripts/create_github_draft_release.js` (dry-run verified against GitHub API with full `repo` token).
+  - Website Preparation: Updated `C:\Users\ritud\Downloads\tori-website\index.html` adding Pre-release v1.0.1 options and dual-extension install cards while preserving stable v1.0.0.
+  - Post-Publication Download Test Suite: `scripts/verify_post_publication_downloads.js` authored and ready.
 - **Observed Results**:
-  - In-flight 5 MB download continued transferring and completed while window was hidden to tray, verifying exact SHA-256 match.
-  - Scheduler timer triggered and executed automatically while window was hidden.
-  - Local HTTP API and Native Messaging remained fully responsive while hidden.
-  - Window Minimize (-) operates independently to Windows Taskbar; Close (X) hides to System Tray.
-  - Clean exit via Tray releases ports and leaves 0 orphan background processes.
-  - Setting `closeToTray=false` verified: process exits cleanly when no downloads active, or prompts if active.
-- **Packaging Impact**:
-  - Gate 18.7 NSIS installer is explicitly marked **SUPERSEDED** due to code changes in `src-tauri` and `ui`. A fresh rebuild will be executed in Gate 18.8 before physical installation QA.
+  - Fresh NSIS Windows installer compiled with latest Rust engine and updated Close-to-Tray code (`TORI Download Manager_1.0.1_x64-setup.exe`, SHA-256: `dfd87d3800556d9c4cc41cb3dcbd1fbe14c2bb51586655196df52330ba34e41b`).
+  - Updater signature verified against embedded public key (`test_installer_signature_cryptographic_verification` PASS).
+  - Authenticode status honestly audited and recorded: `NotSigned` (Unsigned / Developer Preview).
+  - Full official GNU GPLv3 license text bundled (`resources/LICENSE-GPLv3.txt`), and exact FFmpeg Git snapshot (`089a48eb36`) checkout instructions documented in `LICENSE-THIRD-PARTY.txt`.
+  - Website deployment and GitHub release publication held in standby awaiting explicit user approval.
+- **Single-PC Safety**:
+  - Stable v1.0.0 at `C:\Program Files\Tori Download Manager` and `%LOCALAPPDATA%\tori-download-manager` strictly preserved. No registry keys or production folders modified.
+
 
 
 
