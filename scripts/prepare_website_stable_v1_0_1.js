@@ -151,3 +151,4 @@ if (process.argv.includes('--execute')) {
 } else {
   console.log('Website update script prepared. Run with --execute only after user approval.');
 }
+
