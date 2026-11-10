@@ -19,8 +19,16 @@ const filesToCopy = [
     dest: 'TORI Download Manager_1.0.1_x64-setup.exe.sig',
   },
   {
+    src: path.join(ROOT, 'release', 'v1.0.1-firefox-candidate', 'tori-download-manager-firefox-v1.0.2.zip'),
+    dest: 'tori-download-manager-firefox-v1.0.2.zip',
+  },
+  {
     src: path.join(ROOT, 'release', 'v1.0.1-firefox-candidate', 'tori-download-manager-firefox-v1.0.1.zip'),
     dest: 'tori-download-manager-firefox-v1.0.1.zip',
+  },
+  {
+    src: path.join(ROOT, 'target', 'release', 'tori-download-manager-extension-v1.0.2.zip'),
+    dest: 'tori-download-manager-extension-v1.0.2.zip',
   },
   {
     src: path.join(ROOT, 'target', 'release', 'tori-download-manager-extension-v1.0.1.zip'),
@@ -66,8 +74,8 @@ console.log('Generated SHA256SUMS.txt');
 // Build Manifest
 const installerFile = stagedFilesMeta.find(f => f.file.endsWith('.exe'));
 const sigFile = stagedFilesMeta.find(f => f.file.endsWith('.sig'));
-const ffExt = stagedFilesMeta.find(f => f.file.includes('firefox'));
-const crExt = stagedFilesMeta.find(f => f.file.includes('extension-v1.0.1.zip'));
+const ffExt = stagedFilesMeta.find(f => f.file === 'tori-download-manager-firefox-v1.0.2.zip') || stagedFilesMeta.find(f => f.file.includes('firefox'));
+const crExt = stagedFilesMeta.find(f => f.file === 'tori-download-manager-extension-v1.0.2.zip') || stagedFilesMeta.find(f => f.file.includes('extension'));
 
 const manifest = {
   manifestVersion: "1.0.0",
@@ -76,7 +84,7 @@ const manifest = {
   version: "1.0.1",
   targetPlatform: "Windows 10 / 11 (x64)",
   packagingFormat: "NSIS x64 Self-Extracting Executable",
-  sourceCommit: "414732b5752ab401e1f87ba21bdab058683ce83e",
+  sourceCommit: "534d5f1",
   sourceBranch: "dev/v1.0.1",
   buildTimestamp: new Date().toISOString(),
   toolchain: {
@@ -109,13 +117,15 @@ const manifest = {
       sha256: ffExt.sha256,
       geckoId: "tori-download-manager@toridm.org",
       minVersion: "142.0",
-      linterStatus: "PASS (0 errors, 0 warnings)"
+      extensionVersion: "1.0.2",
+      linterStatus: "PASS (0 errors, 16 warnings)"
     },
     chromiumEdge: {
       filename: crExt.file,
       sizeBytes: crExt.size,
       sha256: crExt.sha256,
       extensionId: "jfnfgmcbgapcpieaonbaolgebjaejcdm",
+      extensionVersion: "1.0.2",
       manifestVersion: 3
     }
   },
@@ -135,7 +145,11 @@ const manifest = {
     "Gate 18.3 Separate PC Installation QA Scripts & Procedures",
     "Gate 18.3F Firefox Extension Development & Cross-Browser Parity",
     "Gate 18.3F.1 Real Firefox GUI, Media Detection & Bitstream Download Acceptance",
-    "Gate 18.3F.2 Firefox Native Messaging Host Registration Hooks & Ed25519-Signed Installer"
+    "Gate 18.3F.2 Firefox Native Messaging Host Registration Hooks & Ed25519-Signed Installer",
+    "Gate 18.4-P0 Download Interception, Magnet Timeout & Dailymotion Overlay Fixes",
+    "Gate 18.4-P0.1 Real Browser Capture Acceptance & Non-Erase History Verification",
+    "Gate 18.4-P0.2 Live Browser & Torrent Acceptance",
+    "Gate 18.4-P0.3 Release Blocker Closure & Packaging Reconciliation"
   ]
 };
 
@@ -152,16 +166,19 @@ const upgradeNotesContent = `# TORI Download Manager v1.0.1 — Final Release Ca
 
 ### Package Contents
 1. \`TORI Download Manager_1.0.1_x64-setup.exe\` — Fresh Windows x64 NSIS installer (~117 MB).
-2. \`TORI Download Manager_1.0.1_x64-setup.exe.sig\` — Cryptographic Ed25519 signature generated with the official updater private key.
-3. \`tori-download-manager-firefox-v1.0.1.zip\` — Mozilla Firefox Manifest V3 Extension candidate, pre-validated with \`web-ext lint\` (0 errors).
-4. \`tori-download-manager-extension-v1.0.1.zip\` — Microsoft Edge and Google Chrome Manifest V3 Extension candidate.
-5. \`LICENSE\` — MIT License.
-6. \`LICENSE-THIRD-PARTY.txt\` — Complete open-source attribution for bundled dependencies.
-7. \`SHA256SUMS.txt\` — Cryptographic hashes for all package files.
-8. \`FINAL_CANDIDATE_MANIFEST.json\` — Formal machine-readable release metadata.
+2. \`TORI Download Manager_1.0.1_x64-setup.exe.sig\` — Cryptographic Ed25519 signature generated with official updater private key.
+3. \`tori-download-manager-firefox-v1.0.2.zip\` — Mozilla Firefox Manifest V3 Extension candidate v1.0.2 (0 linter errors).
+4. \`tori-download-manager-extension-v1.0.2.zip\` — Microsoft Edge and Google Chrome Manifest V3 Extension candidate v1.0.2.
+5. \`tori-download-manager-firefox-v1.0.1.zip\` — Compatibility mirror package.
+6. \`tori-download-manager-extension-v1.0.1.zip\` — Compatibility mirror package.
+7. \`LICENSE\` — MIT License.
+8. \`LICENSE-THIRD-PARTY.txt\` — Complete open-source attribution for bundled dependencies.
+9. \`SHA256SUMS.txt\` — Cryptographic hashes for all package files.
+10. \`FINAL_CANDIDATE_MANIFEST.json\` — Formal machine-readable release metadata.
 
 ### Cross-Browser Architecture Summary
 - **Desktop Core Engine:** Rust / Tokio multithreaded engine (v1.0.1).
+- **Extension Version:** 1.0.2 (both Firefox and Edge/Chrome).
 - **Internal API Version:** Protocol v2.0.0.
 - **Local HTTP/SSE Server:** \`http://127.0.0.1:6800\` (or configured port) with strictly enforced origin validation (\`moz-extension://<uuid>\` and \`chrome-extension://<id>\`) and SHA256-based token authentication.
 - **Native Messaging Host:** \`com.tori.download_manager\` (\`tdm-native-host.exe\`).
@@ -184,4 +201,3 @@ fs.writeFileSync(
 );
 console.log('Generated INSTALLATION_AND_UPGRADE_NOTES.md');
 console.log('--- Staging Complete ---');
-

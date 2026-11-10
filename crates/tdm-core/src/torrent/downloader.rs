@@ -22,7 +22,8 @@ pub async fn download_torrent(
 ) -> Result<()> {
     // 1. Prepare AddTorrent source
     let url_str = job.url.trim();
-    let is_probing_init = url_str.starts_with("magnet:") || job.total_bytes.is_none() || job.total_bytes == Some(0);
+    let is_probing_init =
+        url_str.starts_with("magnet:") || job.total_bytes.is_none() || job.total_bytes == Some(0);
     if is_probing_init {
         let _ = db.update_job_state(&job.id, JobState::Probing, None);
         event_bus.emit(DownloadEvent::Progress(DownloadProgress {

@@ -981,7 +981,8 @@ impl DownloadManager {
             .unwrap()
             .insert(id.to_string(), stop_token.clone());
 
-        let initial_state = if (job.job_type == JobType::Torrent && (job.total_bytes.is_none() || job.total_bytes == Some(0)))
+        let initial_state = if (job.job_type == JobType::Torrent
+            && (job.total_bytes.is_none() || job.total_bytes == Some(0)))
             || job.url.starts_with("magnet:")
         {
             JobState::Probing
