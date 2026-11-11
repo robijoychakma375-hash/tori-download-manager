@@ -466,6 +466,34 @@ Measured using Windows Process Performance APIs (`GetProcessMemoryInfo`, `Workin
 - **Single-PC Safety**:
   - Stable v1.0.0 at `C:\Program Files\Tori Download Manager` and `%LOCALAPPDATA%\tori-download-manager` strictly preserved. No registry keys or production folders modified.
 
+## Gate 23.3: v1.0.3 Final Stable Release Publication & Website Deployment
+
+- **Status**: **VERIFIED & LIVE IN PRODUCTION**
+- **Feature**: Official publication of TORI Download Manager v1.0.3 Latest Stable release, integrating the official Mozilla-signed Firefox XPI (`790f6b8f...`), promoting GitHub Release ID `442083394`, verifying live auto-updater endpoint, and deploying production website `https://toridownload.xyz`.
+- **Core Results**:
+  - Windows x64 NSIS Installer v1.0.3 (SHA-256: `3804727ebeeeb1ed20de5e81f498f9adb01323481ec767c6813e6f77f1e890f5`) verified and uploaded.
+  - Official Mozilla AMO signed XPI (`tori-download-manager-firefox-v1.0.3.xpi`) integrated.
+  - Live auto-updater endpoint (`releases/latest/download/latest.json`) returns HTTP 200 with v1.0.3 payload.
+  - Official website deployed to Cloudflare Pages via commit `d7392e5`.
+
+## Gate 23.4: Existing v1.0.3 GitHub Release Asset Presentation Cleanup
+
+- **Status**: **VERIFIED & COMPLETE**
+- **Feature**: Streamlining of published GitHub Release ID `442083394` asset presentation for end users without binary rebuilds or code modifications.
+- **Core Verification Commands**:
+  - Asset Cleanup Execution: `node scripts/gate23_4_cleanup_release.js` (5 removed, 9 preserved, release description rewritten).
+  - Post-Cleanup Comprehensive Verification: `node scripts/verify_gate23_4_post_cleanup.js` (36 / 36 tests PASS).
+- **Asset Summary**:
+  - Original Asset Count: 14 assets.
+  - Final Asset Count: 9 assets (+ 2 GitHub source code archives).
+  - Removed Assets (5): `a70ed17e183648a9bcf4-1.0.3.xpi` (duplicate signed XPI), `tori-download-manager-firefox-v1.0.3.zip` (unsigned source ZIP), `RELEASE_NOTES.md` (moved into description), `INSTALLATION_AND_UPGRADE_NOTES.md` (moved into description), `RELEASE_MANIFEST.json` (internal metadata).
+  - Preserved Assets (9): `TORI.Download.Manager_1.0.3_x64-setup.exe`, `TORI.Download.Manager_1.0.3_x64-setup.exe.sig`, `tori-download-manager-firefox-v1.0.3.xpi`, `tori-download-manager-extension-v1.0.3.zip`, `latest.json`, `SHA256SUMS.txt`, `LICENSE`, `LICENSE-GPLv3.txt`, `LICENSE-THIRD-PARTY.txt`.
+- **Observed Results**:
+  - Live auto-updater endpoint `/releases/latest/download/latest.json` returns HTTP 200 and version 1.0.3.
+  - All website download links at `https://toridownload.xyz` return HTTP 302 to active CDN assets.
+  - Historical releases (`v1.0.2`, `v1.0.1`, `v1.0.0`) remain 100% intact.
+
+
 
 
 
