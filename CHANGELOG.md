@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to **TORI Download Manager** are documented in this file.
 
@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.0] — 2026-11-06
+## [1.0.1] â€” 2026-11-10
+
+### Major Reliability, Cross-Browser & Performance Release
+
+#### Added
+- **Mozilla Firefox Companion Extension (MV3):** Dedicated Manifest V3 add-on officially signed by Mozilla AMO (`tori-download-manager-firefox-v1.0.2.xpi`) with Gecko ID `tori-download-manager@toridm.org` and 0 linter warnings.
+- **Native Time-Based Download Scheduler:** Event-driven zero-polling scheduler powered by Tokio `Notify` and SQLite schema persistence (`scheduled_at`), with startup overdue catch-up and native UI date/time picker.
+- **Close-to-Tray & System Tray Controls:** Main window close button hides to the Windows System Tray; tray context menu includes Show/Hide, live active download count, Pause All, Resume All, and exit protection dialog for active downloads.
+- **Adaptive Streaming Concurrency:** Parallel segment fetching ($C=4$, configurable up to $C=8$) for HLS and DASH VOD streams, yielding up to 4.21x throughput improvement under network latency.
+- **Generic Download Interception:** Automatic capture of archives, executables, documents, and media redirects in Firefox, Chrome, and Edge, while preserving browser download history shelves.
+- **GPLv3 Compliance Documentation:** Bundled full `LICENSE-GPLv3.txt` and `LICENSE-THIRD-PARTY.txt` attributing FFmpeg/FFprobe GPLv3 binaries, yt-dlp, and Rust libraries.
+
+#### Fixed & Hardened
+- **Window Close Lifecycle:** Titlebar Close button (X) now cleanly hides the window to the system tray instead of abruptly terminating running downloads and background listeners.
+- **Dailymotion Video Player Overlay:** Isolated pointer events and added transport bar clearance (56px bottom margin) to eliminate interference with native player seek/pause controls.
+- **BitTorrent Magnet Probing:** Unseeded or resolving magnet links emit `JobState::Probing` ("Connecting to peers...") and fail gracefully after a 60-second metadata timeout instead of stalling at 0%.
+- **Crash Recovery & Validator Safety:** Automatic detection of changed ETags, Last-Modified timestamps, or Content-Lengths resets stale chunk plans, guaranteeing byte-perfect resumes.
+- **Memory Trimming:** Immediate working set memory trimming invoked on titlebar minimize and tray hide, dropping resident memory footprint from ~500 MB to under 32 MB.
+
+---
+
+## [1.0.0] â€” 2026-11-06
 
 ### Initial Public Production Release
 
@@ -19,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Resilient SQLite Persistence:** Checkpointing via SQLite WAL journal mode preserving all metadata, chunk boundaries, and partial files across crashes and reboots.
 
 #### Browser Integration (Manifest V3)
-- **Chrome & Microsoft Edge Extension:** Native Messaging IPC integration, automatic localhost port auto-discovery (ports 6800–6803), cryptographic authentication token management.
+- **Chrome & Microsoft Edge Extension:** Native Messaging IPC integration, automatic localhost port auto-discovery (ports 6800â€“6803), cryptographic authentication token management.
 - **Multi-Strategy Media Discovery:** Real-time webRequest inspection, DOM media element scraping, HTML5 OpenGraph/Schema.org parsing, and platform extractor fallbacks.
 - **Fast-Fail & MIME Discrimination:** Strict MIME validation ensuring only legitimate video and audio streams are presented; skips arbitrary advertising iframes and subtitle tracks.
 
