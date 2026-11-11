@@ -47,32 +47,38 @@
 
 ---
 
-## 2. Active Milestone: Gate 19.3 â€” Documentation Recovery & Repository Reconciliation
+## 2. Completed Milestones: Gates 19.3 – 21.1
 
-### Objectives
-1. **Phase 1: Recover Missing Gate 19.2 Report**
-   - [x] Author `docs/reports/GATE19_2_STABLE_RELEASE_AND_DEPLOYMENT_REPORT.md` documenting:
-     - 29/29 automated verification pass evidence.
-     - Release asset SHA-256 table matching GitHub bitstreams.
-     - Website deployment and Cloudflare Pages status.
-     - Auto-updater isolation verification.
-     - Explicit dual evidence model distinguishing historical verification from current live verification.
-2. **Phase 2: Documentation Reconciliation**
-   - [x] Update `IMPLEMENTATION_STATUS.md` with Gates 18.4â€“19.2.
-   - [x] Update `PLAN.md` with comprehensive completion records and Gate 19.3 roadmap.
-   - [x] Harmonize root `RELEASE_NOTES.md` and `CHANGELOG.md` with v1.0.1 release notes.
-3. **Phase 3: Untracked File Review & Categorization**
-   - [x] Review all 56 untracked files without deleting or moving any file.
-   - [x] Classify files into regression scripts, benchmark artifacts, temporary logs, graphics, and manual review items.
-   - [x] Formulate proposal for tracking valuable regression scripts vs. ignoring transient benchmark outputs.
-4. **Phase 4: Branch Synchronization Assessment**
-   - [x] Audit differences between `dev/v1.0.1` and `master`.
-   - [x] Assess risks and outline exact intended fast-forward procedure for `master`.
-   - [x] Enforce tag immutability: guarantee published tag `v1.0.1` remains attached to commit `48d083d`.
+### Gate 19.3 — Documentation Recovery, Reconciliation & Regression Script Preservation
+- [x] Author `docs/reports/GATE19_2_STABLE_RELEASE_AND_DEPLOYMENT_REPORT.md` (29/29 PASS verified).
+- [x] Reconcile `IMPLEMENTATION_STATUS.md`, `PLAN.md`, `CHANGELOG.md`, and release notes.
+- [x] Audit 56 untracked files and sanitize machine-specific regression paths in test scripts.
+- [x] Preserve valuable regression scripts under `feat(gate19.3): preserve regression verification scripts` (`601b0ba`).
+
+### Gate 20.0 – 20.2 — Release Validation, QA Kit Synchronization & Acceptance Readiness
+- [x] Verify release baseline and tag `v1.0.1` immutability at `48d083d`.
+- [x] Synchronize separate-PC QA kit with verified installer `dfd87d38...` and update checksums.
+- [x] Author `docs/reports/GATE20_2_ACCEPTANCE_READINESS_REPORT.md` detailing 10-step physical testing checklist.
+- [x] Commit and push changes to `origin/dev/v1.0.1` (`eb05aff`).
+
+### Gate 21.0 — v1.0.2 Version Synchronization, Production Build & Draft Release Preparation
+- [x] Branch `release/v1.0.2` from `eb05aff`.
+- [x] Synchronize desktop metadata to 1.0.2 across Cargo.toml, tauri.conf.json, and package.json.
+- [x] Compile React UI and companion binaries (`tdm-native-host.exe`, `tdm-cli.exe`).
+- [x] Build Windows x64 NSIS installer (`117,073,652` B, SHA256: `1ab7f345...`) and sign with Ed25519 updater key.
+- [x] Execute 93 automated tests across native host, core engine, queue recovery, media, and cryptography (93/93 PASS).
+- [x] Stage 10 distribution assets in `release/v1.0.2-final/` and create private GitHub Draft Release ID `441473140`.
+
+### Gate 21.1 — Official v1.0.2 Stable Release Publication & Website Deployment
+- [x] Execute 56 critical preflights verifying hashes, tag immutability, and asset readiness (56/56 PASS).
+- [x] Promote GitHub Draft Release ID `441473140` to Latest Stable (`draft: false`, `prerelease: false`, `make_latest: true`).
+- [x] Update `toridownload.xyz` in `tori-website-private` (commit `7b53d7e`); promote v1.0.2 downloads, remove candidate wording, correct licensing to GPLv3 / MIT, and preserve older releases.
+- [x] Verify live Cloudflare Pages deployment and bitstream SHA-256 parity from GitHub CDN.
+- [x] Confirm auto-updater feed isolation (`latest.json` absent on v1.0.2).
 
 ---
 
-## 3. Future Roadmap: Gate 20.0 â€” Post-Release Operations & Separate PC Acceptance
+## 3. Future Roadmap: Gate 22 — Post-Release Operations & Physical Hardware Acceptance
 
 ### Objectives
 1. **Physical Separate PC Acceptance (Hardware Station)**
@@ -81,8 +87,8 @@
    - [ ] Run `test_fresh_install.ps1`, `test_browser_integration.ps1`, `test_upgrade.ps1`, and `test_uninstall.ps1`.
    - [ ] Record physical acceptance in `QA_ACCEPTANCE_CHECKLIST.md`.
 2. **Controlled Auto-Updater Activation (Post-Physical QA)**
-   - [ ] Author `latest.json` for v1.0.1 referencing installer `117,044,352` bytes, Ed25519 signature, and release notes.
-   - [ ] Upload `latest.json` to GitHub Release v1.0.1 to activate in-app update notifications for existing v1.0.0 users.
+   - [ ] Author `latest.json` for v1.0.2 referencing installer `117,073,652` bytes, Ed25519 signature, and release notes.
+   - [ ] Upload `latest.json` to GitHub Release v1.0.2 to activate in-app update notifications for existing users once physical acceptance is signed off.
 3. **Store Submissions**
    - [ ] Package and submit Chromium extension v1.0.2 to the Chrome Web Store.
    - [ ] Submit companion extension to the Microsoft Edge Add-ons Catalog.

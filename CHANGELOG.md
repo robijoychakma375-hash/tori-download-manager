@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.1] â€” 2026-11-10
+## [1.0.2] — 2026-11-11
+
+### Desktop & Companion Extension Version Alignment & Maintenance Release
+
+#### Added & Synchronized
+- **Version Parity:** Synchronized desktop application version metadata (`1.0.2`) across Cargo workspace, Tauri configuration, and React UI, establishing 1:1 version parity with companion browser extensions (`1.0.2`).
+- **Production Bundling:** Compiled fresh companion binaries (`tdm-native-host.exe`, `tdm-cli.exe`) and produced Windows x64 NSIS standalone installer (`117,073,652` bytes, SHA-256: `1ab7f3454dc08ef3b33843a9b8dfc3d3b2c5b2814fbe8946ef9b263f2d2452c2`).
+- **Ed25519 Minisign Signature:** Official cryptographic updater signature generated and verified against embedded minisign public key.
+- **Licensing Transparency:** Formalized binary distribution licensing statements under GNU General Public License v3 (GPLv3) due to bundled FFmpeg media tools, with MIT/Apache-2.0 source code availability.
+
+---
+
+## [1.0.1] — 2026-11-10
 
 ### Major Reliability, Cross-Browser & Performance Release
 
