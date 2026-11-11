@@ -720,6 +720,8 @@ function normalizePlatformUrl(rawUrl) {
         if (res && res.tori_custom_overlay_pos) {
           const { rx, ry } = res.tori_custom_overlay_pos;
           if (typeof rx === 'number' && typeof ry === 'number' && rx >= 0 && rx <= 1 && ry >= 0 && ry <= 1) {
+            mp.setAttribute('data-pos-rx', rx.toFixed(4));
+            mp.setAttribute('data-pos-ry', ry.toFixed(4));
             const aRect = anchor.getBoundingClientRect();
             if (aRect.width > 60 && aRect.height > 60) {
               const maxL = Math.max(4, aRect.width - 160);
@@ -789,12 +791,13 @@ function normalizePlatformUrl(rawUrl) {
         if (aRect.width > 0 && aRect.height > 0) {
           const l = parseFloat(mp.style.left) || 0;
           const t = parseFloat(mp.style.top) || 0;
+          const rx = Math.min(Math.max(0, l / aRect.width), 1);
+          const ry = Math.min(Math.max(0, t / aRect.height), 1);
+          mp.setAttribute('data-pos-rx', rx.toFixed(4));
+          mp.setAttribute('data-pos-ry', ry.toFixed(4));
           try {
             chrome.storage.local.set({
-              tori_custom_overlay_pos: {
-                rx: Math.min(Math.max(0, l / aRect.width), 1),
-                ry: Math.min(Math.max(0, t / aRect.height), 1),
-              },
+              tori_custom_overlay_pos: { rx, ry },
             });
           } catch (_) {}
         }
