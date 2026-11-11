@@ -26,7 +26,8 @@ const filesToSync = [
   'tori-download-manager-firefox-v1.0.2.xpi',
   'tori-download-manager-extension-v1.0.2.zip',
   'LICENSE',
-  'LICENSE-THIRD-PARTY.txt'
+  'LICENSE-THIRD-PARTY.txt',
+  'LICENSE-GPLv3.txt'
 ];
 
 for (const f of filesToSync) {
@@ -41,7 +42,7 @@ for (const f of filesToSync) {
 }
 
 // Regenerate SHA256SUMS.txt in QA_KIT_DIR
-const qaFiles = fs.readdirSync(QA_KIT_DIR).filter(f => f !== 'SHA256SUMS.txt');
+const qaFiles = fs.readdirSync(QA_KIT_DIR).filter(f => f !== 'SHA256SUMS.txt').sort();
 const sums = [];
 for (const f of qaFiles) {
   const p = path.join(QA_KIT_DIR, f);
