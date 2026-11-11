@@ -249,3 +249,4 @@ if (require.main === module) {
 }
 
 module.exports = { run, PRESERVED_ASSETS, ASSETS_TO_REMOVE };
+
