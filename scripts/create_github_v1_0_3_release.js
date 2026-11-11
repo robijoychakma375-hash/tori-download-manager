@@ -158,7 +158,7 @@ async function main() {
     const filePath = path.join(STAGING_DIR, fileName);
     if (!fs.statSync(filePath).isFile()) continue;
 
-    const existing = currentAssets.find(a => a.name === fileName);
+    const existing = currentAssets.find(a => a.name === fileName || a.name === fileName.replace(/ /g, '.'));
     if (existing) {
       console.log(`  [SKIP] Asset already uploaded: ${fileName} (ID: ${existing.id})`);
       continue;
