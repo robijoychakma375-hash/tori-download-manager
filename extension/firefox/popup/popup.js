@@ -1,3 +1,8 @@
+/**
+ * TORI Download Manager — Extension Popup Controller (Design 1)
+ * Integrates Design 1 UI with real Native Messaging engine communication.
+ */
+
 // Platform and transient stream helpers
 function isTransientCdnUrl(url) {
   if (!url) return false;
@@ -182,30 +187,22 @@ function cleanMediaTitle(rawTitle, fallbackId = 'media') {
   return t;
 }
 
-/**
- * TORI Download Manager — Extension Popup Controller
- * Implements Design Source A with real Native Messaging engine integration.
- */
-
 const P = {
-  dl: 'M12 4v10M8 10l4 4 4-4M5 19h14',
-  cp: 'M9 9h10v11H9zM5 15V4h10',
-  set: 'M4 7h10M18 7h2M4 17h2M10 17h10M16 7a2 2 0 100 .01M8 17a2 2 0 100 .01',
-  op: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
+  dl: 'M12 4v11m0 0l-4-4m4 4l4-4M5 20h14',
+  play: 'M9 6.5v11l9-5.5z',
+  music: 'M9 18V6l10-2v12M7 20a2 2 0 100-4 2 2 0 000 4zM17 18a2 2 0 100-4 2 2 0 000 4z',
+  file: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z',
   ck: 'M5 12l5 5 9-10',
 };
 
-const G = {
-  Video: ['#ff453a', 'M9 6.5v11l9-5.5z'],
-  Music: ['#ff375f', 'M9 18V6l10-2v12M7 20a2 2 0 100-4 2 2 0 000 4zM17 18a2 2 0 100-4 2 2 0 000 4z'],
-  Compressed: ['#bf5af2', 'M12 3v10M10 6h4M10 9h4M8 13h8v6H8z'],
-  Segment: ['#ff9f0a', 'M4 6h16M4 12h16M4 18h16'],
-  Other: ['#8e8e93', 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z'],
-};
-
 function chip(k) {
-  const meta = G[k] || G.Other;
-  return `<i class="ft" style="--c:${meta[0]}"><svg viewBox="0 0 24 24"><path d="${meta[1]}"/></svg></i>`;
+  if (k === 'Music') {
+    return `<div class="fi" style="color:#f472b6"><svg viewBox="0 0 24 24"><path d="${P.music}"/></svg></div>`;
+  }
+  if (k === 'Video') {
+    return `<div class="fi" style="color:var(--accent2)"><svg viewBox="0 0 24 24"><path d="${P.play}"/></svg></div>`;
+  }
+  return `<div class="fi" style="color:var(--mute)"><svg viewBox="0 0 24 24"><path d="${P.file}"/></svg></div>`;
 }
 
 function formatBytes(bytes) {
@@ -222,11 +219,6 @@ function formatBytes(bytes) {
   return `${formatted} ${units[i]}`;
 }
 
-// Format filesize display strictly following Gate 12.5.2 priority:
-// 1. Exact filesize when reliably available: "24.6 MB"
-// 2. Otherwise filesize_approx: "~24.6 MB"
-// 3. Otherwise duration × bitrate estimate: "~24.6 MB"
-// 4. Otherwise: "Size unknown"
 function formatFilesizeDisplay(fmt, durationSeconds) {
   if (!fmt) return 'Size unknown';
   const fType = String(fmt.filesize_type || '').toLowerCase();
@@ -253,72 +245,126 @@ function formatFilesizeDisplay(fmt, durationSeconds) {
 function showToast(text, isError = false) {
   const el = document.getElementById('toast');
   if (!el) return;
-  el.innerHTML = `<i class="ft" style="--c:${isError ? '#e5484d' : '#30c75e'}"><svg viewBox="0 0 24 24"><path d="${P.ck}"/></svg></i><span>${text}</span>`;
+  el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${isError ? '#f87171' : '#34d399'}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="${P.ck}"/></svg><span>${escapeHtml(text)}</span>`;
   el.classList.add('on');
   clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => el.classList.remove('on'), 2000);
+  showToast.timer = setTimeout(() => el.classList.remove('on'), 2200);
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  const main = document.getElementById('main');
+  const settings = document.getElementById('settings');
   const statusPill = document.getElementById('statusPill');
-  const statusText = document.getElementById('statusText');
-  const captureToggle = document.getElementById('captureToggle');
+  const stTxt = document.getElementById('stTxt');
+  const capSwMain = document.getElementById('capSwMain');
+  const capSwSet = document.getElementById('capSwSet');
+  const pillSwSet = document.getElementById('pillSwSet');
+  const qualitySel = document.getElementById('qualitySel');
+  const minSizeSel = document.getElementById('minSizeSel');
+  const connVal = document.getElementById('connVal');
+  const openBtn = document.getElementById('open');
+  const gearBtn = document.getElementById('gear');
+  const backBtn = document.getElementById('back');
+  const doneBtn = document.getElementById('done');
   const mediaCountHeader = document.getElementById('mediaCountHeader');
   const mediaList = document.getElementById('mediaList');
+  const recentHeader = document.getElementById('recentHeader');
   const recentList = document.getElementById('recentList');
-  const openToriBtn = document.getElementById('openToriBtn');
-  const optionsBtn = document.getElementById('optionsBtn');
 
-  // 1. Sync theme from options/storage
-  chrome.storage.local.get(['tori_theme', 'tori_settings'], (res) => {
-    const theme = res.tori_theme || res.tori_settings?.theme || 'system';
-    const isDark =
-      theme === 'dark' ||
-      (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+  // Navigation handlers
+  const showView = (v) => {
+    main.hidden = v !== 'main';
+    settings.hidden = v !== 'settings';
+  };
+  gearBtn.addEventListener('click', () => showView('settings'));
+  backBtn.addEventListener('click', () => showView('main'));
+  doneBtn.addEventListener('click', () => showView('main'));
 
-    if (res.tori_settings && typeof res.tori_settings.cap === 'boolean') {
-      captureToggle.checked = res.tori_settings.cap;
-    }
+  // 1. Sync settings from storage
+  chrome.storage.local.get(['tori_settings'], (res) => {
+    const s = res?.tori_settings || {};
+    const cap = s.cap !== false;
+    const pill = s.pill !== false;
+    capSwMain.setAttribute('aria-checked', String(cap));
+    capSwSet.setAttribute('aria-checked', String(cap));
+    pillSwSet.setAttribute('aria-checked', String(pill));
+
+    if (s.fmt) qualitySel.value = s.fmt;
+    if (typeof s.min === 'number') minSizeSel.value = String(s.min);
+    if (s.port) connVal.textContent = `127.0.0.1:${s.port}`;
   });
 
-  // 2. Capture toggle handler
-  captureToggle.addEventListener('change', () => {
+  // Switch helper
+  function updateSetting(key, val) {
     chrome.storage.local.get(['tori_settings'], (res) => {
-      const settings = res.tori_settings || {};
-      settings.cap = captureToggle.checked;
-      chrome.storage.local.set({ tori_settings: settings });
-      showToast(captureToggle.checked ? 'Capture enabled' : 'Capture disabled');
+      const s = res?.tori_settings || {};
+      s[key] = val;
+      chrome.storage.local.set({ tori_settings: s });
     });
+  }
+
+  // Toggle Capture Downloads
+  const toggleCapture = () => {
+    const current = capSwMain.getAttribute('aria-checked') === 'true';
+    const next = !current;
+    capSwMain.setAttribute('aria-checked', String(next));
+    capSwSet.setAttribute('aria-checked', String(next));
+    updateSetting('cap', next);
+    showToast(next ? 'Capture enabled' : 'Capture disabled');
+  };
+  capSwMain.addEventListener('click', toggleCapture);
+  capSwSet.addEventListener('click', toggleCapture);
+
+  // Toggle Download Button on Videos
+  pillSwSet.addEventListener('click', () => {
+    const current = pillSwSet.getAttribute('aria-checked') === 'true';
+    const next = !current;
+    pillSwSet.setAttribute('aria-checked', String(next));
+    updateSetting('pill', next);
+    showToast(next ? 'Video button enabled' : 'Video button disabled');
   });
 
-  // 3. Open Tori button handler
-  openToriBtn.addEventListener('click', () => {
+  // Default Quality select
+  qualitySel.addEventListener('change', () => {
+    updateSetting('fmt', qualitySel.value);
+    showToast(`Default quality: ${qualitySel.value}`);
+  });
+
+  // Minimum Size select
+  minSizeSel.addEventListener('change', () => {
+    const size = parseInt(minSizeSel.value, 10) || 0;
+    updateSetting('min', size);
+    showToast(size > 0 ? `Skip files under ${size} MB` : 'Capture all sizes');
+  });
+
+  // Open Tori button handler
+  openBtn.addEventListener('click', () => {
     showToast('Opening Tori…');
     chrome.runtime.sendMessage({ action: 'SHOW_DESKTOP' }, () => {
       window.close();
     });
   });
 
-  // 4. Options button handler
-  optionsBtn.addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
-  });
-
-  // 5. Check desktop connection status
+  // Desktop Connection Status
   function setStatus(state, port, latency) {
+    statusPill.className = 'status';
     if (state === 'connected') {
-      statusPill.className = 'st';
-      statusText.textContent = `Connected · 127.0.0.1:${port || 6800}`;
+      main.classList.add('on');
+      statusPill.classList.add('on');
+      stTxt.textContent = 'Connected';
+      if (port) connVal.textContent = `127.0.0.1:${port}`;
     } else if (state === 'unpaired') {
-      statusPill.className = 'st wait';
-      statusText.textContent = 'Pairing Required (Click to Pair)';
+      main.classList.remove('on');
+      statusPill.classList.add('wait');
+      stTxt.textContent = 'Pairing Required (Click)';
     } else if (state === 'connecting') {
-      statusPill.className = 'st conn';
-      statusText.textContent = 'Connecting…';
+      main.classList.remove('on');
+      statusPill.classList.add('conn');
+      stTxt.textContent = 'Connecting…';
     } else {
-      statusPill.className = 'st bad';
-      statusText.textContent = 'Disconnected';
+      main.classList.remove('on');
+      statusPill.classList.add('bad');
+      stTxt.textContent = 'Disconnected';
     }
   }
 
@@ -366,7 +412,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 6. Query media on current tab with dynamic per-tab identity support
+  // Query media on current tab
   let resolutionPollTimer = null;
   let resolutionPollCount = 0;
 
@@ -406,14 +452,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function getDisplayCandidates(items) {
     if (!Array.isArray(items) || items.length === 0) return [];
-    // Strictly exclude partial transport fragments (.m4s, .cmfv, .cmfa, numbered .ts chunks)
-    // from being displayed as independent downloadable full videos
     return items.filter((c) => !c.is_segment && c.type !== 'segment');
   }
 
   function renderResolutionError(errMsg, tab) {
     stopResolutionPolling();
-    // Check if background webRequest intercepted direct stream candidates for this tab
     chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
       const rawItems = res?.media || [];
       const items = getDisplayCandidates(rawItems);
@@ -425,11 +468,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       mediaCountHeader.textContent = 'Media Unavailable';
       mediaList.innerHTML = `
-        <div class="empty-state" style="padding:16px 12px;text-align:center">
-          <div style="font-weight:600;margin-bottom:4px;color:#e5484d">Resolution Failed</div>
-          <div style="font-size:11px;color:var(--mut);line-height:1.4;margin-bottom:12px">${escapeHtml(errMsg)}</div>
-          <button class="btn mb def" id="btnRetryResolution" style="padding:6px 16px">
-            <svg viewBox="0 0 24 24" style="width:14px;height:14px;margin-right:6px"><path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+        <div class="empty" style="padding:16px 12px;text-align:center">
+          <div style="font-weight:600;margin-bottom:4px;color:#f87171">Resolution Failed</div>
+          <div style="font-size:11px;color:var(--mute);line-height:1.4;margin-bottom:12px">${escapeHtml(errMsg)}</div>
+          <button class="btn primary" id="btnRetryResolution" style="padding:6px 14px;font-size:12px;margin:0 auto">
             Retry Resolution
           </button>
         </div>`;
@@ -446,13 +488,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     stopResolutionPolling();
     mediaCountHeader.textContent = forceRefresh ? 'Refreshing media formats…' : 'Resolving media on page…';
     mediaList.innerHTML = `
-      <div class="empty-state" style="padding:20px 12px;text-align:center">
+      <div class="empty" style="padding:20px 12px;text-align:center">
         <div class="tori-spin"></div>
         <div style="font-weight:600;margin-bottom:4px">${forceRefresh ? 'Refreshing media formats…' : 'Resolving media formats…'}</div>
-        <div style="font-size:11px;color:var(--mut);line-height:1.4">Extracting genuine quality streams and formats</div>
+        <div style="font-size:11px;color:var(--mute);line-height:1.4">Extracting genuine quality streams and formats</div>
       </div>`;
 
-    // Attempt to notify content script
     chrome.tabs.sendMessage(tab.id, { action: 'TRIGGER_RESOLVE_MEDIA', force_refresh: forceRefresh }, () => {
       if (chrome.runtime.lastError) {}
     });
@@ -460,7 +501,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const isPlatform = isManagedPlatform(tab.url);
     const timeoutMs = isPlatform ? 25000 : 13000;
 
-    // Hard safety timeout for popup manual resolve
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -495,26 +535,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       if (tab.url && tab.url.toLowerCase().includes('plex.tv')) {
-        mediaCountHeader.textContent = 'Protected Streaming Content';
+        mediaCountHeader.textContent = 'Protected Content';
         mediaList.innerHTML = `
-          <div class="empty-state" style="padding:16px 12px;text-align:center">
-            <div style="font-weight:600;margin-bottom:4px;color:#e5484d">DRM-Protected Content</div>
-            <div style="font-size:11px;color:var(--mut);line-height:1.4">watch.plex.tv content is DRM-protected and not licensed for offline download.</div>
-            <div style="font-size:11px;color:var(--mut);margin-top:6px">TORI respects licensing boundaries and does not bypass DRM.</div>
+          <div class="empty" style="padding:16px 12px;text-align:center">
+            <div style="font-weight:600;margin-bottom:4px;color:#f87171">DRM-Protected Content</div>
+            <div style="font-size:11px;color:var(--mute);line-height:1.4">watch.plex.tv content is DRM-protected and not licensed for offline download.</div>
           </div>`;
         return;
       }
 
-      // 1. Try querying active media info from content script
       chrome.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_MEDIA_INFO' }, (info) => {
         if (!chrome.runtime.lastError && info && info.ok) {
           if (info.isResolving && !info.hasAnyCandidates) {
             mediaCountHeader.textContent = 'Resolving media on page…';
             mediaList.innerHTML = `
-              <div class="empty-state" style="padding:20px 12px;text-align:center">
+              <div class="empty" style="padding:20px 12px;text-align:center">
                 <div class="tori-spin"></div>
                 <div style="font-weight:600;margin-bottom:4px">Resolving media on page…</div>
-                <div style="font-size:11px;color:var(--mut);line-height:1.4">Extracting genuine quality streams and formats</div>
+                <div style="font-size:11px;color:var(--mute);line-height:1.4">Extracting genuine quality streams and formats</div>
               </div>`;
             startResolutionPolling(tab);
             return;
@@ -532,7 +570,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         }
 
-        // 2. Fallback: check tab media cache from background
         chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
           const rawItems = res?.media || [];
           const items = getDisplayCandidates(rawItems);
@@ -541,11 +578,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (items.length === 0) {
             const isPlatform = isManagedPlatform(tab.url);
             mediaList.innerHTML = `
-              <div class="empty-state" style="padding:16px 12px;text-align:center">
-                <div style="font-weight:600;margin-bottom:4px">${isPlatform ? 'Streaming Media Detected' : 'No direct media stream detected'}</div>
-                <div style="font-size:11px;color:var(--mut);line-height:1.4">${isPlatform ? 'Click below to extract high-definition formats using TORI Universal Resolver.' : 'Streaming platforms (YouTube, Vimeo, Facebook, etc.) require media resolution.'}</div>
-                <button class="btn mb def" id="btnResolveTabMedia" style="margin-top:12px;padding:6px 16px">
-                  <svg viewBox="0 0 24 24" style="width:14px;height:14px;margin-right:6px"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg>
+              <div class="empty" style="padding:16px 12px;text-align:center">
+                <div style="font-weight:600;margin-bottom:4px">${isPlatform ? 'Streaming Media Detected' : 'No direct media detected'}</div>
+                <div style="font-size:11px;color:var(--mute);line-height:1.4">${isPlatform ? 'Click below to extract high-definition formats using TORI Resolver.' : 'Play the video or click below to resolve.'}</div>
+                <button class="btn primary" id="btnResolveTabMedia" style="margin:12px auto 0;padding:6px 14px;font-size:12px">
                   Resolve Media on Page
                 </button>
               </div>`;
@@ -572,7 +608,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const displayTitle = cleanMediaTitle(rawTitle, fallbackId);
 
     const isCached = meta.is_cached === true;
-    mediaCountHeader.innerHTML = `Resolved Formats${isCached ? ' <span style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.08);color:var(--mut, #888);font-weight:500">Cached</span> <a href="#" id="lnkRefreshFormats" style="font-size:10px;color:var(--acc, #3e98ff);text-decoration:none;margin-left:6px">Refresh</a>' : ''} · ${meta.formats.length}`;
+    mediaCountHeader.innerHTML = `<span>Resolved Formats${isCached ? ' <span style="font-size:10px;padding:1px 5px;border-radius:4px;background:var(--raise);color:var(--mute)">Cached</span>' : ''} · ${meta.formats.length}</span><a href="#" id="lnkRefreshFormats" style="font-size:11px;color:var(--accent2);text-decoration:none">Refresh</a>`;
     showToast(isCached ? `Loaded ${meta.formats.length} formats from cache` : `Found ${meta.formats.length} formats`);
 
     const lnkRefresh = document.getElementById('lnkRefreshFormats');
@@ -591,13 +627,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const sub = `${(fmt.container || 'mp4').toUpperCase()} · ${sizeText}`;
 
         return `
-        <div class="row">
+        <div class="dl">
           ${chip(cat)}
-          <div class="t">
+          <div class="n">
             <b>${escapeHtml(fmt.resolution_label || 'Media')}</b>
-            <span class="s">${escapeHtml(displayTitle.substring(0, 36))} · ${escapeHtml(sub)}</span>
+            <small>${escapeHtml(displayTitle.substring(0, 36))} · ${escapeHtml(sub)}</small>
           </div>
-          <button class="btn mb def" data-fidx="${idx}">Download</button>
+          <button class="btn-dl" data-fidx="${idx}">Download</button>
         </div>`;
       })
       .join('');
@@ -651,20 +687,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         const isAudio =
           item.type === 'audio' ||
           (item.content_type && item.content_type.startsWith('audio/'));
-        const isSeg = item.is_segment || item.type === 'segment';
-        const cat = isAudio ? 'Music' : (isSeg ? 'Segment' : 'Video');
+        const cat = isAudio ? 'Music' : 'Video';
         const sizeStr = item.size_bytes ? ` · ${formatBytes(item.size_bytes)}` : '';
         const formatStr = item.format || 'MP4';
         const sub = `${formatStr}${sizeStr}`;
 
         return `
-        <div class="row">
+        <div class="dl">
           ${chip(cat)}
-          <div class="t">
+          <div class="n">
             <b>${escapeHtml(item.filename || 'media_video')}</b>
-            <span class="s">${escapeHtml(sub)}</span>
+            <small>${escapeHtml(sub)}</small>
           </div>
-          <button class="btn mb def" data-idx="${idx}">Download</button>
+          <button class="btn-dl" data-idx="${idx}">Download</button>
         </div>`;
       })
       .join('');
@@ -679,7 +714,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.disabled = true;
         btn.textContent = 'Sending…';
         const currentUrl = (tab && tab.url) || window.location.href;
-        // Direct media candidates must start immediately through native downloader
         const reqPayload = {
           action: 'START_DOWNLOAD',
           url: target.url,
@@ -714,7 +748,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   loadActiveTabMedia();
 
-  // Listen for navigation or media updates on active tab while popup remains open
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'MEDIA_NAVIGATED' || msg.action === 'TAB_MEDIA_UPDATED') {
       stopResolutionPolling();
@@ -734,16 +767,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 7. Load recent downloads from persistent engine
+  // Recent Downloads
   function loadRecentDownloads() {
     chrome.runtime.sendMessage({ action: 'GET_DOWNLOADS' }, (res) => {
       const jobs = res?.jobs || [];
       if (jobs.length === 0) {
-        recentList.innerHTML = '<div class="empty-state">No recent downloads</div>';
+        recentList.innerHTML = '<div class="empty">No recent downloads</div>';
         return;
       }
 
-      // Show top 3 recent downloads
       const recent = jobs.slice(0, 3);
       recentList.innerHTML = recent
         .map((j) => {
@@ -772,18 +804,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             barClass = 'pz';
           }
 
-          const cat = j.job_type === 'Torrent' ? 'Compressed' : 'Video';
+          const cat = j.job_type === 'Torrent' ? 'Other' : 'Video';
 
           return `
-          <div class="row">
+          <div class="dl">
             ${chip(cat)}
-            <div class="t">
+            <div class="n">
               <b>${escapeHtml(j.filename || 'download')}</b>
-              <div class="bar"><i class="${barClass}" style="width:${percent}%"></i></div>
+              <div class="pr"><i class="${barClass}" style="width:${percent}%"></i></div>
             </div>
-            <span class="s" style="font-size:11px;font-weight:600;min-width:36px;text-align:right;color:${
-              isComplete ? 'var(--green)' : isFailed ? 'var(--bad)' : 'var(--mut)'
-            }">${statusLabel}</span>
+            <small style="font-size:11px;font-weight:600;min-width:38px;text-align:right;color:${
+              isComplete ? 'var(--ok)' : isFailed ? 'var(--bad)' : 'var(--mute)'
+            }">${statusLabel}</small>
           </div>`;
         })
         .join('');
@@ -791,7 +823,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   loadRecentDownloads();
-  // Refresh recent downloads periodically while popup is open
   const pollTimer = setInterval(loadRecentDownloads, 2000);
   window.addEventListener('unload', () => {
     clearInterval(pollTimer);

@@ -673,19 +673,22 @@ function normalizePlatformUrl(rawUrl) {
 
     // Create pill button
     const pill = document.createElement('button');
-    pill.className = 'tori-pill';
+    pill.className = 'tori-pill pill';
     pill.type = 'button';
+    pill.setAttribute('aria-expanded', 'false');
     pill.innerHTML = `
-      <span class="tori-logo">
-        <svg viewBox="0 0 24 24"><path d="${P.dl}"/></svg>
+      <span class="ico tori-logo">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="${P.dl}"/>
+        </svg>
       </span>
       <span>Download video</span>
-      <em class="tori-pill-tag">Media</em>
+      <span class="chip tori-pill-tag">Media</span>
     `;
 
     // Create format panel
     const pn = document.createElement('div');
-    pn.className = 'tori-pn';
+    pn.className = 'tori-pn panel';
 
     mp.appendChild(pill);
     mp.appendChild(pn);
@@ -1025,7 +1028,7 @@ function normalizePlatformUrl(rawUrl) {
             hd: isHd ? 'HD' : null,
             cd: desc,
             sz: sizeStr,
-            url: f.direct_stream_url || resolvedMeta.source_url,
+            url: f.direct_stream_url || f.url || resolvedMeta.source_url,
             format_id: f.format_id,
             filename: sanitizeFilename(title, (f.container || (isAudio ? 'mp3' : 'mp4')).toLowerCase()),
             isAudio,
@@ -1178,21 +1181,28 @@ function normalizePlatformUrl(rawUrl) {
       const tagEl = pill.querySelector('.tori-pill-tag');
       if (!tagEl) return;
 
+      pill.classList.toggle('on', hasAnyCandidates);
+      mp.classList.toggle('on', hasAnyCandidates);
+
       if (isResolving) {
         tagEl.textContent = 'Resolving…';
-        tagEl.style.color = 'var(--tori-blue)';
-        tagEl.style.background = 'rgba(79, 70, 229, 0.12)';
+        tagEl.className = 'chip tori-pill-tag';
+        tagEl.style.color = '#5b5bf0';
+        tagEl.style.background = '#eceafe';
       } else if (hasAnyCandidates) {
         const top = videoFormats[0] || audioFormats[0];
         tagEl.textContent = top.q || top.tg || 'Media';
+        tagEl.className = 'chip tori-pill-tag hd';
         tagEl.style.color = '';
         tagEl.style.background = '';
       } else if (resolveError) {
         tagEl.textContent = 'Unavailable';
-        tagEl.style.color = 'var(--tori-bad)';
-        tagEl.style.background = 'rgba(229, 72, 77, 0.12)';
+        tagEl.className = 'chip tori-pill-tag';
+        tagEl.style.color = '#dc2626';
+        tagEl.style.background = '#fee2e2';
       } else {
         tagEl.textContent = 'Media';
+        tagEl.className = 'chip tori-pill-tag';
         tagEl.style.color = '';
         tagEl.style.background = '';
       }
@@ -1223,8 +1233,10 @@ function normalizePlatformUrl(rawUrl) {
 
       if (isOpen) {
         pn.classList.remove('on');
+        pill.setAttribute('aria-expanded', 'false');
       } else {
         pn.classList.add('on');
+        pill.setAttribute('aria-expanded', 'true');
         // Render panel immediately so there is never an unpopulated/blank frame
         renderPanel();
 
@@ -1376,45 +1388,39 @@ function normalizePlatformUrl(rawUrl) {
       let listHtml = '';
       if (isResolving && !hasAnyCandidates) {
         listHtml = `
-          <div class="tori-empty-box" style="padding:28px 16px">
+          <div class="state" style="padding:24px 14px">
             <div class="tori-spin"></div>
             <b>Resolving media formats…</b>
-            <p>Querying TORI Universal Media Resolver for genuine resolutions and streams</p>
+            <p>Extracting genuine quality streams and formats</p>
           </div>`;
       } else if (hasAnyCandidates) {
         if (currentList.length > 0) {
           listHtml = currentList
             .map(
               (f, i) => `
-            <div class="tori-fr ${i === selectedIdx ? 'on' : ''} ${f.isAudio ? 'audio' : ''}" data-idx="${i}">
-              <span class="tori-rd"></span>
-              <span class="tori-q" title="${escapeHtml(f.q)}">${escapeHtml(f.q)}</span>
-              <span class="tori-tg">${escapeHtml(f.tg)}</span>
-              ${f.hd ? `<span class="tori-tg hd">${escapeHtml(f.hd)}</span>` : ''}
+            <button type="button" class="row tori-fr ${i === selectedIdx ? 'on' : ''} ${f.isAudio ? 'audio' : ''}" data-idx="${i}" role="radio" aria-checked="${i === selectedIdx ? 'true' : 'false'}">
+              <b class="tori-q" title="${escapeHtml(f.q)}">${escapeHtml(f.q)}</b>
               <span class="tori-cd" title="${escapeHtml(f.cd)}">${escapeHtml(f.cd)}</span>
-              <span class="tori-sz">${escapeHtml(f.sz)}</span>
-            </div>`
+              <em class="tori-sz">${escapeHtml(f.sz)}</em>
+            </button>`
             )
             .join('');
         } else {
           listHtml = `
-            <div class="tori-empty-box">
+            <div class="state">
               <p>No separate ${escapeHtml(activeTab.toLowerCase())} stream detected for this media.</p>
             </div>`;
         }
       } else {
         const notice = getErrorNotice(resolveError);
         listHtml = `
-          <div class="tori-empty-box">
-            <i class="tori-ft" style="--c:${notice.color};margin-bottom:4px">
-              <svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-            </i>
+          <div class="state">
+            <i></i>
             <b>${escapeHtml(notice.title)}</b>
             <p>${escapeHtml(notice.desc)}</p>
-            <span style="font-size:10px;color:var(--tori-mut);margin-bottom:6px">${escapeHtml(notice.hint)}</span>
-            <button class="tori-retry-btn" data-act="retry" type="button">
-              <svg viewBox="0 0 24 24" style="width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2.2"><path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
-              <span>Retry resolution</span>
+            <span style="font-size:11px;color:#6b7280;margin:4px 0 8px">${escapeHtml(notice.hint)}</span>
+            <button class="tori-retry-btn" data-act="retry" type="button" style="border:1px solid #e6e8ee;border-radius:8px;padding:6px 14px;background:#fff;cursor:pointer;font-weight:600;font-size:12px;color:#171a21">
+              Retry resolution
             </button>
           </div>`;
       }
@@ -1427,54 +1433,49 @@ function normalizePlatformUrl(rawUrl) {
         : !currentItem
         ? 'No Stream'
         : isDownloaded
-        ? 'Sent to Tori'
-        : `Download · ${currentItem.sz}`;
+        ? 'Sent to Tori ✓'
+        : activeTab === 'Video'
+        ? 'Download video'
+        : 'Download audio';
 
       pn.innerHTML = `
-        <div class="tori-ph">
-          <i class="tori-ft" style="--c:${hasAnyCandidates ? '#ff453a' : '#8e8e93'}">
-            <svg viewBox="0 0 24 24"><path d="${P.play}"/></svg>
-          </i>
-          <div style="min-width:0">
-            <b>${escapeHtml(title)}</b>
-            <span>${escapeHtml(subInfo)}</span>
+        <div class="head tori-ph">
+          <div class="thumb">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           </div>
-          <button class="tori-x" data-act="close" title="Close">×</button>
+          <div class="meta" style="min-width:0">
+            <b id="title">${escapeHtml(title)}</b>
+            <span id="sub">${escapeHtml(subInfo)}</span>
+          </div>
+          <button class="x tori-x" data-act="close" aria-label="Close">×</button>
         </div>
 
         ${
           window.location.href.includes('list=')
             ? `
-        <div style="margin: 6px 14px 2px; padding: 6px 10px; background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.3); border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-          <span style="font-size: 11px; color: #e0e7ff; font-weight: 500;">⚡ Playlist available</span>
-          <button type="button" data-act="open-playlist" style="font-size: 11px; padding: 3px 8px; background: #6366f1; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Download Playlist</button>
+        <div style="margin: 4px 14px 2px; padding: 6px 10px; background: rgba(91,91,240,0.1); border: 1px solid rgba(91,91,240,0.25); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <span style="font-size: 11.5px; color: #4338ca; font-weight: 600;">⚡ Playlist available</span>
+          <button type="button" data-act="open-playlist" style="font-size: 11px; padding: 3px 8px; background: #5b5bf0; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Download Playlist</button>
         </div>`
             : ''
         }
 
-        <div class="tori-seg">
-          <button class="${activeTab === 'Video' ? 'on' : ''}" data-tab="Video">Video</button>
-          <button class="${activeTab === 'Audio' ? 'on' : ''}" data-tab="Audio">Audio only</button>
+        <div class="seg tori-seg" role="tablist">
+          <button type="button" role="tab" class="${activeTab === 'Video' ? 'on' : ''}" data-tab="Video" aria-selected="${activeTab === 'Video' ? 'true' : 'false'}">Video</button>
+          <button type="button" role="tab" class="${activeTab === 'Audio' ? 'on' : ''}" data-tab="Audio" aria-selected="${activeTab === 'Audio' ? 'true' : 'false'}">Audio only</button>
         </div>
 
-        <div class="tori-fl">
+        <div class="list tori-fl" role="radiogroup" aria-label="Quality">
           ${listHtml}
         </div>
 
-        <div class="tori-pf">
-          <div class="tori-sv">
-            <svg viewBox="0 0 24 24"><path d="${P.fd}"/></svg>
-            <span>Save to <b>Downloads\\Tori\\${escapeHtml(activeTab)}</b></span>
-          </div>
-          <div class="tori-ac">
-            <button class="tori-btn sq ${canDownload ? '' : 'dis'}" ${canDownload ? '' : 'disabled'} data-act="copy" title="${canDownload ? 'Copy stream URL' : 'No stream URL available'}">
-              <svg viewBox="0 0 24 24"><path d="${P.cp}"/></svg>
-            </button>
-            <button class="tori-btn f def ${canDownload ? '' : 'dis'} ${isDownloaded ? 'ok' : ''}" ${canDownload ? '' : 'disabled'} data-act="download">
-              <svg viewBox="0 0 24 24"><path d="${isDownloaded ? P.ck : P.dl}"/></svg>
-              <span>${escapeHtml(dlBtnText)}</span>
-            </button>
-          </div>
+        <div class="btns tori-ac">
+          <button type="button" class="copy tori-btn sq ${canDownload ? '' : 'dis'}" ${canDownload ? '' : 'disabled'} data-act="copy" aria-label="Copy link" title="${canDownload ? 'Copy stream URL' : 'No stream URL available'}">⧉</button>
+          <button type="button" class="go tori-btn primary def ${canDownload ? '' : 'dis'} ${isDownloaded ? 'ok' : ''}" ${canDownload ? '' : 'disabled'} data-act="download"><span>${escapeHtml(dlBtnText)}</span></button>
+        </div>
+
+        <div class="foot tori-pf">
+          Save to <b id="path">Downloads\\Tori\\${escapeHtml(activeTab)}</b>
         </div>
       `;
 
@@ -1502,6 +1503,7 @@ function normalizePlatformUrl(rawUrl) {
           e.stopPropagation();
           e.stopImmediatePropagation();
           pn.classList.remove('on');
+          pill.setAttribute('aria-expanded', 'false');
         });
       }
 
