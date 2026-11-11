@@ -388,6 +388,21 @@ pub async fn register_native_host() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn frontend_ready(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    crate::lifecycle::log_event("FRONTEND", "READY", "Frontend reported visual readiness");
+    if !state
+        .is_minimized_launch
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        crate::tray::show_main_window(&app);
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
     crate::tray::show_main_window(&app);
     Ok(())

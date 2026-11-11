@@ -22,6 +22,8 @@ pub fn run() {
         "Initializing TORI Download Manager desktop application",
     );
 
+    let is_minimized = std::env::args().any(|a| a == "--minimized");
+
     // Single-Instance Check: If a primary instance is already active with the Named Pipe server,
     // request that the primary instance bring its window to the foreground, then exit cleanly.
     let is_secondary = if let Ok(rt) = tokio::runtime::Runtime::new() {
@@ -30,21 +32,26 @@ pub fn run() {
                 lifecycle::log_event(
                     "APP",
                     "SECONDARY_INSTANCE",
-                    "Active primary instance detected; forwarding show_window and exiting",
+                    &format!(
+                        "Active primary instance detected; is_minimized={}; exiting secondary process",
+                        is_minimized
+                    ),
                 );
-                eprintln!("[TORI] An active instance of TORI Download Manager is already running. Focusing primary window and exiting secondary process.");
-                let msg = tdm_native_host::protocol::NativeMessage {
-                    action: "show_window".to_string(),
-                    url: None,
-                    filename: None,
-                    destination: None,
-                    priority: None,
-                    job_id: None,
-                    referer: None,
-                    user_agent: None,
-                    scheduled_at: None,
-                };
-                let _ = tdm_native_host::ipc::forward_to_persistent_engine(&msg).await;
+                if !is_minimized {
+                    eprintln!("[TORI] An active instance of TORI Download Manager is already running. Focusing primary window and exiting secondary process.");
+                    let msg = tdm_native_host::protocol::NativeMessage {
+                        action: "show_window".to_string(),
+                        url: None,
+                        filename: None,
+                        destination: None,
+                        priority: None,
+                        job_id: None,
+                        referer: None,
+                        user_agent: None,
+                        scheduled_at: None,
+                    };
+                    let _ = tdm_native_host::ipc::forward_to_persistent_engine(&msg).await;
+                }
                 true
             } else {
                 false
@@ -87,7 +94,7 @@ pub fn run() {
         }
     }
 
-    let is_minimized = std::env::args().any(|a| a == "--minimized");
+    let is_minimized_launch = Arc::new(std::sync::atomic::AtomicBool::new(is_minimized));
 
     let ipc_manager = manager.clone();
     let ipc_db = db.clone();
@@ -99,10 +106,26 @@ pub fn run() {
     let srv_shutdown = shutdown_token.clone();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(move |app, args, _cwd| {
+            lifecycle::log_event(
+                "APP",
+                "SINGLE_INSTANCE_RESTORE",
+                &format!("Secondary instance launched with args: {:?}", args),
+            );
+            let launch_minimized = args.iter().any(|a| a == "--minimized");
+            if !launch_minimized {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.unminimize();
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             manager: manager.clone(),
+            is_minimized_launch: is_minimized_launch.clone(),
         })
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -166,6 +189,26 @@ pub fn run() {
                 }
             }
 
+            // Fallback safety timeout: ensure main window is displayed even if frontend signal fails
+            let safety_handle = app_handle.clone();
+            let safety_minimized = is_minimized;
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                if !safety_minimized {
+                    if let Some(w) = safety_handle.get_webview_window("main") {
+                        if let Ok(false) = w.is_visible() {
+                            lifecycle::log_event(
+                                "APP",
+                                "SAFETY_TIMEOUT_SHOW",
+                                "Safety fallback timer triggered; displaying main window",
+                            );
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                }
+            });
+
             if let Err(e) = tray::setup_system_tray(&app_handle, manager.clone()) {
                 eprintln!("[TORI] Failed to setup system tray: {}", e);
                 lifecycle::log_event("TRAY", "ERROR", &format!("Setup failed: {}", e));
@@ -219,6 +262,7 @@ pub fn run() {
             window_minimize,
             window_maximize,
             window_close,
+            frontend_ready,
             show_main_window,
             hide_main_window,
             exit_app,

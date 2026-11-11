@@ -1188,6 +1188,12 @@ async function recordCandidate(tabId, candidate) {
   tabMediaCache.set(tabId, list);
   scheduleSessionWrite(tabId);
 
+  // Notify active tab content scripts of newly recorded candidate
+  chrome.tabs.sendMessage(tabId, {
+    action: 'MEDIA_CANDIDATE_RECORDED',
+    candidate,
+  }).catch(() => { });
+
   // Update badge if enabled
   if (extSettings.badge !== false) {
     const count = list.length;

@@ -351,6 +351,13 @@ export function App() {
     return () => mql.removeEventListener('change', listener);
   }, [settings.theme, settings.accent]);
 
+  // Signal visual readiness to Rust backend to display the window without white flash
+  useEffect(() => {
+    invoke('frontend_ready').catch(() => {
+      invoke('show_main_window').catch(() => {});
+    });
+  }, []);
+
   // Persist settings to localStorage and push to Rust backend engine
   const handleUpdateSettings = (newSettings: AppSettings) => {
     setSettings(newSettings);

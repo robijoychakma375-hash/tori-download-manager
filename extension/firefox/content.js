@@ -704,6 +704,140 @@ function normalizePlatformUrl(rawUrl) {
     isolateEvents(pill);
     isolateEvents(pn);
 
+    // Draggable Overlay Implementation
+    let isPointerDown = false;
+    let isDragging = false;
+    let wasDragged = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let elemStartX = 0;
+    let elemStartY = 0;
+    const DRAG_THRESHOLD = 5;
+
+    // Restore saved custom position if available
+    try {
+      chrome.storage.local.get(['tori_custom_overlay_pos'], (res) => {
+        if (res && res.tori_custom_overlay_pos) {
+          const { rx, ry } = res.tori_custom_overlay_pos;
+          if (typeof rx === 'number' && typeof ry === 'number' && rx >= 0 && rx <= 1 && ry >= 0 && ry <= 1) {
+            const aRect = anchor.getBoundingClientRect();
+            if (aRect.width > 60 && aRect.height > 60) {
+              const maxL = Math.max(4, aRect.width - 160);
+              const maxT = Math.max(4, aRect.height - 36);
+              const l = Math.min(Math.max(4, Math.round(rx * aRect.width)), maxL);
+              const t = Math.min(Math.max(4, Math.round(ry * aRect.height)), maxT);
+              mp.style.left = `${l}px`;
+              mp.style.top = `${t}px`;
+              mp.style.right = 'auto';
+              mp.style.bottom = 'auto';
+            }
+          }
+        }
+      });
+    } catch (_) {}
+
+    const onPointerMove = (e) => {
+      if (!isPointerDown) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+
+      if (!isDragging) {
+        if (Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
+          isDragging = true;
+          wasDragged = true;
+          mp.classList.add('tori-dragging');
+          try {
+            pill.setPointerCapture(e.pointerId);
+          } catch (_) {}
+        }
+      }
+
+      if (isDragging) {
+        e.preventDefault();
+        const aRect = anchor.getBoundingClientRect();
+        let targetX = elemStartX + dx;
+        let targetY = elemStartY + dy;
+
+        const maxL = Math.max(4, aRect.width - (mp.offsetWidth || 160) - 4);
+        const maxT = Math.max(4, aRect.height - (mp.offsetHeight || 36) - 4);
+
+        targetX = Math.min(Math.max(4, targetX), maxL);
+        targetY = Math.min(Math.max(4, targetY), maxT);
+
+        mp.style.left = `${targetX}px`;
+        mp.style.top = `${targetY}px`;
+        mp.style.right = 'auto';
+        mp.style.bottom = 'auto';
+      }
+    };
+
+    const onPointerUp = (e) => {
+      if (!isPointerDown) return;
+      isPointerDown = false;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+
+      if (isDragging) {
+        isDragging = false;
+        mp.classList.remove('tori-dragging');
+        try {
+          pill.releasePointerCapture(e.pointerId);
+        } catch (_) {}
+
+        const aRect = anchor.getBoundingClientRect();
+        if (aRect.width > 0 && aRect.height > 0) {
+          const l = parseFloat(mp.style.left) || 0;
+          const t = parseFloat(mp.style.top) || 0;
+          try {
+            chrome.storage.local.set({
+              tori_custom_overlay_pos: {
+                rx: Math.min(Math.max(0, l / aRect.width), 1),
+                ry: Math.min(Math.max(0, t / aRect.height), 1),
+              },
+            });
+          } catch (_) {}
+        }
+
+        setTimeout(() => {
+          wasDragged = false;
+        }, 100);
+      }
+    };
+
+    pill.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      isPointerDown = true;
+      isDragging = false;
+      wasDragged = false;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+
+      const aRect = anchor.getBoundingClientRect();
+      const mRect = mp.getBoundingClientRect();
+      elemStartX = mRect.left - aRect.left;
+      elemStartY = mRect.top - aRect.top;
+
+      window.addEventListener('pointermove', onPointerMove, { passive: false });
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', onPointerUp);
+    });
+
+    const onResizeClamp = () => {
+      if (mp.style.left && mp.style.left !== 'auto') {
+        const aRect = anchor.getBoundingClientRect();
+        if (aRect.width > 0 && aRect.height > 0) {
+          let curL = parseFloat(mp.style.left) || 4;
+          let curT = parseFloat(mp.style.top) || 4;
+          const maxL = Math.max(4, aRect.width - (mp.offsetWidth || 160) - 4);
+          const maxT = Math.max(4, aRect.height - (mp.offsetHeight || 36) - 4);
+          mp.style.left = `${Math.min(Math.max(4, curL), maxL)}px`;
+          mp.style.top = `${Math.min(Math.max(4, curT), maxT)}px`;
+        }
+      }
+    };
+    window.addEventListener('resize', onResizeClamp);
+
     let activeTab = settings.kind === 'Audio only' ? 'Audio' : 'Video';
     let selectedIdx = 0;
     let isDownloaded = false;
@@ -768,7 +902,7 @@ function normalizePlatformUrl(rawUrl) {
         }
       });
 
-      const domCandidates = extractDomMediaCandidates(videoEl);
+      const domCandidates = Array.from(extractDomMediaCandidates(videoEl));
       const domThumbnail = extractPageThumbnail(videoEl);
       const mediaTitle = getMediaTitle(videoEl);
 
@@ -1066,6 +1200,11 @@ function normalizePlatformUrl(rawUrl) {
       e.stopPropagation();
       e.stopImmediatePropagation();
       e.preventDefault();
+
+      if (wasDragged) {
+        wasDragged = false;
+        return;
+      }
 
       // If user disabled format picker, trigger download directly
       if (!settings.picker) {
@@ -1550,13 +1689,63 @@ function normalizePlatformUrl(rawUrl) {
     // Dynamic state updates when media metadata loads or changes
     // Genuine video replacement/emptied event
     videoEl.addEventListener('emptied', () => handleVideoNavigation('video-emptied'));
-    videoEl.addEventListener('canplay', () => updatePillTag());
-    videoEl.addEventListener('play', () => {
+
+    // Bounded retry helper for dynamic asynchronous video loading
+    let asyncRetryAttempts = 0;
+    const MAX_ASYNC_RETRIES = 3;
+    let asyncRetryTimer = null;
+
+    const handleDynamicMediaActivity = () => {
       chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA' }, (res) => {
-        tabMediaCandidates = res?.media || [];
-        updatePillTag();
+        if (res?.media && Array.isArray(res.media) && res.media.length > 0) {
+          tabMediaCandidates = res.media;
+        }
+        const domC = extractDomMediaCandidates(videoEl);
+        const { hasAnyCandidates } = getAvailableFormats();
+        if (hasAnyCandidates) {
+          if (resolveError) resolveError = null;
+          updatePillTag();
+          renderPanel();
+          return;
+        }
+        if (!resolvedMeta && !isResolving && asyncRetryAttempts < MAX_ASYNC_RETRIES) {
+          asyncRetryAttempts++;
+          if (asyncRetryTimer) clearTimeout(asyncRetryTimer);
+          asyncRetryTimer = setTimeout(() => {
+            if (resolvedMeta || isResolving) return;
+            const updatedDom = extractDomMediaCandidates(videoEl);
+            if (updatedDom.length > 0 || (tabMediaCandidates && tabMediaCandidates.length > 0)) {
+              if (resolveError) resolveError = null;
+              triggerResolution(false);
+            }
+          }, asyncRetryAttempts * 600);
+        }
       });
-    });
+    };
+
+    videoEl.addEventListener('canplay', handleDynamicMediaActivity);
+    videoEl.addEventListener('play', handleDynamicMediaActivity);
+    videoEl.addEventListener('playing', handleDynamicMediaActivity);
+    videoEl.addEventListener('loadedmetadata', handleDynamicMediaActivity);
+    videoEl.addEventListener('loadeddata', handleDynamicMediaActivity);
+
+    // Listen for candidate discoveries recorded by background webRequest interceptor
+    const onRuntimeCandidateMessage = (msg) => {
+      if (msg && msg.action === 'MEDIA_CANDIDATE_RECORDED' && msg.candidate) {
+        const cand = msg.candidate;
+        if (cand && cand.url && !tabMediaCandidates.some((c) => c.url === cand.url)) {
+          tabMediaCandidates.push(cand);
+          if (!resolvedMeta) {
+            if (resolveError) resolveError = null;
+            updatePillTag();
+            renderPanel();
+          } else {
+            updatePillTag();
+          }
+        }
+      }
+    };
+    chrome.runtime.onMessage.addListener(onRuntimeCandidateMessage);
 
     // Record DOM media candidates
     recordDomMedia(videoEl);
