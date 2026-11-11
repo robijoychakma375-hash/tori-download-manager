@@ -5,7 +5,9 @@ const { execSync } = require('child_process');
 const home = process.env.USERPROFILE;
 const key = path.join(home, '.tori-keys', 'tori-updater.key');
 const pwd = fs.readFileSync(key + '.pwd', 'utf8').trim();
-const target = path.resolve('target/release/bundle/nsis/TORI Download Manager_1.0.1_x64-setup.exe');
+const cargo = fs.readFileSync('Cargo.toml', 'utf8');
+const version = (cargo.match(/version\s*=\s*"([^"]+)"/) || [])[1] || '1.0.2';
+const target = path.resolve(`target/release/bundle/nsis/TORI Download Manager_${version}_x64-setup.exe`);
 
 console.log('[SIGN] Signing fresh installer with Ed25519 updater key...');
 console.log('Target:', target);
