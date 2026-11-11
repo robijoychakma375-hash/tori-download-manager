@@ -1,0 +1,183 @@
+{
+  "gate": "Gate 22 — In-App Auto-Updater Diagnosis & Migration",
+  "timestamp": "2026-11-11T10:59:59.697Z",
+  "totalTests": 29,
+  "passedTests": 29,
+  "failedTests": 0,
+  "status": "ALL_TESTS_PASSED",
+  "results": [
+    {
+      "test": "Public key is identical between v1.0.0 and v1.0.1",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Public key is identical between v1.0.0 and v1.0.2",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "v1.0.0 endpoint is configured to GitHub latest.json",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "v1.0.2 endpoint is configured to GitHub latest.json",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "GitHub /releases/latest/download/ responds with HTTP 302 Found redirect",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "GitHub 302 correctly redirects to latest release tag v1.0.2 (got: https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.2/latest.json)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Live v1.0.2/latest.json returns HTTP 404 Not Found (confirmed root cause of updater check error)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "v1.0.2 installer binary exists locally in release/v1.0.2-final/",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "v1.0.2 signature file exists locally in release/v1.0.2-final/",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "v1.0.2 installer SHA-256 matches published release manifest (1ab7f3454dc08ef3b33843a9b8dfc3d3b2c5b2814fbe8946ef9b263f2d2452c2)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "v1.0.0, v1.0.1, and v1.0.2 all cryptographically verify against the official Ed25519 public key",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Tampered binaries are strictly rejected with InvalidSignature by Minisign engine",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Manifest version string is \"1.0.2\"",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Manifest pub_date is valid RFC3339 timestamp",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Manifest contains \"windows-x86_64\" platform target",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Manifest contains \"windows-x86_64-nsis\" platform target",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Download URL points to official HTTPS release repository",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Manifest signature exactly matches the verified Minisign Ed25519 signature",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Scenario 1: v1.0.0 client successfully detects v1.0.2 as an available update",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Scenario 2: v1.0.1 client successfully detects v1.0.2 as an available update",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Scenario 3: v1.0.2 client correctly reports \"up_to_date\" with no update loop",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Scenario 4: Downgrade attempt (remote: 1.0.1, client: 1.0.2) is rejected by SemVer comparator",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Scenario 5: HTTP 404 produces expected Tauri \"Could not fetch a valid release JSON from the remote\" error",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Scenario 6: Malformed JSON payload is caught and handled safely without process crash",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Scenario 7: Network timeout is handled gracefully with an informative error",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Install safely blocked when active downloads exist (> 0)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Install allowed when 0 active downloads exist",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "NSIS hooks do not delete user configuration or app data",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "NSIS hooks explicitly preserve user downloads and SQLite database",
+      "status": "PASS",
+      "details": null
+    }
+  ],
+  "rootCause": {
+    "errorObserved": "Update check error: Could not fetch a valid release JSON from the remote",
+    "httpStatus": 404,
+    "redirectHop1": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/latest/download/latest.json -> 302 Found",
+    "redirectHop2": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.2/latest.json -> 404 Not Found",
+    "explanation": "GitHub dynamically resolves /releases/latest/ to the published latest stable release (v1.0.2). Because latest.json was omitted from v1.0.2 assets, Tauri updater receives 404 and throws Error::ReleaseNotFound."
+  },
+  "cryptography": {
+    "publicKey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEQzIzRDhDQzhEQTUzOTcKUldTWFU5cklqRDNDelRBOVAzOSs1L0RXN0FFLy9YWGFJc2NnUStaNktxSkNOQ1ZCeG01MjFTZzQK",
+    "installerSha256": "1ab7f3454dc08ef3b33843a9b8dfc3d3b2c5b2814fbe8946ef9b263f2d2452c2",
+    "minisignStatus": "VERIFIED",
+    "keyContinuity": "100% IDENTICAL ACROSS v1.0.0, v1.0.1, AND v1.0.2"
+  },
+  "proposedManifest": {
+    "version": "1.0.2",
+    "notes": "TORI Download Manager v1.0.2 Production Release.\n\n- Unified Version Parity across Desktop Engine and Extensions (v1.0.2)\n- Persistent Engine Lifecycle & Tray Hardening\n- Multi-Stream Chunking (C=4/8) & SQLite WAL Crash Recovery\n- Officially Signed Firefox AMO Extension & Edge/Chrome MV3 Integration\n- Full Third-Party Notices & GPLv3 Compliance",
+    "pub_date": "2026-11-11T12:00:00Z",
+    "platforms": {
+      "windows-x86_64": {
+        "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWFU5cklqRDNDemFqMWd0R3IwbTc2WXJuelZZV2t0eStuMlh6enRUYWlzTy9WOUNWOE1LcGpOak4yMXdVd0todUpLU3BLMWt1N2hQU3d3ajJNUlNaNEFvaGgxOUdJYXdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0Mzg5NTIwCWZpbGU6VE9SSSBEb3dubG9hZCBNYW5hZ2VyXzEuMC4yX3g2NC1zZXR1cC5leGUKVVJCNlpyZ3pJNkRrQmJadG5HYlZ0YXBhRHZ4U1B1NzJqZ052U2Z5c25PNFBxTkRXMG9uWDJjOW1SMnVMYW1OWW9nbG9MbmgzOFdFY1hLaVhITnRhRFE9PQo=",
+        "url": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.2/TORI.Download.Manager_1.0.2_x64-setup.exe"
+      },
+      "windows-x86_64-nsis": {
+        "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWFU5cklqRDNDemFqMWd0R3IwbTc2WXJuelZZV2t0eStuMlh6enRUYWlzTy9WOUNWOE1LcGpOak4yMXdVd0todUpLU3BLMWt1N2hQU3d3ajJNUlNaNEFvaGgxOUdJYXdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0Mzg5NTIwCWZpbGU6VE9SSSBEb3dubG9hZCBNYW5hZ2VyXzEuMC4yX3g2NC1zZXR1cC5leGUKVVJCNlpyZ3pJNkRrQmJadG5HYlZ0YXBhRHZ4U1B1NzJqZ052U2Z5c25PNFBxTkRXMG9uWDJjOW1SMnVMYW1OWW9nbG9MbmgzOFdFY1hLaVhITnRhRFE9PQo=",
+        "url": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.2/TORI.Download.Manager_1.0.2_x64-setup.exe"
+      }
+    }
+  }
+}

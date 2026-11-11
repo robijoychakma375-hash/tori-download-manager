@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Production Bundling:** Compiled fresh companion binaries (`tdm-native-host.exe`, `tdm-cli.exe`) and produced Windows x64 NSIS standalone installer (`117,073,652` bytes, SHA-256: `1ab7f3454dc08ef3b33843a9b8dfc3d3b2c5b2814fbe8946ef9b263f2d2452c2`).
 - **Ed25519 Minisign Signature:** Official cryptographic updater signature generated and verified against embedded minisign public key.
 - **Licensing Transparency:** Formalized binary distribution licensing statements under GNU General Public License v3 (GPLv3) due to bundled FFmpeg media tools, with MIT/Apache-2.0 source code availability.
+- **In-App Auto-Updater Activation (Gate 22):** Published official, cryptographically verified `latest.json` manifest to GitHub Release `v1.0.2` (ID: `441473140`), resolving the HTTP 404 endpoint resolution defect for installed `v1.0.0` and `v1.0.1` instances; verified dual platform targets (`windows-x86_64` and `windows-x86_64-nsis`), public key continuity (`CDC23D8C`), anti-tamper rejection, and authorization-gated rollback utility.
 
 ---
 
