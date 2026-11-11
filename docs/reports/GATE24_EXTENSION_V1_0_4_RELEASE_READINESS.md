@@ -118,5 +118,6 @@ The Gate 23.6 functional regression test suite (`scripts/verify_final_extension_
 
 - **Pre-Redesign Baseline:** `1b2e522` (`checkpoint-pre-ui-redesign`)
 - **Post-Redesign Checkpoint:** `7a4dcab` (`checkpoint-post-ui-redesign`)
-- **Dedicated Branch:** `extension/v1.0.4`
+- **Dedicated Branch:** `extension/v1.0.4` (Pushed to `origin/extension/v1.0.4`)
+- **Release Commit:** `6fc4a49` (`feat(extension): prepare v1.0.4 with verified UI redesign, smoke test suite, and packaging`)
 - **Release Blockers:** **None**. Awaiting user approval to publish or submit to Mozilla AMO.
