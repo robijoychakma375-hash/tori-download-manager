@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
-const { spawn, execSync } = require('child_process');
+const { spawn, spawnSync, execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const STAGING_DIR = path.join(ROOT, 'release', 'v1.0.2-final');
@@ -71,35 +71,26 @@ function requestJson(method, urlPath, headers, body) {
   });
 }
 
-function uploadAsset(uploadUrlTemplate, filePath, fileName, contentType, token) {
-  return new Promise((resolve, reject) => {
-    const cleanUrl = uploadUrlTemplate.replace(/\{.*?\}$/, '') + `?name=${encodeURIComponent(fileName)}`;
-    const parsed = new URL(cleanUrl);
-    const fileBuf = fs.readFileSync(filePath);
-
-    const req = https.request({
-      hostname: parsed.hostname,
-      path: parsed.pathname + parsed.search,
-      method: 'POST',
-      headers: {
-        'User-Agent': 'TORI-Release-Manager',
-        'Authorization': `token ${token}`,
-        'Content-Type': contentType,
-        'Content-Length': fileBuf.length,
-      }
-    }, res => {
-      let raw = '';
-      res.on('data', c => raw += c);
-      res.on('end', () => {
-        let json = raw;
-        try { json = JSON.parse(raw); } catch (_) {}
-        resolve({ status: res.statusCode, data: json });
-      });
-    });
-    req.on('error', reject);
-    req.write(fileBuf);
-    req.end();
-  });
+function uploadAssetViaCurl(uploadUrlTemplate, filePath, fileName, contentType, token) {
+  const cleanUrl = uploadUrlTemplate.replace(/\{.*?\}$/, '') + `?name=${encodeURIComponent(fileName)}`;
+  const args = [
+    '-s',
+    '-w', '\n%{http_code}',
+    '-X', 'POST',
+    '-H', `Authorization: Bearer ${token}`,
+    '-H', 'Accept: application/vnd.github+json',
+    '-H', `Content-Type: ${contentType || 'application/octet-stream'}`,
+    '--data-binary', `@${filePath}`,
+    cleanUrl
+  ];
+  const res = spawnSync('curl.exe', args, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
+  if (res.error) throw res.error;
+  const lines = res.stdout.trim().split('\n');
+  const code = parseInt(lines[lines.length - 1], 10);
+  const body = lines.slice(0, lines.length - 1).join('\n');
+  let data = body;
+  try { data = JSON.parse(body); } catch (_) {}
+  return { status: code, data };
 }
 
 async function main() {
@@ -162,37 +153,77 @@ async function main() {
   const currentBranch = execSync('git branch --show-current', { cwd: ROOT, encoding: 'utf8' }).trim();
   console.log(`\n[GIT] Current branch: ${currentBranch}`);
 
-  // Create Draft Release on GitHub
-  console.log('\n[API] Creating DRAFT release on GitHub...');
-  const createRes = await requestJson(
-    'POST',
-    '/repos/robijoychakma375-hash/tori-download-manager/releases',
-    { 'Authorization': `token ${token}` },
-    {
-      tag_name: 'v1.0.2',
-      target_commitish: headCommit,
-      name: 'TORI Download Manager v1.0.2',
-      body: releaseNotes,
-      draft: true,
-      prerelease: false,
-    }
+  // Check if a release for v1.0.2 already exists
+  console.log('\n[API] Checking existing releases on GitHub...');
+  const existingRes = await requestJson(
+    'GET',
+    '/repos/robijoychakma375-hash/tori-download-manager/releases?per_page=30',
+    { 'Authorization': `token ${token}` }
   );
 
-  if (createRes.status !== 201) {
-    console.error('Failed to create release:', createRes.status, createRes.data);
-    process.exit(1);
+  let releaseData = null;
+  if (existingRes.status === 200 && Array.isArray(existingRes.data)) {
+    releaseData = existingRes.data.find(r => r.tag_name === 'v1.0.2');
   }
 
-  const releaseData = createRes.data;
-  console.log(`[RELEASE CREATED] Draft Release ID: ${releaseData.id}`);
+  if (!releaseData) {
+    console.log('[API] Creating new DRAFT release on GitHub...');
+    const createRes = await requestJson(
+      'POST',
+      '/repos/robijoychakma375-hash/tori-download-manager/releases',
+      { 'Authorization': `token ${token}` },
+      {
+        tag_name: 'v1.0.2',
+        target_commitish: headCommit,
+        name: 'TORI Download Manager v1.0.2',
+        body: releaseNotes,
+        draft: true,
+        prerelease: false,
+      }
+    );
+
+    if (createRes.status !== 201) {
+      console.error('Failed to create release:', createRes.status, createRes.data);
+      process.exit(1);
+    }
+    releaseData = createRes.data;
+    console.log(`[RELEASE CREATED] Draft Release ID: ${releaseData.id}`);
+  } else {
+    console.log(`[RELEASE FOUND] Existing Draft Release ID: ${releaseData.id}`);
+    console.log(`  Draft: ${releaseData.draft}`);
+  }
+
   console.log(`  HTML URL: ${releaseData.html_url}`);
   console.log(`  Upload URL: ${releaseData.upload_url}`);
+
+  // Fetch current assets of this release
+  const assetsRes = await requestJson(
+    'GET',
+    `/repos/robijoychakma375-hash/tori-download-manager/releases/${releaseData.id}/assets`,
+    { 'Authorization': `token ${token}` }
+  );
+  const currentAssets = (assetsRes.status === 200 && Array.isArray(assetsRes.data)) ? assetsRes.data : [];
 
   // Upload Assets
   console.log('\n[UPLOADING ASSETS]');
   for (const item of fileDetails) {
+    const existing = currentAssets.find(a => a.name === item.file);
+    if (existing) {
+      if (existing.size === item.size) {
+        console.log(`  ✓ ${item.file.padEnd(45)} already uploaded (ID: ${existing.id}, ${existing.size} bytes)`);
+        continue;
+      } else {
+        console.log(`  ⚠ ${item.file.padEnd(45)} size mismatch (${existing.size} != ${item.size}), removing old asset...`);
+        await requestJson(
+          'DELETE',
+          `/repos/robijoychakma375-hash/tori-download-manager/releases/assets/${existing.id}`,
+          { 'Authorization': `token ${token}` }
+        );
+      }
+    }
+
     process.stdout.write(`  Uploading ${item.file}... `);
-    const upRes = await uploadAsset(releaseData.upload_url, item.fullPath, item.file, item.type, token);
+    const upRes = uploadAssetViaCurl(releaseData.upload_url, item.fullPath, item.file, item.type, token);
     if (upRes.status !== 201) {
       console.log(`FAILED (${upRes.status}):`, upRes.data);
       process.exit(1);
