@@ -1,0 +1,57 @@
+﻿[
+  {
+    "check": "Launch & Local API Pairing",
+    "passed": true,
+    "details": "Authenticated on port 19182"
+  },
+  {
+    "check": "Desktop Layout Hierarchy",
+    "passed": true,
+    "details": "Toolbar, table, status bar, and 8 categories rendered"
+  },
+  {
+    "check": "Add Download Modal Open",
+    "passed": true,
+    "details": "Modal (#addw) opened on toolbar click"
+  },
+  {
+    "check": "Direct URL Download (Download Now)",
+    "passed": true,
+    "details": "immediate_test.bin appeared in download table"
+  },
+  {
+    "check": "Schedule Download UI Picker",
+    "passed": true,
+    "details": "Scheduled mode accepted future time and submitted job"
+  },
+  {
+    "check": "Pause & Resume Lifecycle",
+    "passed": true,
+    "details": "Job dc67c7a6-9267-4d49-abfa-895fe9eccdc8 paused (200) and resumed (200)"
+  },
+  {
+    "check": "Download Cancellation",
+    "passed": true,
+    "details": "Job cancelled successfully (200)"
+  },
+  {
+    "check": "Dark & Light Theme Dynamic Switch",
+    "passed": true,
+    "details": "Light: rgb(245, 245, 248) -> Dark: rgb(35, 35, 38)"
+  },
+  {
+    "check": "Settings Modal Dialog",
+    "passed": true,
+    "details": "Settings modal opened and dismissed cleanly"
+  },
+  {
+    "check": "Titlebar Window Minimize & Trim",
+    "passed": true,
+    "details": "window_minimize invoked with working set memory trim"
+  },
+  {
+    "check": "Window Restore from Tray/Taskbar",
+    "passed": true,
+    "details": "show_main_window restored application without lag"
+  }
+]

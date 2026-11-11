@@ -1,4 +1,4 @@
-target/
+﻿target/
 node_modules/
 dist/
 .tdm-data/
@@ -19,4 +19,31 @@ id_ed25519*
 release/
 qa_manual_env/
 
+# Local Historical Logs & Storage Maintenance Utilities (Gate 19.3)
+# Preserved on local disk; excluded from version control to prevent machine-specific path pollution
+scripts/artifact_integrity_report.json
+scripts/cache_regeneration_stats.json
+scripts/controlled_cleanup_result.json
+scripts/f_tori_storage_inventory.json
+scripts/gate18_2_installer_audit.json
+scripts/isolated_qa_verification_results.json
+scripts/obsolete_pdbs_manifest.json
+scripts/post_cleanup_stats.json
+scripts/pre_cleanup_stats.json
 
+# Storage maintenance utilities (one-off Gate 17.7 tools preserved locally)
+scripts/analyze_storage_categories.js
+scripts/audit_debug_deps_pdbs.js
+scripts/audit_obsolete_pdbs.js
+scripts/audit_test_pdbs_grouped.js
+scripts/cleanup_category_a.js
+scripts/execute_controlled_cleanup.js
+scripts/inventory_f_tori_storage.js
+scripts/measure_cache_regeneration.js
+scripts/measure_post_cleanup_sizes.js
+scripts/measure_pre_cleanup_sizes.js
+scripts/measure_target_items.js
+
+# Local benchmark profiler & standalone graphics asset
+scripts/benchmark_gate17_7_memory.js
+davinci_create_a_highly_realistic__photorealistic_wide_lan.png

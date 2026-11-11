@@ -1,0 +1,605 @@
+﻿{
+  "state1_idle": {
+    "RootPid": 33920,
+    "ProcessesCount": 7,
+    "TotalWorkingSetMB": 406.45,
+    "TotalPrivateMB": 193.95,
+    "TotalHandles": 3810,
+    "Processes": [
+      {
+        "Pid": 33920,
+        "Name": "tori-download-manager",
+        "Role": "Rust Main Engine",
+        "WorkingSetMB": 49.11,
+        "PrivateMB": 12.62,
+        "PeakWorkingSetMB": 49.11,
+        "Handles": 682,
+        "Threads": 35
+      },
+      {
+        "Pid": 24160,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 123.08,
+        "PrivateMB": 37.92,
+        "PeakWorkingSetMB": 123.3,
+        "Handles": 1350,
+        "Threads": 51
+      },
+      {
+        "Pid": 14216,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 12.76,
+        "PrivateMB": 2.58,
+        "PeakWorkingSetMB": 12.76,
+        "Handles": 151,
+        "Threads": 11
+      },
+      {
+        "Pid": 11004,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 GPU Process",
+        "WorkingSetMB": 84.12,
+        "PrivateMB": 86.24,
+        "PeakWorkingSetMB": 85.9,
+        "Handles": 672,
+        "Threads": 31
+      },
+      {
+        "Pid": 34708,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 42.18,
+        "PrivateMB": 11.91,
+        "PeakWorkingSetMB": 42.18,
+        "Handles": 347,
+        "Threads": 25
+      },
+      {
+        "Pid": 2860,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 22.02,
+        "PrivateMB": 7.3,
+        "PeakWorkingSetMB": 22.02,
+        "Handles": 194,
+        "Threads": 11
+      },
+      {
+        "Pid": 32016,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 73.2,
+        "PrivateMB": 35.37,
+        "PeakWorkingSetMB": 73.28,
+        "Handles": 414,
+        "Threads": 15
+      }
+    ]
+  },
+  "state2_active_downloads": {
+    "RootPid": 33920,
+    "ProcessesCount": 8,
+    "TotalWorkingSetMB": 494.59,
+    "TotalPrivateMB": 257.7,
+    "TotalHandles": 4211,
+    "Processes": [
+      {
+        "Pid": 33920,
+        "Name": "tori-download-manager",
+        "Role": "Rust Main Engine",
+        "WorkingSetMB": 51.55,
+        "PrivateMB": 14.13,
+        "PeakWorkingSetMB": 53.85,
+        "Handles": 733,
+        "Threads": 37
+      },
+      {
+        "Pid": 24160,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 129.23,
+        "PrivateMB": 44.32,
+        "PeakWorkingSetMB": 130.78,
+        "Handles": 1389,
+        "Threads": 51
+      },
+      {
+        "Pid": 14216,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 12.76,
+        "PrivateMB": 2.58,
+        "PeakWorkingSetMB": 12.76,
+        "Handles": 158,
+        "Threads": 11
+      },
+      {
+        "Pid": 11004,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 GPU Process",
+        "WorkingSetMB": 88.35,
+        "PrivateMB": 106.03,
+        "PeakWorkingSetMB": 91.2,
+        "Handles": 693,
+        "Threads": 32
+      },
+      {
+        "Pid": 34708,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 42.24,
+        "PrivateMB": 11.94,
+        "PeakWorkingSetMB": 42.24,
+        "Handles": 349,
+        "Threads": 25
+      },
+      {
+        "Pid": 2860,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 22.16,
+        "PrivateMB": 7.32,
+        "PeakWorkingSetMB": 22.16,
+        "Handles": 195,
+        "Threads": 11
+      },
+      {
+        "Pid": 32016,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 82.72,
+        "PrivateMB": 41.32,
+        "PeakWorkingSetMB": 82.84,
+        "Handles": 428,
+        "Threads": 16
+      },
+      {
+        "Pid": 32412,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 65.57,
+        "PrivateMB": 30.05,
+        "PeakWorkingSetMB": 65.69,
+        "Handles": 266,
+        "Threads": 16
+      }
+    ]
+  },
+  "state3_settings_modal": {
+    "RootPid": 33920,
+    "ProcessesCount": 8,
+    "TotalWorkingSetMB": 503.85,
+    "TotalPrivateMB": 274.87,
+    "TotalHandles": 4223,
+    "Processes": [
+      {
+        "Pid": 33920,
+        "Name": "tori-download-manager",
+        "Role": "Rust Main Engine",
+        "WorkingSetMB": 51.52,
+        "PrivateMB": 13.11,
+        "PeakWorkingSetMB": 53.85,
+        "Handles": 729,
+        "Threads": 36
+      },
+      {
+        "Pid": 24160,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 130.18,
+        "PrivateMB": 44.86,
+        "PeakWorkingSetMB": 130.78,
+        "Handles": 1389,
+        "Threads": 51
+      },
+      {
+        "Pid": 14216,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 12.76,
+        "PrivateMB": 2.58,
+        "PeakWorkingSetMB": 12.76,
+        "Handles": 158,
+        "Threads": 11
+      },
+      {
+        "Pid": 11004,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 GPU Process",
+        "WorkingSetMB": 91.62,
+        "PrivateMB": 121.24,
+        "PeakWorkingSetMB": 95.78,
+        "Handles": 693,
+        "Threads": 32
+      },
+      {
+        "Pid": 34708,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 42.29,
+        "PrivateMB": 11.95,
+        "PeakWorkingSetMB": 42.29,
+        "Handles": 349,
+        "Threads": 25
+      },
+      {
+        "Pid": 2860,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 22.16,
+        "PrivateMB": 7.32,
+        "PeakWorkingSetMB": 22.16,
+        "Handles": 195,
+        "Threads": 11
+      },
+      {
+        "Pid": 32016,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 86.31,
+        "PrivateMB": 43.36,
+        "PeakWorkingSetMB": 86.46,
+        "Handles": 444,
+        "Threads": 16
+      },
+      {
+        "Pid": 32412,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 67.02,
+        "PrivateMB": 30.45,
+        "PeakWorkingSetMB": 67.02,
+        "Handles": 266,
+        "Threads": 16
+      }
+    ]
+  },
+  "state4_toast_window": {
+    "RootPid": 33920,
+    "ProcessesCount": 8,
+    "TotalWorkingSetMB": 507.91,
+    "TotalPrivateMB": 295.34,
+    "TotalHandles": 4224,
+    "Processes": [
+      {
+        "Pid": 33920,
+        "Name": "tori-download-manager",
+        "Role": "Rust Main Engine",
+        "WorkingSetMB": 52.25,
+        "PrivateMB": 13.8,
+        "PeakWorkingSetMB": 53.85,
+        "Handles": 732,
+        "Threads": 36
+      },
+      {
+        "Pid": 24160,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 130.26,
+        "PrivateMB": 44.88,
+        "PeakWorkingSetMB": 130.78,
+        "Handles": 1391,
+        "Threads": 51
+      },
+      {
+        "Pid": 14216,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 12.76,
+        "PrivateMB": 2.58,
+        "PeakWorkingSetMB": 12.76,
+        "Handles": 158,
+        "Threads": 11
+      },
+      {
+        "Pid": 11004,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 GPU Process",
+        "WorkingSetMB": 91.93,
+        "PrivateMB": 137.09,
+        "PeakWorkingSetMB": 95.78,
+        "Handles": 692,
+        "Threads": 32
+      },
+      {
+        "Pid": 34708,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 42.29,
+        "PrivateMB": 11.95,
+        "PeakWorkingSetMB": 42.29,
+        "Handles": 349,
+        "Threads": 25
+      },
+      {
+        "Pid": 2860,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 22.16,
+        "PrivateMB": 7.32,
+        "PeakWorkingSetMB": 22.16,
+        "Handles": 195,
+        "Threads": 11
+      },
+      {
+        "Pid": 32016,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 86.66,
+        "PrivateMB": 43.61,
+        "PeakWorkingSetMB": 88.2,
+        "Handles": 441,
+        "Threads": 16
+      },
+      {
+        "Pid": 32412,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 69.61,
+        "PrivateMB": 34.12,
+        "PeakWorkingSetMB": 70.04,
+        "Handles": 266,
+        "Threads": 16
+      }
+    ]
+  },
+  "state5_minimized_tray": {
+    "RootPid": 33920,
+    "ProcessesCount": 7,
+    "TotalWorkingSetMB": 32.04,
+    "TotalPrivateMB": 222.85,
+    "TotalHandles": 3884,
+    "Processes": [
+      {
+        "Pid": 33920,
+        "Name": "tori-download-manager",
+        "Role": "Rust Main Engine",
+        "WorkingSetMB": 6.1,
+        "PrivateMB": 13.55,
+        "PeakWorkingSetMB": 53.85,
+        "Handles": 711,
+        "Threads": 35
+      },
+      {
+        "Pid": 24160,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 15.23,
+        "PrivateMB": 43.58,
+        "PeakWorkingSetMB": 131.8,
+        "Handles": 1359,
+        "Threads": 51
+      },
+      {
+        "Pid": 14216,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 0.12,
+        "PrivateMB": 2.63,
+        "PeakWorkingSetMB": 12.79,
+        "Handles": 151,
+        "Threads": 12
+      },
+      {
+        "Pid": 11004,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 GPU Process",
+        "WorkingSetMB": 0.74,
+        "PrivateMB": 100.21,
+        "PeakWorkingSetMB": 95.78,
+        "Handles": 681,
+        "Threads": 32
+      },
+      {
+        "Pid": 34708,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 2.26,
+        "PrivateMB": 11.95,
+        "PeakWorkingSetMB": 42.35,
+        "Handles": 347,
+        "Threads": 25
+      },
+      {
+        "Pid": 2860,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 0.02,
+        "PrivateMB": 7.32,
+        "PeakWorkingSetMB": 22.29,
+        "Handles": 194,
+        "Threads": 11
+      },
+      {
+        "Pid": 32016,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 7.59,
+        "PrivateMB": 43.61,
+        "PeakWorkingSetMB": 88.2,
+        "Handles": 441,
+        "Threads": 16
+      }
+    ]
+  },
+  "state_post_workload": {
+    "RootPid": 33920,
+    "ProcessesCount": 8,
+    "TotalWorkingSetMB": 299.87,
+    "TotalPrivateMB": 278.8,
+    "TotalHandles": 4319,
+    "Processes": [
+      {
+        "Pid": 33920,
+        "Name": "tori-download-manager",
+        "Role": "Rust Main Engine",
+        "WorkingSetMB": 21.5,
+        "PrivateMB": 14.84,
+        "PeakWorkingSetMB": 53.85,
+        "Handles": 725,
+        "Threads": 34
+      },
+      {
+        "Pid": 24160,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 67.9,
+        "PrivateMB": 46.82,
+        "PeakWorkingSetMB": 131.8,
+        "Handles": 1402,
+        "Threads": 51
+      },
+      {
+        "Pid": 14216,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 13.13,
+        "PrivateMB": 3.47,
+        "PeakWorkingSetMB": 13.13,
+        "Handles": 216,
+        "Threads": 12
+      },
+      {
+        "Pid": 11004,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 GPU Process",
+        "WorkingSetMB": 55.01,
+        "PrivateMB": 112.93,
+        "PeakWorkingSetMB": 95.78,
+        "Handles": 692,
+        "Threads": 32
+      },
+      {
+        "Pid": 34708,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 9.2,
+        "PrivateMB": 11.88,
+        "PeakWorkingSetMB": 42.35,
+        "Handles": 346,
+        "Threads": 25
+      },
+      {
+        "Pid": 2860,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 2.24,
+        "PrivateMB": 7.32,
+        "PeakWorkingSetMB": 22.29,
+        "Handles": 195,
+        "Threads": 11
+      },
+      {
+        "Pid": 32016,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 60.75,
+        "PrivateMB": 49.37,
+        "PeakWorkingSetMB": 88.2,
+        "Handles": 476,
+        "Threads": 23
+      },
+      {
+        "Pid": 12328,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 70.14,
+        "PrivateMB": 32.17,
+        "PeakWorkingSetMB": 70.15,
+        "Handles": 267,
+        "Threads": 16
+      }
+    ]
+  },
+  "state_post_workload_trimmed": {
+    "RootPid": 33920,
+    "ProcessesCount": 8,
+    "TotalWorkingSetMB": 102.65,
+    "TotalPrivateMB": 279.56,
+    "TotalHandles": 4326,
+    "Processes": [
+      {
+        "Pid": 33920,
+        "Name": "tori-download-manager",
+        "Role": "Rust Main Engine",
+        "WorkingSetMB": 9.89,
+        "PrivateMB": 14.16,
+        "PeakWorkingSetMB": 53.85,
+        "Handles": 722,
+        "Threads": 34
+      },
+      {
+        "Pid": 24160,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 22.38,
+        "PrivateMB": 46.82,
+        "PeakWorkingSetMB": 131.8,
+        "Handles": 1404,
+        "Threads": 51
+      },
+      {
+        "Pid": 14216,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Browser Process",
+        "WorkingSetMB": 0.02,
+        "PrivateMB": 3.47,
+        "PeakWorkingSetMB": 13.13,
+        "Handles": 216,
+        "Threads": 12
+      },
+      {
+        "Pid": 11004,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 GPU Process",
+        "WorkingSetMB": 24.01,
+        "PrivateMB": 114.06,
+        "PeakWorkingSetMB": 95.78,
+        "Handles": 697,
+        "Threads": 32
+      },
+      {
+        "Pid": 34708,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 3.66,
+        "PrivateMB": 11.88,
+        "PeakWorkingSetMB": 42.35,
+        "Handles": 346,
+        "Threads": 25
+      },
+      {
+        "Pid": 2860,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Utility Process",
+        "WorkingSetMB": 0.02,
+        "PrivateMB": 7.32,
+        "PeakWorkingSetMB": 22.29,
+        "Handles": 195,
+        "Threads": 11
+      },
+      {
+        "Pid": 32016,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 15.8,
+        "PrivateMB": 49.38,
+        "PeakWorkingSetMB": 88.2,
+        "Handles": 476,
+        "Threads": 23
+      },
+      {
+        "Pid": 12328,
+        "Name": "msedgewebview2",
+        "Role": "WebView2 Renderer Process",
+        "WorkingSetMB": 26.88,
+        "PrivateMB": 32.46,
+        "PeakWorkingSetMB": 70.15,
+        "Handles": 270,
+        "Threads": 16
+      }
+    ]
+  }
+}

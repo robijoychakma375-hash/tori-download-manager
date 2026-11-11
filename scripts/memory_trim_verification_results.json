@@ -1,0 +1,30 @@
+﻿{
+  "testTimestamp": "2026-11-09T13:55:43.520Z",
+  "memBefore": {
+    "RootWS": 49.1,
+    "RootPriv": 12.76,
+    "TreeWS": 403.66,
+    "TreePriv": 190.79,
+    "ProcCount": 7
+  },
+  "memAfterMin": {
+    "RootWS": 6.78,
+    "RootPriv": 12.79,
+    "TreeWS": 38.33,
+    "TreePriv": 191.75,
+    "ProcCount": 7
+  },
+  "rustWsReductionPct": 86.2,
+  "treeWsReductionPct": 90.5,
+  "restoreLatencyMs": 2.9608,
+  "uiEvalDomMs": 0.19999999925494194,
+  "cdpRttMs": 1.0736,
+  "cycleLatencies": [
+    1.7788,
+    2.5271,
+    1.6021,
+    2.8479,
+    1.2681
+  ],
+  "averageRestoreLatencyMs": 2
+}
