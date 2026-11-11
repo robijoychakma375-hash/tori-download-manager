@@ -1,0 +1,181 @@
+{
+  "gate": "Gate 23.2 — v1.0.3 Production Build & Extension Packaging",
+  "timestamp": "2026-11-11T18:00:50.509Z",
+  "totalTests": 34,
+  "passedTests": 34,
+  "failedTests": 0,
+  "installerPath": "F:\\TORI\\final tori download manager\\release\\v1.0.3-final\\TORI Download Manager_1.0.3_x64-setup.exe",
+  "installerSha256": "3804727ebeeeb1ed20de5e81f498f9adb01323481ec767c6813e6f77f1e890f5",
+  "results": [
+    {
+      "test": "Cargo.toml workspace package version is 1.0.3 (got: 1.0.3)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "src-tauri/tauri.conf.json version is 1.0.3 (got: 1.0.3)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "ui/package.json version is 1.0.3 (got: 1.0.3)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "extension/manifest.json version is 1.0.3 (got: 1.0.3)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "extension/firefox/manifest.json version is 1.0.3 (got: 1.0.3)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Installer file exists at F:\\TORI\\final tori download manager\\release\\v1.0.3-final\\TORI Download Manager_1.0.3_x64-setup.exe",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Installer size is valid (>100MB, got: 111.66 MB)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Installer PE FileVersion is 1.0.3 (got: 1.0.3)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Signature file exists at F:\\TORI\\final tori download manager\\release\\v1.0.3-final\\TORI Download Manager_1.0.3_x64-setup.exe.sig",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Signature file length is valid (436 chars)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Minisign Ed25519 verification succeeds for v1.0.3 installer against public key CDC23D8C",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Minisign engine strictly rejects tampered installer binary with InvalidSignature",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "latest.json manifest exists at F:\\TORI\\final tori download manager\\release\\v1.0.3-final\\latest.json",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "latest.json version is 1.0.3 (got: 1.0.3)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Manifest provides windows-x86_64 and windows-x86_64-nsis targets",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "windows-x86_64 signature matches .sig file",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "windows-x86_64-nsis signature matches .sig file",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Installer URL accurately targets v1.0.3 GitHub release",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "v1.0.0 -> v1.0.3 upgrade path: remote (1.0.3) > client (1.0.0) -> Update Available",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "v1.0.1 -> v1.0.3 upgrade path: remote (1.0.3) > client (1.0.1) -> Update Available",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "v1.0.2 -> v1.0.3 upgrade path: remote (1.0.3) > client (1.0.2) -> Update Available",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "v1.0.3 -> v1.0.3 check: remote (1.0.3) == client (1.0.3) -> Up to Date (No false loops)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Downgrade protection: remote (1.0.2) < client (1.0.3) -> Downgrade Rejected",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Manifest contains zero local absolute paths",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Manifest contains zero sensitive tokens",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Chromium extension package exists (F:\\TORI\\final tori download manager\\release\\v1.0.3-final\\tori-download-manager-extension-v1.0.3.zip)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Firefox extension package exists (F:\\TORI\\final tori download manager\\release\\v1.0.3-final\\tori-download-manager-firefox-v1.0.3.zip)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Chromium extension package size is valid (73574 bytes)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Firefox extension package size is valid (73299 bytes)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Mozilla web-ext linter reports 0 errors on Firefox extension",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "SHA256SUMS.txt exists at F:\\TORI\\final tori download manager\\release\\v1.0.3-final\\SHA256SUMS.txt",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "All 8 staged file checksums in SHA256SUMS.txt match perfectly",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "Public updater still serves v1.0.2 (got: 1.0.2)",
+      "status": "PASS",
+      "details": null
+    },
+    {
+      "test": "release/v1.0.3-final/ is properly ignored by Git",
+      "status": "PASS",
+      "details": null
+    }
+  ]
+}
