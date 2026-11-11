@@ -56,42 +56,31 @@ const crHash = crypto.createHash('sha256').update(crBuf).digest('hex').toLowerCa
 console.log(`[OK] Created Chromium extension package: ${crZip}`);
 console.log(`     Size: ${crStat.size.toLocaleString()} bytes | SHA-256: ${crHash}`);
 
-// 2. Package Firefox Extension (Unsigned Source Package)
+// 2. Package Firefox Extension (AMO Validated Forward-Slash Package)
 console.log('\n--- Packaging Firefox MV3 Extension v1.0.3 ---');
 const ffZip = path.join(targetDir, 'tori-download-manager-firefox-v1.0.3.zip');
-const tempStagingFf = path.join(PROJECT_ROOT, 'target', 'firefox_ext_v103_staging');
+const amoBuildDir = path.join(PROJECT_ROOT, 'target', 'firefox_amo_build');
 
-if (fs.existsSync(tempStagingFf)) {
-  fs.rmSync(tempStagingFf, { recursive: true, force: true });
+if (fs.existsSync(amoBuildDir)) {
+  fs.rmSync(amoBuildDir, { recursive: true, force: true });
 }
-fs.mkdirSync(tempStagingFf, { recursive: true });
+fs.mkdirSync(amoBuildDir, { recursive: true });
 
-function copyRecursive(src, dst) {
-  const entries = fs.readdirSync(src, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.name === '.git' || entry.name.endsWith('.tmp')) continue;
-    const s = path.join(src, entry.name);
-    const d = path.join(dst, entry.name);
-    if (entry.isDirectory()) {
-      fs.mkdirSync(d, { recursive: true });
-      copyRecursive(s, d);
-    } else {
-      fs.copyFileSync(s, d);
-    }
-  }
+// Use Mozilla's official web-ext toolchain to guarantee forward-slash ZIP entry formatting
+console.log('Invoking web-ext build for strict Mozilla AMO compatibility...');
+execSync(`npx web-ext build --source-dir "${ffDir}" --artifacts-dir "${amoBuildDir}" --overwrite-dest`, {
+  cwd: PROJECT_ROOT,
+  stdio: 'inherit'
+});
+
+const builtZips = fs.readdirSync(amoBuildDir).filter(f => f.endsWith('.zip'));
+if (builtZips.length === 0) {
+  throw new Error('web-ext build did not produce any zip package!');
 }
 
-copyRecursive(ffDir, tempStagingFf);
-
-if (fs.existsSync(ffZip)) {
-  fs.unlinkSync(ffZip);
-}
-
-execSync(
-  `powershell -NoProfile -Command "Compress-Archive -Path '${tempStagingFf}\\*' -DestinationPath '${ffZip}' -Force"`,
-  { stdio: 'inherit' }
-);
-fs.rmSync(tempStagingFf, { recursive: true, force: true });
+const generatedZipPath = path.join(amoBuildDir, builtZips[0]);
+fs.copyFileSync(generatedZipPath, ffZip);
+fs.rmSync(amoBuildDir, { recursive: true, force: true });
 
 const ffStat = fs.statSync(ffZip);
 const ffBuf = fs.readFileSync(ffZip);

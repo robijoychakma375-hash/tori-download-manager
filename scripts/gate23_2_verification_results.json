@@ -1,6 +1,6 @@
 {
   "gate": "Gate 23.2 — v1.0.3 Production Build & Extension Packaging",
-  "timestamp": "2026-11-11T18:00:50.509Z",
+  "timestamp": "2026-11-11T18:31:16.534Z",
   "totalTests": 34,
   "passedTests": 34,
   "failedTests": 0,
@@ -148,7 +148,7 @@
       "details": null
     },
     {
-      "test": "Firefox extension package size is valid (73299 bytes)",
+      "test": "Firefox extension package size is valid (73887 bytes)",
       "status": "PASS",
       "details": null
     },
