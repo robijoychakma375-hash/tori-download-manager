@@ -34,11 +34,13 @@ fn is_transient_error(err: &EngineError) -> bool {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn flush_worker_buffer<F>(
     writer: &PartFileWriter,
     chunk: &mut ChunkRecord,
     buf_start_offset: &mut u64,
     write_buf: &mut Vec<u8>,
+    end_bound: Option<&Arc<AtomicU64>>,
     progress_atomic: Option<&Arc<AtomicU64>>,
     uncheckpointed_bytes: &mut u64,
     unflushed_disk_bytes: &mut u64,
@@ -48,7 +50,17 @@ fn flush_worker_buffer<F>(
 where
     F: FnMut(u64),
 {
+    let current_bound = end_bound
+        .map(|b| b.load(Ordering::SeqCst))
+        .unwrap_or(chunk.end_byte);
+    let max_len = (current_bound + 1).saturating_sub(*buf_start_offset) as usize;
+    if write_buf.len() > max_len {
+        write_buf.truncate(max_len);
+    }
     if write_buf.is_empty() {
+        if let Some(p) = progress_atomic {
+            p.store(chunk.written_bytes, Ordering::SeqCst);
+        }
         return Ok(());
     }
     writer.write_at(*buf_start_offset, write_buf)?;
@@ -290,6 +302,7 @@ where
                         chunk,
                         &mut buf_start_offset,
                         &mut write_buf,
+                        end_bound.as_ref(),
                         progress_atomic.as_ref(),
                         &mut uncheckpointed_bytes,
                         &mut unflushed_disk_bytes,
@@ -349,6 +362,12 @@ where
                     l.acquire(actual_bytes.len() as u64).await;
                 }
                 write_buf.extend_from_slice(actual_bytes);
+                if let Some(p) = progress_atomic.as_ref() {
+                    p.store(
+                        chunk.written_bytes + (write_buf.len() as u64),
+                        Ordering::SeqCst,
+                    );
+                }
 
                 let reached_bound =
                     chunk.start_byte + chunk.written_bytes + (write_buf.len() as u64)
@@ -364,6 +383,7 @@ where
                         chunk,
                         &mut buf_start_offset,
                         &mut write_buf,
+                        end_bound.as_ref(),
                         progress_atomic.as_ref(),
                         &mut uncheckpointed_bytes,
                         &mut unflushed_disk_bytes,
@@ -397,6 +417,7 @@ where
                     chunk,
                     &mut buf_start_offset,
                     &mut write_buf,
+                    end_bound.as_ref(),
                     progress_atomic.as_ref(),
                     &mut uncheckpointed_bytes,
                     &mut unflushed_disk_bytes,
@@ -428,6 +449,7 @@ where
             chunk,
             &mut buf_start_offset,
             &mut write_buf,
+            end_bound.as_ref(),
             progress_atomic.as_ref(),
             &mut uncheckpointed_bytes,
             &mut unflushed_disk_bytes,

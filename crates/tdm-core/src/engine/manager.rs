@@ -1898,8 +1898,17 @@ impl DownloadManager {
                     && consecutive_worker_failures == 0
                     && join_set.len() < effective_max_concurrency
                 {
-                    // Safe Straggler Tail Splitting:
-                    if let Some(plan) = adaptive_scheduler.evaluate_straggler_split(&current_chunks)
+                    // Safe Straggler Tail Splitting (using live in-memory atomic progress):
+                    let mut live_chunks = current_chunks.clone();
+                    {
+                        let prog_guard = active_chunk_progress.lock().unwrap();
+                        for c in &mut live_chunks {
+                            if let Some(p) = prog_guard.get(&c.chunk_index) {
+                                c.written_bytes = c.written_bytes.max(p.load(Ordering::SeqCst));
+                            }
+                        }
+                    }
+                    if let Some(plan) = adaptive_scheduler.evaluate_straggler_split(&live_chunks)
                     {
                         if let Some(permit) = governor.acquire_permit(&host) {
                             let orig_bound_opt = active_chunk_bounds
@@ -1916,7 +1925,7 @@ impl DownloadManager {
                             if let (Some(orig_bound), Some(orig_prog)) =
                                 (orig_bound_opt, orig_prog_opt)
                             {
-                                let orig_chunk = current_chunks
+                                let orig_chunk = live_chunks
                                     .iter()
                                     .find(|c| c.chunk_index == plan.original_index);
                                 let orig_start = orig_chunk.map(|c| c.start_byte).unwrap_or(0);
@@ -2002,6 +2011,9 @@ impl DownloadManager {
                                             .await;
                                             (idx, res.map(|()| new_chunk.written_bytes))
                                         });
+                                    } else {
+                                        // Split aborted because original worker raced past split_start; restore original end bound!
+                                        orig_bound.store(plan.original_end, Ordering::SeqCst);
                                     }
                                 }
                             }
