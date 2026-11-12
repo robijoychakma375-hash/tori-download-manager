@@ -484,6 +484,23 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().to_rfc3339();
 
+        // 0. Synchronize downloads.downloaded_bytes from chunk progress so interrupted multi-chunk
+        // downloads always reflect their exact persisted byte count after a crash or restart.
+        conn.execute(
+            "UPDATE downloads
+             SET downloaded_bytes = (
+                 SELECT COALESCE(SUM(written_bytes), 0)
+                 FROM download_chunks
+                 WHERE download_chunks.download_id = downloads.id
+             )
+             WHERE state IN ('downloading', 'probing', 'pausing', 'verifying', 'paused', 'failed')
+               AND EXISTS (
+                 SELECT 1 FROM download_chunks
+                 WHERE download_chunks.download_id = downloads.id AND written_bytes > 0
+             )",
+            [],
+        )?;
+
         // 1. Any job that was actively downloading, probing or pausing when the process terminated
         // should be safely marked as Paused so the user or scheduler can resume without false completed state.
         conn.execute(

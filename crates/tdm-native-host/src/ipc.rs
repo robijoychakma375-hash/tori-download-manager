@@ -156,9 +156,16 @@ pub fn locate_desktop_binary() -> Option<PathBuf> {
         return Some(cwd_cand);
     }
 
-    // 4. User profile LocalAppData installation (standard Tauri NSIS target)
+    // 4. User profile LocalAppData installation (standard Tauri NSIS targets)
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let nsis_user_cand = PathBuf::from(local_app_data)
+        let nsis_direct_cand = PathBuf::from(&local_app_data)
+            .join("TORI Download Manager")
+            .join("tori-download-manager.exe");
+        if nsis_direct_cand.exists() {
+            return Some(nsis_direct_cand);
+        }
+
+        let nsis_user_cand = PathBuf::from(&local_app_data)
             .join("Programs")
             .join("TORI Download Manager")
             .join("tori-download-manager.exe");
@@ -181,10 +188,20 @@ pub fn locate_desktop_binary() -> Option<PathBuf> {
 }
 
 /// Ensures the persistent desktop engine is active.
-/// If not already active, launches `tori-download-manager.exe` in background mode.
+/// If not already active, launches `tori-download-manager.exe` in background mode,
+/// strictly detaching standard I/O handles and breaking away from the browser's
+/// Native Messaging Job Object so the desktop engine is not terminated when the
+/// short-lived native host process exits.
 pub async fn ensure_engine_running() -> bool {
     if try_connect_engine().is_ok() {
         return true;
+    }
+
+    if std::env::var("TORI_DISABLE_AUTO_SPAWN")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return false;
     }
 
     if let Some(exe_path) = locate_desktop_binary() {
@@ -192,26 +209,72 @@ pub async fn ensure_engine_running() -> bool {
             "[TORI Native Host] Spawning persistent desktop engine: {:?}",
             exe_path
         );
-        let mut cmd = Command::new(&exe_path);
-        cmd.arg("--minimized");
+
         #[cfg(windows)]
         {
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            use std::os::windows::io::AsRawHandle;
+            const HANDLE_FLAG_INHERIT: u32 = 0x0000_0001;
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn SetHandleInformation(
+                    h_object: *mut std::ffi::c_void,
+                    dw_mask: u32,
+                    dw_flags: u32,
+                ) -> i32;
+            }
+            unsafe {
+                let _ = SetHandleInformation(
+                    io::stdin().as_raw_handle() as *mut std::ffi::c_void,
+                    HANDLE_FLAG_INHERIT,
+                    0,
+                );
+                let _ = SetHandleInformation(
+                    io::stdout().as_raw_handle() as *mut std::ffi::c_void,
+                    HANDLE_FLAG_INHERIT,
+                    0,
+                );
+                let _ = SetHandleInformation(
+                    io::stderr().as_raw_handle() as *mut std::ffi::c_void,
+                    HANDLE_FLAG_INHERIT,
+                    0,
+                );
+            }
         }
-        if let Ok(dir) = std::env::var("TORI_DATA_DIR") {
-            cmd.env("TORI_DATA_DIR", dir);
-        }
-        if let Ok(pipe) = std::env::var("TORI_IPC_PIPE") {
-            cmd.env("TORI_IPC_PIPE", pipe);
-        }
-        if let Ok(lb) = std::env::var("TORI_ALLOW_LOOPBACK") {
-            cmd.env("TORI_ALLOW_LOOPBACK", lb);
-        }
-        let _ = cmd.spawn();
 
-        // Wait up to 3000ms for Named Pipe to become ready
+        let build_cmd = |flags: u32| -> Command {
+            let mut cmd = Command::new(&exe_path);
+            cmd.arg("--minimized");
+            cmd.stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            {
+                cmd.creation_flags(flags);
+            }
+            if let Ok(dir) = std::env::var("TORI_DATA_DIR") {
+                cmd.env("TORI_DATA_DIR", dir);
+            }
+            if let Ok(pipe) = std::env::var("TORI_IPC_PIPE") {
+                cmd.env("TORI_IPC_PIPE", pipe);
+            }
+            if let Ok(lb) = std::env::var("TORI_ALLOW_LOOPBACK") {
+                cmd.env("TORI_ALLOW_LOOPBACK", lb);
+            }
+            cmd
+        };
+
+        // CREATE_BREAKAWAY_FROM_JOB (0x01000000) | CREATE_NEW_PROCESS_GROUP (0x00000200) | DETACHED_PROCESS (0x00000008)
+        let breakaway_flags: u32 = 0x0100_0000 | 0x0000_0200 | 0x0000_0008;
+        // Fallback if parent Job Object does not allow breakaway: CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+        let fallback_flags: u32 = 0x0000_0200 | 0x0800_0000;
+
+        if build_cmd(breakaway_flags).spawn().is_err() {
+            let _ = build_cmd(fallback_flags).spawn();
+        }
+
+        // Wait up to 6000ms for Named Pipe to become ready
         let start = std::time::Instant::now();
-        while start.elapsed() < Duration::from_millis(3000) {
+        while start.elapsed() < Duration::from_millis(6000) {
             tokio::time::sleep(Duration::from_millis(50)).await;
             if try_connect_engine().is_ok() {
                 return true;

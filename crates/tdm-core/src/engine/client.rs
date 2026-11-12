@@ -12,13 +12,19 @@ pub fn build_http_client() -> Result<Client> {
         ),
     );
 
+    // Note: Do NOT set `.timeout(...)` on the global Client because in reqwest `.timeout(...)`
+    // enforces a hard wall-clock deadline across the entire response body stream, which aborts
+    // multi-gigabyte downloads after 60 seconds even while actively transferring bytes.
+    // Instead, use `.connect_timeout` + `.read_timeout` (per-read idle timeout) and explicit
+    // header/idle-progress timeouts in probe.rs and worker.rs.
     let client = Client::builder()
         .default_headers(default_headers)
         .redirect(reqwest::redirect::Policy::limited(10))
         .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(60))
+        .read_timeout(Duration::from_secs(45))
         .pool_idle_timeout(Duration::from_secs(90))
-        .pool_max_idle_per_host(10)
+        .pool_max_idle_per_host(16)
+        .tcp_keepalive(Duration::from_secs(30))
         .build()?;
 
     Ok(client)

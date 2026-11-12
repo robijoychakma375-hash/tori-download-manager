@@ -131,8 +131,11 @@ pub async fn probe_url_with_options(
         ));
     }
 
-    // Attempt 1: HEAD request
-    let mut head_req = client.head(raw_url).header(ACCEPT_ENCODING, "identity");
+    // Attempt 1: HEAD request (bounded to 4s so slow/ignored HEAD does not delay handoff)
+    let mut head_req = client
+        .head(raw_url)
+        .header(ACCEPT_ENCODING, "identity")
+        .timeout(std::time::Duration::from_secs(4));
     head_req = crate::engine::referer::apply_referer(head_req, referer, raw_url);
     head_req = crate::engine::user_agent::apply_user_agent(head_req, user_agent);
     let head_response = head_req.send().await;
@@ -196,7 +199,8 @@ pub async fn probe_url_with_options(
         let mut req = client
             .get(probe_target_url)
             .header(RANGE, "bytes=0-0")
-            .header(ACCEPT_ENCODING, "identity");
+            .header(ACCEPT_ENCODING, "identity")
+            .timeout(std::time::Duration::from_secs(12));
         req = crate::engine::referer::apply_referer(req, referer, probe_target_url);
         req = crate::engine::user_agent::apply_user_agent(req, user_agent);
 

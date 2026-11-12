@@ -371,17 +371,21 @@ export function App() {
     });
   };
 
-  // Synchronize settings with Rust backend on startup
+  // Synchronize settings with Rust backend on startup (SQLite app_settings is authoritative)
   useEffect(() => {
     const syncSettings = async () => {
       try {
         const backendSettings = await invoke<AppSettings | null>('get_engine_settings');
         if (backendSettings) {
           setSettings((prev) => {
-            const merged = { ...prev, ...backendSettings };
-            if (merged.closeToTray === undefined) {
-              merged.closeToTray = true;
-            }
+            const merged: AppSettings = {
+              ...prev,
+              ...backendSettings,
+              closeToTray:
+                typeof backendSettings.closeToTray === 'boolean'
+                  ? backendSettings.closeToTray
+                  : true,
+            };
             try {
               localStorage.setItem('tori_settings_v2', JSON.stringify(merged));
             } catch {
@@ -390,7 +394,16 @@ export function App() {
             return merged;
           });
         } else {
-          await invoke('update_engine_settings', { settings });
+          // Fresh SQLite database: ensure closeToTray defaults to true on first initialization
+          // so stale WebView2 localStorage from prior sessions cannot silently disable tray mode.
+          const initial: AppSettings = { ...settings, closeToTray: true };
+          setSettings(initial);
+          try {
+            localStorage.setItem('tori_settings_v2', JSON.stringify(initial));
+          } catch {
+            // ignore
+          }
+          await invoke('update_engine_settings', { settings: initial });
         }
       } catch (err) {
         console.error('Failed to sync engine settings:', err);

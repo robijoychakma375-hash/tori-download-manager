@@ -443,9 +443,9 @@ pub async fn window_close(
     );
     if window.label() == "main" {
         if close_to_tray {
-            let res = window.hide().map_err(|e| e.to_string());
-            crate::lifecycle::trim_memory();
-            res
+            let app = window.app_handle().clone();
+            crate::tray::hide_main_window(&app);
+            Ok(())
         } else {
             let app = window.app_handle().clone();
             crate::tray::perform_clean_exit(&app, &state.manager);

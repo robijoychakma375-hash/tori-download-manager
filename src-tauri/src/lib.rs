@@ -14,15 +14,25 @@ use commands::*;
 use state::AppState;
 
 pub fn run() {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
     lifecycle::install_panic_hook();
+    let raw_args: Vec<String> = std::env::args().collect();
     lifecycle::log_event(
         "APP",
         "STARTUP",
-        "Initializing TORI Download Manager desktop application",
+        &format!(
+            "Initializing TORI Download Manager desktop application (args={:?})",
+            raw_args
+        ),
     );
 
-    let is_minimized = std::env::args().any(|a| a == "--minimized");
+    let is_minimized = raw_args.iter().any(|a| a == "--minimized");
+    let force_enable_close_to_tray = raw_args.iter().any(|a| a == "--enable-close-to-tray")
+        || std::env::var("TORI_ENABLE_CLOSE_TO_TRAY")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
 
     // Single-Instance Check: If a primary instance is already active with the Named Pipe server,
     // request that the primary instance bring its window to the foreground, then exit cleanly.
@@ -41,14 +51,7 @@ pub fn run() {
                     eprintln!("[TORI] An active instance of TORI Download Manager is already running. Focusing primary window and exiting secondary process.");
                     let msg = tdm_native_host::protocol::NativeMessage {
                         action: "show_window".to_string(),
-                        url: None,
-                        filename: None,
-                        destination: None,
-                        priority: None,
-                        job_id: None,
-                        referer: None,
-                        user_agent: None,
-                        scheduled_at: None,
+                        ..Default::default()
                     };
                     let _ = tdm_native_host::ipc::forward_to_persistent_engine(&msg).await;
                 }
@@ -78,6 +81,16 @@ pub fn run() {
         let _ = fs::create_dir_all(&data_dir);
     }
 
+    // Isolate WebView2 user profile whenever TORI_DATA_DIR is set so QA/test runs
+    // never share or pollute the user's production WebView2 localStorage.
+    if std::env::var("TORI_DATA_DIR").is_ok()
+        && std::env::var("WEBVIEW2_USER_DATA_FOLDER").is_err()
+    {
+        let isolated_webview = data_dir.join("EBWebView");
+        let _ = fs::create_dir_all(&isolated_webview);
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &isolated_webview);
+    }
+
     let db_path = data_dir.join("tdm_storage.sqlite");
     let db = Database::open(&db_path).expect("Failed to initialize TDM SQLite database");
     let event_bus = EventBus::default();
@@ -86,6 +99,26 @@ pub fn run() {
         DownloadManager::new(db.clone(), event_bus.clone())
             .expect("Failed to initialize TDM Download Manager"),
     );
+
+    if force_enable_close_to_tray {
+        let mut settings_obj = db
+            .get_setting("app_settings")
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        if let Some(map) = settings_obj.as_object_mut() {
+            map.insert("closeToTray".to_string(), serde_json::Value::Bool(true));
+        }
+        if let Ok(serialized) = serde_json::to_string(&settings_obj) {
+            let _ = db.set_setting("app_settings", &serialized);
+            lifecycle::log_event(
+                "APP",
+                "CLOSE_TO_TRAY_ENABLED",
+                "Explicitly enabled closeToTray in app_settings via flag/env without resetting other settings",
+            );
+        }
+    }
 
     // Restore persisted engine settings from SQLite if present
     if let Ok(Some(saved)) = db.get_setting("app_settings") {
@@ -217,25 +250,32 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let app_handle = window.app_handle();
-                let state = app_handle.state::<AppState>();
-                let close_to_tray = tray::is_close_to_tray_enabled(&state.manager);
-                lifecycle::log_event(
-                    "WINDOW",
-                    "CLOSE_REQUESTED",
-                    &format!("label={}, close_to_tray={}", window.label(), close_to_tray),
-                );
-                if window.label() == "main" {
-                    if close_to_tray {
-                        api.prevent_close();
-                        let _ = window.hide();
-                        lifecycle::trim_memory();
-                    } else {
-                        api.prevent_close();
-                        tray::perform_clean_exit(app_handle, &state.manager);
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    let app_handle = window.app_handle();
+                    let state = app_handle.state::<AppState>();
+                    let close_to_tray = tray::is_close_to_tray_enabled(&state.manager);
+                    lifecycle::log_event(
+                        "WINDOW",
+                        "CLOSE_REQUESTED",
+                        &format!("label={}, close_to_tray={}", window.label(), close_to_tray),
+                    );
+                    if window.label() == "main" {
+                        if close_to_tray {
+                            api.prevent_close();
+                            tray::hide_main_window(app_handle);
+                        } else {
+                            api.prevent_close();
+                            tray::perform_clean_exit(app_handle, &state.manager);
+                        }
                     }
                 }
+                tauri::WindowEvent::Destroyed => {
+                    if window.label() == "main" {
+                        lifecycle::log_event("WINDOW", "DESTROYED", "label=main");
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -289,8 +329,8 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Error while building TORI Download Manager desktop application");
 
-    app.run(|app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::ExitRequested { code, api, .. } => {
             lifecycle::log_event("APP", "EXIT_REQUESTED", &format!("code={:?}", code));
             if code.is_none() {
                 let state = app_handle.state::<AppState>();
@@ -316,5 +356,9 @@ pub fn run() {
                 );
             }
         }
+        tauri::RunEvent::Exit => {
+            lifecycle::log_event("APP", "PROCESS_EXIT", "Tauri RunEvent::Exit reached");
+        }
+        _ => {}
     });
 }

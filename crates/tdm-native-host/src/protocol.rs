@@ -22,6 +22,8 @@ pub struct NativeMessage {
     pub user_agent: Option<String>,
     #[serde(default)]
     pub scheduled_at: Option<String>,
+    #[serde(default)]
+    pub handoff_id: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

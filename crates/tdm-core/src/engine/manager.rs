@@ -40,6 +40,9 @@ pub struct DownloadManager {
     default_download_dir: Arc<Mutex<Option<String>>>,
     use_category_by_default: Arc<std::sync::atomic::AtomicBool>,
     scheduler_notify: Arc<tokio::sync::Notify>,
+    in_flight_creations: Arc<Mutex<HashMap<String, Arc<tokio::sync::Notify>>>>,
+    recent_handoffs: Arc<Mutex<HashMap<String, (String, Instant)>>>,
+    path_alloc_lock: Arc<Mutex<()>>,
 }
 
 impl DownloadManager {
@@ -94,6 +97,9 @@ impl DownloadManager {
         let governor = ConcurrencyGovernor::new(gov_config);
         let adaptive_scheduler = Arc::new(AdaptiveScheduler::new(adaptive_config));
         let torrent_manager = Arc::new(tokio::sync::OnceCell::new());
+        let in_flight_creations = Arc::new(Mutex::new(HashMap::new()));
+        let recent_handoffs = Arc::new(Mutex::new(HashMap::new()));
+        let path_alloc_lock = Arc::new(Mutex::new(()));
 
         // Event-driven background download scheduler loop
         let db_sched = db.clone();
@@ -205,6 +211,9 @@ impl DownloadManager {
             default_download_dir,
             use_category_by_default,
             scheduler_notify,
+            in_flight_creations,
+            recent_handoffs,
+            path_alloc_lock,
         };
 
         // Automatically process queue on startup to start any queued or overdue downloads
@@ -581,6 +590,206 @@ impl DownloadManager {
         .await
     }
 
+    fn allocate_unique_paths(&self, dir: &Path, base_filename: &str) -> (PathBuf, PathBuf) {
+        let existing_jobs = self.db.list_jobs().unwrap_or_default();
+        let mut target_path = dir.join(base_filename);
+        let mut counter = 1u32;
+
+        loop {
+            let temp_filename = format!(
+                "{}.tdm-part",
+                target_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("download.bin")
+            );
+            let temp_path = dir.join(&temp_filename);
+
+            let target_norm = target_path.to_string_lossy().replace('/', "\\").to_lowercase();
+            let temp_norm = temp_path.to_string_lossy().replace('/', "\\").to_lowercase();
+
+            let used_by_existing_job = existing_jobs.iter().any(|j| {
+                j.state != JobState::Cancelled && {
+                    let jt = j.target_path.replace('/', "\\").to_lowercase();
+                    let jtmp = j.temp_path.replace('/', "\\").to_lowercase();
+                    jt == target_norm
+                        || jtmp == temp_norm
+                        || jt == temp_norm
+                        || jtmp == target_norm
+                }
+            });
+
+            if !target_path.exists() && !temp_path.exists() && !used_by_existing_job {
+                return (target_path, temp_path);
+            }
+
+            let stem = Path::new(base_filename)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("file");
+            let ext = Path::new(base_filename)
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|e| format!(".{}", e))
+                .unwrap_or_default();
+            target_path = dir.join(format!("{} ({}){}", stem, counter, ext));
+            counter += 1;
+        }
+    }
+
+    fn find_active_or_completed_job_for_url(&self, trimmed_url: &str) -> Option<DownloadJob> {
+        self.db.list_jobs().ok()?.into_iter().find(|j| {
+            j.url == trimmed_url
+                && j.state != JobState::Failed
+                && j.state != JobState::Cancelled
+        })
+    }
+
+    /// Idempotent handoff & creation entrypoint used by the HTTP API and Native Messaging.
+    /// Coalesces concurrent/fallback creation requests for the same `handoff_id` or `url`
+    /// while probing is in-flight, returning `(job, already_existed)`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_or_coalesce_download<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        destination_dir: P,
+        priority: Priority,
+        referer: Option<String>,
+        user_agent: Option<String>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+        handoff_id: Option<&str>,
+    ) -> Result<(DownloadJob, bool)> {
+        let trimmed_url = url.trim();
+        let clean_handoff = handoff_id.map(|s| s.trim()).filter(|s| !s.is_empty());
+
+        // 1. Check recent handoff ID cache (120s TTL)
+        if let Some(hid) = clean_handoff {
+            let cached_job_id = {
+                let mut guard = self.recent_handoffs.lock().unwrap();
+                let now = Instant::now();
+                guard.retain(|_, (_, ts)| now.duration_since(*ts) < Duration::from_secs(120));
+                guard.get(hid).map(|(jid, _)| jid.clone())
+            };
+            if let Some(jid) = cached_job_id {
+                if let Ok(Some(existing)) = self.db.get_job(&jid) {
+                    if existing.state != JobState::Failed && existing.state != JobState::Cancelled {
+                        return Ok((existing, true));
+                    }
+                }
+            }
+        }
+
+        // 2. Check existing persisted jobs in SQLite
+        if let Some(existing) = self.find_active_or_completed_job_for_url(trimmed_url) {
+            if let Some(hid) = clean_handoff {
+                self.recent_handoffs
+                    .lock()
+                    .unwrap()
+                    .insert(hid.to_string(), (existing.id.clone(), Instant::now()));
+            }
+            return Ok((existing, true));
+        }
+
+        // 3. Check or register in-flight probe/creation for this URL / handoff_id
+        let inflight_key = trimmed_url.to_string();
+        let existing_notify = {
+            let mut map = self.in_flight_creations.lock().unwrap();
+            if let Some(n) = map.get(&inflight_key) {
+                Some(n.clone())
+            } else if let Some(hid) = clean_handoff {
+                if let Some(n) = map.get(hid) {
+                    Some(n.clone())
+                } else {
+                    let n = Arc::new(tokio::sync::Notify::new());
+                    map.insert(inflight_key.clone(), n.clone());
+                    map.insert(hid.to_string(), n);
+                    None
+                }
+            } else {
+                let n = Arc::new(tokio::sync::Notify::new());
+                map.insert(inflight_key.clone(), n);
+                None
+            }
+        };
+
+        if let Some(notify) = existing_notify {
+            // Another request is currently probing this exact URL/handoff_id; wait for it to finish
+            let _ = tokio::time::timeout(Duration::from_secs(20), notify.notified()).await;
+            if let Some(hid) = clean_handoff {
+                let cached_job_id = self
+                    .recent_handoffs
+                    .lock()
+                    .unwrap()
+                    .get(hid)
+                    .map(|(jid, _)| jid.clone());
+                if let Some(jid) = cached_job_id {
+                    if let Ok(Some(existing)) = self.db.get_job(&jid) {
+                        if existing.state != JobState::Failed
+                            && existing.state != JobState::Cancelled
+                        {
+                            return Ok((existing, true));
+                        }
+                    }
+                }
+            }
+            if let Some(existing) = self.find_active_or_completed_job_for_url(trimmed_url) {
+                if let Some(hid) = clean_handoff {
+                    self.recent_handoffs
+                        .lock()
+                        .unwrap()
+                        .insert(hid.to_string(), (existing.id.clone(), Instant::now()));
+                }
+                return Ok((existing, true));
+            }
+        }
+
+        struct InFlightCleanup<'a> {
+            map: &'a Arc<Mutex<HashMap<String, Arc<tokio::sync::Notify>>>>,
+            key1: String,
+            key2: Option<String>,
+        }
+        impl<'a> Drop for InFlightCleanup<'a> {
+            fn drop(&mut self) {
+                if let Ok(mut guard) = self.map.lock() {
+                    if let Some(n) = guard.remove(&self.key1) {
+                        n.notify_waiters();
+                    }
+                    if let Some(ref k2) = self.key2 {
+                        if let Some(n) = guard.remove(k2) {
+                            n.notify_waiters();
+                        }
+                    }
+                }
+            }
+        }
+
+        let _cleanup = InFlightCleanup {
+            map: &self.in_flight_creations,
+            key1: inflight_key,
+            key2: clean_handoff.map(|s| s.to_string()),
+        };
+
+        let job = self
+            .create_download_with_all_options_scheduled(
+                trimmed_url,
+                destination_dir,
+                priority,
+                referer,
+                user_agent,
+                scheduled_at,
+            )
+            .await?;
+
+        if let Some(hid) = clean_handoff {
+            self.recent_handoffs
+                .lock()
+                .unwrap()
+                .insert(hid.to_string(), (job.id.clone(), Instant::now()));
+        }
+
+        Ok((job, false))
+    }
+
     pub async fn create_download_with_all_options_scheduled<P: AsRef<Path>>(
         &self,
         url: &str,
@@ -638,30 +847,6 @@ impl DownloadManager {
             (JobType::HttpFile, sanitize_filename(&probe.filename))
         };
 
-        let mut target_path = dir.join(&base_filename);
-        let mut counter = 1;
-
-        // Collision avoidance if target exists
-        while target_path.exists() {
-            let stem = Path::new(&base_filename)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("file");
-            let ext = Path::new(&base_filename)
-                .extension()
-                .and_then(|s| s.to_str())
-                .map(|e| format!(".{}", e))
-                .unwrap_or_default();
-            target_path = dir.join(format!("{} ({}){}", stem, counter, ext));
-            counter += 1;
-        }
-
-        let temp_filename = format!(
-            "{}.tdm-part",
-            target_path.file_name().unwrap().to_str().unwrap()
-        );
-        let temp_path = dir.join(temp_filename);
-
         let id = Uuid::new_v4().to_string();
         let con = self.max_connections_per_download();
         let chunks = crate::engine::planner::plan_chunks_with_concurrency(
@@ -677,38 +862,44 @@ impl DownloadManager {
             _ => (JobState::Queued, None),
         };
 
-        let job = DownloadJob {
-            id: id.clone(),
-            url: url.to_string(),
-            resolved_url: Some(probe.resolved_url),
-            filename: target_path
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string(),
-            target_path: target_path.to_string_lossy().to_string(),
-            temp_path: temp_path.to_string_lossy().to_string(),
-            total_bytes: probe.total_bytes,
-            downloaded_bytes: 0,
-            state: initial_state,
-            job_type,
-            priority,
-            etag: probe.etag,
-            last_modified: probe.last_modified,
-            is_resumable: probe.supports_ranges,
-            chunk_count: chunks.len(),
-            error_message: None,
-            created_at: now,
-            updated_at: now,
-            thumbnail_url: extract_thumbnail_from_url(url),
-            referer: clean_referer,
-            user_agent: clean_user_agent,
-            scheduled_at: final_sched,
-        };
+        let job = {
+            let _alloc_guard = self.path_alloc_lock.lock().unwrap();
+            let (target_path, temp_path) = self.allocate_unique_paths(dir, &base_filename);
 
-        self.db.insert_job(&job)?;
-        self.db.save_chunks(&chunks)?;
+            let job = DownloadJob {
+                id: id.clone(),
+                url: url.to_string(),
+                resolved_url: Some(probe.resolved_url),
+                filename: target_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+                target_path: target_path.to_string_lossy().to_string(),
+                temp_path: temp_path.to_string_lossy().to_string(),
+                total_bytes: probe.total_bytes,
+                downloaded_bytes: 0,
+                state: initial_state,
+                job_type,
+                priority,
+                etag: probe.etag,
+                last_modified: probe.last_modified,
+                is_resumable: probe.supports_ranges,
+                chunk_count: chunks.len(),
+                error_message: None,
+                created_at: now,
+                updated_at: now,
+                thumbnail_url: extract_thumbnail_from_url(url),
+                referer: clean_referer,
+                user_agent: clean_user_agent,
+                scheduled_at: final_sched,
+            };
+
+            self.db.insert_job(&job)?;
+            self.db.save_chunks(&chunks)?;
+            job
+        };
 
         self.event_bus.emit(DownloadEvent::StateChanged {
             id: id.clone(),
@@ -820,29 +1011,6 @@ impl DownloadManager {
         }
 
         let base_filename = sanitize_filename(filename);
-        let mut target_path = dir.join(&base_filename);
-        let mut counter = 1;
-
-        while target_path.exists() {
-            let stem = Path::new(&base_filename)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("media");
-            let ext = Path::new(&base_filename)
-                .extension()
-                .and_then(|s| s.to_str())
-                .map(|e| format!(".{}", e))
-                .unwrap_or_default();
-            target_path = dir.join(format!("{} ({}){}", stem, counter, ext));
-            counter += 1;
-        }
-
-        let temp_filename = format!(
-            "{}.tdm-part",
-            target_path.file_name().unwrap().to_str().unwrap()
-        );
-        let temp_path = dir.join(temp_filename);
-
         let id = Uuid::new_v4().to_string();
         let thumb = thumbnail_url.or_else(|| extract_thumbnail_from_url(url));
 
@@ -852,37 +1020,43 @@ impl DownloadManager {
             _ => (JobState::Queued, None),
         };
 
-        let job = DownloadJob {
-            id: id.clone(),
-            url: url.to_string(),
-            resolved_url: Some(format_id.to_string()),
-            filename: target_path
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string(),
-            target_path: target_path.to_str().unwrap().to_string(),
-            temp_path: temp_path.to_str().unwrap().to_string(),
-            total_bytes: None,
-            downloaded_bytes: 0,
-            state: initial_state,
-            job_type: JobType::ManagedMedia,
-            priority,
-            etag: None,
-            last_modified: None,
-            is_resumable: true,
-            chunk_count: 1,
-            error_message: None,
-            created_at: now,
-            updated_at: now,
-            thumbnail_url: thumb,
-            referer: clean_referer,
-            user_agent: clean_user_agent,
-            scheduled_at: final_sched,
-        };
+        let job = {
+            let _alloc_guard = self.path_alloc_lock.lock().unwrap();
+            let (target_path, temp_path) = self.allocate_unique_paths(dir, &base_filename);
 
-        self.db.insert_job(&job)?;
+            let job = DownloadJob {
+                id: id.clone(),
+                url: url.to_string(),
+                resolved_url: Some(format_id.to_string()),
+                filename: target_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+                target_path: target_path.to_str().unwrap().to_string(),
+                temp_path: temp_path.to_str().unwrap().to_string(),
+                total_bytes: None,
+                downloaded_bytes: 0,
+                state: initial_state,
+                job_type: JobType::ManagedMedia,
+                priority,
+                etag: None,
+                last_modified: None,
+                is_resumable: true,
+                chunk_count: 1,
+                error_message: None,
+                created_at: now,
+                updated_at: now,
+                thumbnail_url: thumb,
+                referer: clean_referer,
+                user_agent: clean_user_agent,
+                scheduled_at: final_sched,
+            };
+
+            self.db.insert_job(&job)?;
+            job
+        };
 
         self.event_bus.emit(DownloadEvent::StateChanged {
             id: id.clone(),
@@ -1045,9 +1219,21 @@ impl DownloadManager {
                     tracing::info!("Download {} completed successfully", download_id);
                 }
                 Err(EngineError::Cancelled) => {
+                    if let Ok(chunks) = db_c.get_chunks(&download_id) {
+                        let sum: u64 = chunks.iter().map(|c| c.written_bytes).sum();
+                        if sum > 0 {
+                            let _ = db_c.update_downloaded_bytes(&download_id, sum);
+                        }
+                    }
                     tracing::info!("Download {} was paused/cancelled", download_id);
                 }
                 Err(e) => {
+                    if let Ok(chunks) = db_c.get_chunks(&download_id) {
+                        let sum: u64 = chunks.iter().map(|c| c.written_bytes).sum();
+                        if sum > 0 {
+                            let _ = db_c.update_downloaded_bytes(&download_id, sum);
+                        }
+                    }
                     tracing::error!("Download {} failed: {}", download_id, e);
                     let _ =
                         db_c.update_job_state(&download_id, JobState::Failed, Some(&e.to_string()));
@@ -1383,8 +1569,31 @@ impl DownloadManager {
             db.save_chunks(&fresh_chunks)?;
         }
 
-        let writer = PartFileWriter::open_or_create(&temp_path, job.total_bytes)?;
-        let chunks = db.get_chunks(&download_id)?;
+        let writer = PartFileWriter::open_or_create_for_job_async(
+            &temp_path,
+            job.total_bytes,
+            Some(download_id.clone()),
+            Some(cancel_token.clone()),
+        )
+        .await?;
+        let mut chunks = db.get_chunks(&download_id)?;
+        let can_parallel_write =
+            writer.is_sparse() || job.total_bytes.unwrap_or(0) <= 64 * 1024 * 1024;
+        if job.is_resumable
+            && !can_parallel_write
+            && chunks.len() > 1
+            && chunks.iter().skip(1).all(|c| c.written_bytes == 0)
+        {
+            chunks = crate::engine::planner::plan_chunks_with_concurrency(
+                &download_id,
+                job.total_bytes,
+                true,
+                1,
+            );
+            let _ = db.reset_job_for_restart(&download_id);
+            let _ = db.save_chunks(&chunks);
+            let _ = db.update_job_state(&download_id, JobState::Downloading, None);
+        }
 
         let current_downloaded: u64 = chunks.iter().map(|c| c.written_bytes).sum();
         let total_downloaded_atomic = Arc::new(AtomicU64::new(current_downloaded));
@@ -1395,15 +1604,19 @@ impl DownloadManager {
         let progress_event_bus = event_bus.clone();
         let progress_total_bytes = job.total_bytes;
         let progress_counter = total_downloaded_atomic.clone();
+        let progress_db = db.clone();
 
         let cancel_for_progress = progress_cancel.clone();
         let progress_handle = tokio::spawn(async move {
             let mut last_bytes = progress_counter.load(Ordering::Relaxed);
+            let mut last_db_persisted = last_bytes;
             let mut last_time = Instant::now();
+            let mut ticks: u32 = 0;
 
             loop {
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                        ticks = ticks.wrapping_add(1);
                         let now = Instant::now();
                         let current_bytes = progress_counter.load(Ordering::Relaxed);
                         let elapsed_secs = (now - last_time).as_secs_f64();
@@ -1430,6 +1643,11 @@ impl DownloadManager {
                                 error_message: None,
                             }));
 
+                            if ticks % 8 == 0 && current_bytes > last_db_persisted {
+                                let _ = progress_db.update_downloaded_bytes(&progress_download_id, current_bytes);
+                                last_db_persisted = current_bytes;
+                            }
+
                             last_bytes = current_bytes;
                             last_time = now;
                         }
@@ -1442,30 +1660,52 @@ impl DownloadManager {
         });
 
         // Execute download: adaptive multi-chunk work redistribution or stream
-        let download_result: Result<()> = if job.is_resumable && chunks.len() > 1 {
-            let host = url::Url::parse(&job.url)
+        let download_result: Result<()> = if job.is_resumable && !chunks.is_empty() {
+            let effective_url_str = job.resolved_url.as_deref().unwrap_or(&job.url);
+            let host = url::Url::parse(effective_url_str)
                 .ok()
                 .and_then(|u| u.host_str().map(|h| h.to_string()))
                 .unwrap_or_else(|| "default".to_string());
+
+            let lower_u = effective_url_str.to_lowercase();
+            let is_presigned_cdn = lower_u.contains("?v=")
+                || lower_u.contains("&v=")
+                || lower_u.contains("token=")
+                || lower_u.contains("sig=")
+                || lower_u.contains("signature=")
+                || lower_u.contains("x-amz-signature=")
+                || lower_u.contains("expires=");
 
             let active_chunk_bounds: Arc<Mutex<HashMap<usize, Arc<AtomicU64>>>> =
                 Arc::new(Mutex::new(HashMap::new()));
             let active_chunk_progress: Arc<Mutex<HashMap<usize, Arc<AtomicU64>>>> =
                 Arc::new(Mutex::new(HashMap::new()));
-            let mut join_set: JoinSet<Result<(usize, u64)>> = JoinSet::new();
+            let mut join_set: JoinSet<(usize, Result<u64>)> = JoinSet::new();
 
-            let max_concurrency = adaptive_scheduler.max_concurrency();
+            let mut effective_max_concurrency = adaptive_scheduler
+                .max_concurrency()
+                .min(governor.max_connections_per_host().max(1));
+            if !can_parallel_write {
+                effective_max_concurrency = 1;
+            } else if is_presigned_cdn {
+                effective_max_concurrency = effective_max_concurrency.min(4);
+            }
 
-            // Spawn initial workers
+            // Spawn initial workers respecting Governor per-host & global connection permits
             for chunk in &chunks {
                 if chunk.is_complete {
                     continue;
                 }
-                if join_set.len() >= max_concurrency {
+                if join_set.len() >= effective_max_concurrency {
                     break;
                 }
 
-                let permit = governor.acquire_permit(&host);
+                let permit = match governor.acquire_permit(&host) {
+                    Some(p) => Some(p),
+                    None if join_set.is_empty() => None, // Guarantee at least 1 active worker for this job
+                    None => break,
+                };
+
                 let bound = Arc::new(AtomicU64::new(chunk.end_byte));
                 let progress = Arc::new(AtomicU64::new(chunk.written_bytes));
                 active_chunk_bounds
@@ -1492,6 +1732,7 @@ impl DownloadManager {
 
                 join_set.spawn(async move {
                     let _p = permit;
+                    let idx = chunk_copy.chunk_index;
                     let res = download_chunk_with_options(
                         &client_c,
                         &url_c,
@@ -1512,11 +1753,12 @@ impl DownloadManager {
                         },
                     )
                     .await;
-                    res.map(|()| (chunk_copy.chunk_index, chunk_copy.written_bytes))
+                    (idx, res.map(|()| chunk_copy.written_bytes))
                 });
             }
 
             let mut first_error: Option<EngineError> = None;
+            let mut consecutive_worker_failures: usize = 0;
 
             while let Some(join_res) = tokio::select! {
                 _ = cancel_token.cancelled() => {
@@ -1525,7 +1767,7 @@ impl DownloadManager {
                 }
                 res = join_set.join_next() => res,
             } {
-                let worker_res = match join_res {
+                let (chunk_idx, worker_res) = match join_res {
                     Ok(r) => r,
                     Err(join_err) => {
                         if first_error.is_none() {
@@ -1535,23 +1777,46 @@ impl DownloadManager {
                     }
                 };
 
+                active_chunk_bounds.lock().unwrap().remove(&chunk_idx);
+                active_chunk_progress.lock().unwrap().remove(&chunk_idx);
+
                 match worker_res {
-                    Ok((finished_index, _)) => {
-                        active_chunk_bounds.lock().unwrap().remove(&finished_index);
-                        active_chunk_progress
-                            .lock()
-                            .unwrap()
-                            .remove(&finished_index);
+                    Ok(_) => {
+                        consecutive_worker_failures = 0;
                     }
                     Err(e) => {
                         if matches!(e, EngineError::Cancelled) || cancel_token.is_cancelled() {
                             join_set.abort_all();
                             return Err(EngineError::Cancelled);
                         }
-                        if first_error.is_none() {
+
+                        let is_fatal = matches!(
+                            e,
+                            EngineError::DiskWrite(_)
+                                | EngineError::Io(_)
+                                | EngineError::ETagMismatch { .. }
+                                | EngineError::MismatchedContentRange { .. }
+                        );
+                        if is_fatal {
                             first_error = Some(e);
+                            join_set.abort_all();
+                            break;
                         }
-                        break;
+
+                        consecutive_worker_failures += 1;
+                        effective_max_concurrency = join_set.len().max(1);
+
+                        if join_set.is_empty() && consecutive_worker_failures >= 3 {
+                            first_error = Some(e);
+                            break;
+                        }
+
+                        tracing::warn!(
+                            "Chunk {} worker failed ({}); scaling max concurrency to {} and redistributing remaining work",
+                            chunk_idx,
+                            e,
+                            effective_max_concurrency
+                        );
                     }
                 }
 
@@ -1570,160 +1835,174 @@ impl DownloadManager {
                 drop(bounds_guard);
 
                 if let Some(next_chunk) = unassigned {
-                    if join_set.len() < max_concurrency {
-                        let permit = governor.acquire_permit(&host);
-                        let bound = Arc::new(AtomicU64::new(next_chunk.end_byte));
-                        let progress = Arc::new(AtomicU64::new(next_chunk.written_bytes));
-                        active_chunk_bounds
-                            .lock()
-                            .unwrap()
-                            .insert(next_chunk.chunk_index, bound.clone());
-                        active_chunk_progress
-                            .lock()
-                            .unwrap()
-                            .insert(next_chunk.chunk_index, progress.clone());
+                    if join_set.len() < effective_max_concurrency {
+                        let permit = match governor.acquire_permit(&host) {
+                            Some(p) => Some(p),
+                            None if join_set.is_empty() => None,
+                            None => None,
+                        };
+                        if permit.is_some() || join_set.is_empty() {
+                            let bound = Arc::new(AtomicU64::new(next_chunk.end_byte));
+                            let progress = Arc::new(AtomicU64::new(next_chunk.written_bytes));
+                            active_chunk_bounds
+                                .lock()
+                                .unwrap()
+                                .insert(next_chunk.chunk_index, bound.clone());
+                            active_chunk_progress
+                                .lock()
+                                .unwrap()
+                                .insert(next_chunk.chunk_index, progress.clone());
 
-                        let mut chunk_copy = next_chunk;
-                        let client_c = client.clone();
-                        let url_c = job.resolved_url.clone().unwrap_or_else(|| job.url.clone());
-                        let etag_c = job.etag.clone();
-                        let lm_c = job.last_modified.clone();
-                        let referer_c = job.referer.clone();
-                        let user_agent_c = job.user_agent.clone();
-                        let writer_c = writer.clone();
-                        let db_c = db.clone();
-                        let cancel_c = cancel_token.clone();
-                        let counter_c = total_downloaded_atomic.clone();
-                        let limiter_c = rate_limiter.clone();
+                            let mut chunk_copy = next_chunk;
+                            let client_c = client.clone();
+                            let url_c =
+                                job.resolved_url.clone().unwrap_or_else(|| job.url.clone());
+                            let etag_c = job.etag.clone();
+                            let lm_c = job.last_modified.clone();
+                            let referer_c = job.referer.clone();
+                            let user_agent_c = job.user_agent.clone();
+                            let writer_c = writer.clone();
+                            let db_c = db.clone();
+                            let cancel_c = cancel_token.clone();
+                            let counter_c = total_downloaded_atomic.clone();
+                            let limiter_c = rate_limiter.clone();
 
-                        join_set.spawn(async move {
-                            let _p = permit;
-                            let res = download_chunk_with_options(
-                                &client_c,
-                                &url_c,
-                                etag_c.as_deref(),
-                                lm_c.as_deref(),
-                                &mut chunk_copy,
-                                &writer_c,
-                                &db_c,
-                                &cancel_c,
-                                Some(bound),
-                                Some(progress),
-                                Some(&limiter_c),
-                                Some(max_retries),
-                                referer_c.as_deref(),
-                                user_agent_c.as_deref(),
-                                |written| {
-                                    counter_c.fetch_add(written, Ordering::Relaxed);
-                                },
-                            )
-                            .await;
-                            res.map(|()| (chunk_copy.chunk_index, chunk_copy.written_bytes))
-                        });
+                            join_set.spawn(async move {
+                                let _p = permit;
+                                let idx = chunk_copy.chunk_index;
+                                let res = download_chunk_with_options(
+                                    &client_c,
+                                    &url_c,
+                                    etag_c.as_deref(),
+                                    lm_c.as_deref(),
+                                    &mut chunk_copy,
+                                    &writer_c,
+                                    &db_c,
+                                    &cancel_c,
+                                    Some(bound),
+                                    Some(progress),
+                                    Some(&limiter_c),
+                                    Some(max_retries),
+                                    referer_c.as_deref(),
+                                    user_agent_c.as_deref(),
+                                    |written| {
+                                        counter_c.fetch_add(written, Ordering::Relaxed);
+                                    },
+                                )
+                                .await;
+                                (idx, res.map(|()| chunk_copy.written_bytes))
+                            });
+                        }
                     }
-                } else if dynamic_segmentation && join_set.len() < max_concurrency {
+                } else if dynamic_segmentation
+                    && consecutive_worker_failures == 0
+                    && join_set.len() < effective_max_concurrency
+                {
                     // Safe Straggler Tail Splitting:
                     if let Some(plan) = adaptive_scheduler.evaluate_straggler_split(&current_chunks)
                     {
-                        let orig_bound_opt = active_chunk_bounds
-                            .lock()
-                            .unwrap()
-                            .get(&plan.original_index)
-                            .cloned();
-                        let orig_prog_opt = active_chunk_progress
-                            .lock()
-                            .unwrap()
-                            .get(&plan.original_index)
-                            .cloned();
+                        if let Some(permit) = governor.acquire_permit(&host) {
+                            let orig_bound_opt = active_chunk_bounds
+                                .lock()
+                                .unwrap()
+                                .get(&plan.original_index)
+                                .cloned();
+                            let orig_prog_opt = active_chunk_progress
+                                .lock()
+                                .unwrap()
+                                .get(&plan.original_index)
+                                .cloned();
 
-                        if let (Some(orig_bound), Some(orig_prog)) = (orig_bound_opt, orig_prog_opt)
-                        {
-                            let orig_chunk = current_chunks
-                                .iter()
-                                .find(|c| c.chunk_index == plan.original_index);
-                            let orig_start = orig_chunk.map(|c| c.start_byte).unwrap_or(0);
-                            let current_w = orig_prog.load(Ordering::SeqCst);
+                            if let (Some(orig_bound), Some(orig_prog)) =
+                                (orig_bound_opt, orig_prog_opt)
+                            {
+                                let orig_chunk = current_chunks
+                                    .iter()
+                                    .find(|c| c.chunk_index == plan.original_index);
+                                let orig_start = orig_chunk.map(|c| c.start_byte).unwrap_or(0);
+                                let current_w = orig_prog.load(Ordering::SeqCst);
 
-                            // Invariant: original worker has NOT already written past the proposed split start
-                            if orig_start + current_w < plan.split_start {
-                                // Clamp original worker's boundary first
-                                orig_bound.store(plan.new_end_for_original, Ordering::SeqCst);
+                                // Invariant: original worker has NOT already written past the proposed split start
+                                if orig_start + current_w < plan.split_start {
+                                    // Clamp original worker's boundary first
+                                    orig_bound.store(plan.new_end_for_original, Ordering::SeqCst);
 
-                                // Re-verify progress after atomic store
-                                let recheck_w = orig_prog.load(Ordering::SeqCst);
-                                if orig_start + recheck_w <= plan.split_start
-                                    && db
-                                        .split_chunk(
-                                            &download_id,
-                                            plan.original_index,
-                                            plan.new_index,
-                                            plan.new_end_for_original,
-                                            plan.split_start,
-                                            plan.original_end,
-                                        )
-                                        .is_ok()
-                                {
-                                    let permit = governor.acquire_permit(&host);
-                                    let bound = Arc::new(AtomicU64::new(plan.original_end));
-                                    let progress = Arc::new(AtomicU64::new(0));
-                                    active_chunk_bounds
-                                        .lock()
-                                        .unwrap()
-                                        .insert(plan.new_index, bound.clone());
-                                    active_chunk_progress
-                                        .lock()
-                                        .unwrap()
-                                        .insert(plan.new_index, progress.clone());
+                                    // Re-verify progress after atomic store
+                                    let recheck_w = orig_prog.load(Ordering::SeqCst);
+                                    if orig_start + recheck_w <= plan.split_start
+                                        && db
+                                            .split_chunk(
+                                                &download_id,
+                                                plan.original_index,
+                                                plan.new_index,
+                                                plan.new_end_for_original,
+                                                plan.split_start,
+                                                plan.original_end,
+                                            )
+                                            .is_ok()
+                                    {
+                                        let bound = Arc::new(AtomicU64::new(plan.original_end));
+                                        let progress = Arc::new(AtomicU64::new(0));
+                                        active_chunk_bounds
+                                            .lock()
+                                            .unwrap()
+                                            .insert(plan.new_index, bound.clone());
+                                        active_chunk_progress
+                                            .lock()
+                                            .unwrap()
+                                            .insert(plan.new_index, progress.clone());
 
-                                    let mut new_chunk = ChunkRecord {
-                                        id: None,
-                                        download_id: download_id.clone(),
-                                        chunk_index: plan.new_index,
-                                        start_byte: plan.split_start,
-                                        end_byte: plan.original_end,
-                                        written_bytes: 0,
-                                        is_complete: false,
-                                    };
+                                        let mut new_chunk = ChunkRecord {
+                                            id: None,
+                                            download_id: download_id.clone(),
+                                            chunk_index: plan.new_index,
+                                            start_byte: plan.split_start,
+                                            end_byte: plan.original_end,
+                                            written_bytes: 0,
+                                            is_complete: false,
+                                        };
 
-                                    let client_c = client.clone();
-                                    let url_c =
-                                        job.resolved_url.clone().unwrap_or_else(|| job.url.clone());
-                                    let etag_c = job.etag.clone();
-                                    let lm_c = job.last_modified.clone();
-                                    let referer_c = job.referer.clone();
-                                    let user_agent_c = job.user_agent.clone();
-                                    let writer_c = writer.clone();
-                                    let db_c = db.clone();
-                                    let cancel_c = cancel_token.clone();
-                                    let counter_c = total_downloaded_atomic.clone();
-                                    let limiter_c = rate_limiter.clone();
+                                        let client_c = client.clone();
+                                        let url_c = job
+                                            .resolved_url
+                                            .clone()
+                                            .unwrap_or_else(|| job.url.clone());
+                                        let etag_c = job.etag.clone();
+                                        let lm_c = job.last_modified.clone();
+                                        let referer_c = job.referer.clone();
+                                        let user_agent_c = job.user_agent.clone();
+                                        let writer_c = writer.clone();
+                                        let db_c = db.clone();
+                                        let cancel_c = cancel_token.clone();
+                                        let counter_c = total_downloaded_atomic.clone();
+                                        let limiter_c = rate_limiter.clone();
 
-                                    join_set.spawn(async move {
-                                        let _p = permit;
-                                        let res = download_chunk_with_options(
-                                            &client_c,
-                                            &url_c,
-                                            etag_c.as_deref(),
-                                            lm_c.as_deref(),
-                                            &mut new_chunk,
-                                            &writer_c,
-                                            &db_c,
-                                            &cancel_c,
-                                            Some(bound),
-                                            Some(progress),
-                                            Some(&limiter_c),
-                                            Some(max_retries),
-                                            referer_c.as_deref(),
-                                            user_agent_c.as_deref(),
-                                            |written| {
-                                                counter_c.fetch_add(written, Ordering::Relaxed);
-                                            },
-                                        )
-                                        .await;
-                                        res.map(|()| {
-                                            (new_chunk.chunk_index, new_chunk.written_bytes)
-                                        })
-                                    });
+                                        join_set.spawn(async move {
+                                            let _p = permit;
+                                            let idx = new_chunk.chunk_index;
+                                            let res = download_chunk_with_options(
+                                                &client_c,
+                                                &url_c,
+                                                etag_c.as_deref(),
+                                                lm_c.as_deref(),
+                                                &mut new_chunk,
+                                                &writer_c,
+                                                &db_c,
+                                                &cancel_c,
+                                                Some(bound),
+                                                Some(progress),
+                                                Some(&limiter_c),
+                                                Some(max_retries),
+                                                referer_c.as_deref(),
+                                                user_agent_c.as_deref(),
+                                                |written| {
+                                                    counter_c.fetch_add(written, Ordering::Relaxed);
+                                                },
+                                            )
+                                            .await;
+                                            (idx, res.map(|()| new_chunk.written_bytes))
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -1740,7 +2019,19 @@ impl DownloadManager {
                 Ok(())
             }
         } else {
-            // Single chunk or non-range streaming
+            // Single chunk or non-range streaming (or non-sparse large file fallback)
+            if chunks.len() > 1 {
+                // Re-plan as a single sequential chunk if falling back on non-sparse filesystem
+                let single = crate::engine::planner::plan_chunks_with_concurrency(
+                    &download_id,
+                    job.total_bytes,
+                    false,
+                    1,
+                );
+                let _ = db.reset_job_for_restart(&download_id);
+                let _ = db.save_chunks(&single);
+                let _ = db.update_job_state(&download_id, JobState::Downloading, None);
+            }
             let url = job.resolved_url.clone().unwrap_or_else(|| job.url.clone());
             let counter = total_downloaded_atomic.clone();
 
@@ -1789,21 +2080,16 @@ impl DownloadManager {
             error: None,
         });
 
-        // Ensure all bytes flushed to disk
-        writer.sync()?;
+        // Ensure all bytes flushed to disk without blocking Tokio threads
+        writer.sync_async().await?;
         drop(writer);
 
         let final_chunks = db.get_chunks(&download_id)?;
-        let total_downloaded: u64 = final_chunks.iter().map(|c| c.written_bytes).sum();
-
-        if let Some(expected_total) = job.total_bytes {
-            if total_downloaded != expected_total {
-                return Err(EngineError::ContentLengthMismatch {
-                    expected: expected_total,
-                    actual: total_downloaded,
-                });
-            }
-        }
+        let total_downloaded = crate::engine::writer::verify_chunks_complete_and_contiguous(
+            &final_chunks,
+            job.total_bytes,
+            &temp_path,
+        )?;
 
         // Atomic publish: rename .tdm-part to final destination with retry backoff for Windows locks
         Self::publish_final_file(&temp_path, &target_path).await?;

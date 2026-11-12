@@ -24,6 +24,7 @@ async fn test_native_host_ping_pong() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
 
     let resp = handle_message(msg, &manager, &db).await;
@@ -74,6 +75,7 @@ async fn test_native_host_show_window() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
 
     let resp = handle_message(msg, &manager, &db).await;
@@ -129,6 +131,7 @@ async fn test_native_host_start_download_and_deduplication() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
 
     let resp1 = handle_message(msg1, &manager, &db).await;
@@ -147,6 +150,7 @@ async fn test_native_host_start_download_and_deduplication() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
 
     let resp2 = handle_message(msg2, &manager, &db).await;
@@ -174,6 +178,7 @@ async fn test_native_host_invalid_urls_rejected() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
     let resp_blob = handle_message(msg_blob, &manager, &db).await;
     assert_eq!(resp_blob.status, "error");
@@ -193,6 +198,7 @@ async fn test_native_host_invalid_urls_rejected() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
     let resp_js = handle_message(msg_js, &manager, &db).await;
     assert_eq!(resp_js.status, "error");
@@ -215,6 +221,7 @@ async fn test_native_host_detect_capability() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
 
     let resp = handle_message(msg, &manager, &db).await;
@@ -321,6 +328,7 @@ async fn test_native_host_process_e2e_stdin_stdout_download() {
     let mut child = Command::new(&exe_to_run)
         .env("TORI_DATA_DIR", temp_dir.path())
         .env("TORI_IPC_PIPE", &test_pipe)
+        .env("TORI_DISABLE_AUTO_SPAWN", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -341,6 +349,7 @@ async fn test_native_host_process_e2e_stdin_stdout_download() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
     write_message_async(&mut stdin, &ping_msg)
         .await
@@ -366,6 +375,7 @@ async fn test_native_host_process_e2e_stdin_stdout_download() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
     write_message_async(&mut stdin, &start_msg)
         .await
@@ -390,6 +400,7 @@ async fn test_native_host_process_e2e_stdin_stdout_download() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
     write_message_async(&mut stdin, &dup_msg)
         .await
@@ -413,6 +424,7 @@ async fn test_native_host_process_e2e_stdin_stdout_download() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
     write_message_async(&mut stdin, &cap_msg)
         .await
@@ -490,6 +502,7 @@ async fn test_native_host_ipc_persistent_engine() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
     let ping_resp = forward_to_pipe(&test_pipe, &ping_msg)
         .await
@@ -536,6 +549,7 @@ async fn test_native_host_ipc_persistent_engine() {
         referer: None,
         user_agent: None,
         scheduled_at: None,
+        ..Default::default()
     };
 
     let start_resp = forward_to_pipe(&test_pipe, &start_msg)
@@ -550,5 +564,114 @@ async fn test_native_host_ipc_persistent_engine() {
     assert_eq!(job.filename, "ipc_download.mp4");
 
     shutdown_token.cancel();
+    cancel.cancel();
+}
+
+#[tokio::test]
+async fn test_concurrent_in_flight_handoff_coalescing() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let cancel = CancellationToken::new();
+    let cancel_server = cancel.clone();
+    let probe_count = Arc::new(AtomicUsize::new(0));
+    let server_probes = probe_count.clone();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel_server.cancelled() => break,
+                res = listener.accept() => {
+                    let (mut socket, _) = match res {
+                        Ok(s) => s,
+                        Err(_) => break,
+                    };
+                    let probes = server_probes.clone();
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; 1024];
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        let req_str = String::from_utf8_lossy(&buf[..n]);
+                        if req_str.starts_with("HEAD ") {
+                            probes.fetch_add(1, Ordering::SeqCst);
+                            // Simulate slow CDN response (600ms) while fallback arrives at 150ms
+                            tokio::time::sleep(Duration::from_millis(600)).await;
+                            let resp = "HTTP/1.1 200 OK\r\nContent-Length: 4096\r\nAccept-Ranges: bytes\r\n\r\n";
+                            let _ = socket.write_all(resp.as_bytes()).await;
+                        } else {
+                            let resp = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-4095/4096\r\nContent-Length: 4096\r\nAccept-Ranges: bytes\r\n\r\n";
+                            let _ = socket.write_all(resp.as_bytes()).await;
+                            let body = vec![0x55u8; 4096];
+                            let _ = socket.write_all(&body).await;
+                        }
+                    });
+                }
+            }
+        }
+    });
+
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().join("host_coalesce_test.sqlite");
+    let db = Database::open(&db_path).unwrap();
+    let manager = Arc::new(DownloadManager::new(db.clone(), EventBus::default()).unwrap());
+
+    let download_url = format!(
+        "http://127.0.0.1:{}/Win10_22H2_English_x64v1.iso?sig=abc123&exp=999999",
+        port
+    );
+    let dest = temp_dir.path().to_string_lossy().to_string();
+
+    // Primary request starts at t=0ms (e.g., HTTP API call)
+    let mgr1 = manager.clone();
+    let db1 = db.clone();
+    let url1 = download_url.clone();
+    let dest1 = dest.clone();
+    let h1 = tokio::spawn(async move {
+        let msg = NativeMessage {
+            action: "start_download".to_string(),
+            url: Some(url1),
+            filename: Some("Win10_22H2_English_x64v1.iso".to_string()),
+            destination: Some(dest1),
+            handoff_id: Some("ext_42_1700000000".to_string()),
+            ..Default::default()
+        };
+        handle_message(msg, &mgr1, &db1).await
+    });
+
+    // Fallback request arrives 150ms later while probe is still in-flight
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let mgr2 = manager.clone();
+    let db2 = db.clone();
+    let url2 = download_url.clone();
+    let dest2 = dest.clone();
+    let h2 = tokio::spawn(async move {
+        let msg = NativeMessage {
+            action: "start_download".to_string(),
+            url: Some(url2),
+            filename: Some("Win10_22H2_English_x64v1.iso".to_string()),
+            destination: Some(dest2),
+            handoff_id: Some("ext_42_1700000000".to_string()),
+            ..Default::default()
+        };
+        handle_message(msg, &mgr2, &db2).await
+    });
+
+    let (resp1, resp2) = tokio::join!(h1, h2);
+    let resp1 = resp1.unwrap();
+    let resp2 = resp2.unwrap();
+
+    assert_eq!(resp1.status, "ok");
+    assert_eq!(resp2.status, "already_exists");
+    assert_eq!(resp1.job_id, resp2.job_id);
+
+    let all_jobs = db.list_jobs().unwrap();
+    assert_eq!(
+        all_jobs.len(),
+        1,
+        "Must create exactly 1 download job, never a duplicate (1).iso job"
+    );
+
     cancel.cancel();
 }

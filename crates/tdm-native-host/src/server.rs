@@ -64,6 +64,8 @@ pub struct CreateDownloadReq {
     pub thumbnail_url: Option<String>,
     pub referer: Option<String>,
     pub scheduled_at: Option<String>,
+    #[serde(default)]
+    pub handoff_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -517,23 +519,6 @@ async fn handle_create_download(
         ));
     }
 
-    // Duplicate check
-    if let Ok(jobs) = state.db.list_jobs() {
-        if let Some(existing) = jobs.iter().find(|j| {
-            j.url == raw_url
-                && (j.state != tdm_core::JobState::Failed
-                    && j.state != tdm_core::JobState::Cancelled)
-        }) {
-            return Ok(Json(CreateDownloadResp {
-                status: "already_exists".to_string(),
-                job_id: Some(existing.id.clone()),
-                filename: Some(existing.filename.clone()),
-                state: Some(format!("{:?}", existing.state).to_lowercase()),
-                message: Some("Download already exists in TORI".to_string()),
-            }));
-        }
-    }
-
     // Sanitize destination path if provided
     if let Some(ref d) = payload.destination {
         let clean = d.trim();
@@ -574,36 +559,68 @@ async fn handle_create_download(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
-    match state
-        .manager
-        .create_download_with_all_options_scheduled(
-            raw_url,
-            &dest_path,
-            prio,
-            clean_referer,
-            clean_user_agent,
-            parsed_sched,
-        )
-        .await
-    {
-        Ok(job) => {
+    let state_clone = state.clone();
+    let url_owned = raw_url.to_string();
+    let handoff_owned = payload.handoff_id.clone();
+    let thumb_owned = payload.thumbnail_url.clone();
+
+    let create_res = tokio::spawn(async move {
+        let res = state_clone
+            .manager
+            .create_or_coalesce_download(
+                &url_owned,
+                &dest_path,
+                prio,
+                clean_referer,
+                clean_user_agent,
+                parsed_sched,
+                handoff_owned.as_deref(),
+            )
+            .await;
+
+        if let Ok((ref job, already_existed)) = res {
             let job_id = job.id.clone();
-            let fname = job.filename.clone();
-            if let Some(ref thumb) = payload.thumbnail_url {
-                let _ = state.db.update_thumbnail_url(&job_id, thumb);
+            if let Some(ref thumb) = thumb_owned {
+                let _ = state_clone.db.update_thumbnail_url(&job_id, thumb);
             }
-            if job.state != tdm_core::JobState::Scheduled {
-                let _ = state.manager.start_download(&job_id);
-                state
+            if !already_existed && job.state != tdm_core::JobState::Scheduled {
+                let _ = state_clone.manager.start_download(&job_id);
+                state_clone
                     .manager
                     .event_bus()
-                    .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: job_id.clone() });
+                    .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: job_id });
+            } else if already_existed && job.state == tdm_core::JobState::Queued {
+                let _ = state_clone.manager.start_download(&job_id);
             }
+        }
+        res
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": format!("Internal task join error: {}", e)
+            })),
+        )
+    })?;
 
+    match create_res {
+        Ok((job, already_existed)) => {
+            if already_existed {
+                return Ok(Json(CreateDownloadResp {
+                    status: "already_exists".to_string(),
+                    job_id: Some(job.id),
+                    filename: Some(job.filename),
+                    state: Some(format!("{:?}", job.state).to_lowercase()),
+                    message: Some("Download already exists in TORI".to_string()),
+                }));
+            }
             Ok(Json(CreateDownloadResp {
                 status: "ok".to_string(),
-                job_id: Some(job_id),
-                filename: Some(fname),
+                job_id: Some(job.id),
+                filename: Some(job.filename),
                 state: Some(format!("{:?}", job.state).to_lowercase()),
                 message: Some(if job.state == tdm_core::JobState::Scheduled {
                     "Download scheduled in TORI".to_string()

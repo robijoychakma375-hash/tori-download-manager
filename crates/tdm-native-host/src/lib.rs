@@ -35,8 +35,32 @@ pub async fn run() -> io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::io::AsRawHandle;
-        let _ = io::stdin().as_raw_handle();
-        let _ = io::stdout().as_raw_handle();
+        const HANDLE_FLAG_INHERIT: u32 = 0x0000_0001;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn SetHandleInformation(
+                h_object: *mut std::ffi::c_void,
+                dw_mask: u32,
+                dw_flags: u32,
+            ) -> i32;
+        }
+        unsafe {
+            let _ = SetHandleInformation(
+                io::stdin().as_raw_handle() as *mut std::ffi::c_void,
+                HANDLE_FLAG_INHERIT,
+                0,
+            );
+            let _ = SetHandleInformation(
+                io::stdout().as_raw_handle() as *mut std::ffi::c_void,
+                HANDLE_FLAG_INHERIT,
+                0,
+            );
+            let _ = SetHandleInformation(
+                io::stderr().as_raw_handle() as *mut std::ffi::c_void,
+                HANDLE_FLAG_INHERIT,
+                0,
+            );
+        }
     }
 
     let data_dir = if let Ok(override_dir) = std::env::var("TORI_DATA_DIR") {
@@ -281,27 +305,6 @@ pub async fn handle_message(
                 };
             }
 
-            if let Ok(jobs) = db.list_jobs() {
-                if let Some(existing) = jobs.iter().find(|j| {
-                    j.url == trimmed_url
-                        && (j.state != tdm_core::JobState::Failed
-                            && j.state != tdm_core::JobState::Cancelled)
-                }) {
-                    return NativeResponse {
-                        status: "already_exists".to_string(),
-                        action: "start_download".to_string(),
-                        job_id: Some(existing.id.clone()),
-                        filename: Some(existing.filename.clone()),
-                        state: Some(existing.state.as_str().to_string()),
-                        message: Some(format!(
-                            "Job for this URL already exists (state: {})",
-                            existing.state.as_str()
-                        )),
-                        ..Default::default()
-                    };
-                }
-            }
-
             let dest_dir = manager
                 .resolve_destination_folder(trimmed_url, msg.destination.as_deref());
 
@@ -328,19 +331,34 @@ pub async fn handle_message(
                 .map(|dt| dt.with_timezone(&chrono::Utc));
 
             match manager
-                .create_download_with_all_options_scheduled(
+                .create_or_coalesce_download(
                     trimmed_url,
                     &dest_dir,
                     priority,
                     clean_referer,
                     clean_user_agent,
                     parsed_sched,
+                    msg.handoff_id.as_deref(),
                 )
                 .await
             {
-                Ok(job) => {
-                    if job.state != tdm_core::JobState::Scheduled {
+                Ok((job, already_existed)) => {
+                    if job.state == tdm_core::JobState::Queued {
                         let _ = manager.start_download(&job.id);
+                    }
+                    if already_existed {
+                        return NativeResponse {
+                            status: "already_exists".to_string(),
+                            action: "start_download".to_string(),
+                            job_id: Some(job.id),
+                            filename: Some(job.filename),
+                            state: Some(job.state.as_str().to_string()),
+                            message: Some(format!(
+                                "Job for this URL already exists (state: {})",
+                                job.state.as_str()
+                            )),
+                            ..Default::default()
+                        };
                     }
                     NativeResponse {
                         status: "ok".to_string(),
