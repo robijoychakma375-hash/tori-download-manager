@@ -124,10 +124,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     return initialTab || 'engine';
   });
-  const [appVersion, setAppVersion] = useState<string>('1.0.0');
+  const [appVersion, setAppVersion] = useState<string>('1.0.4');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
     state: 'idle',
-    currentVersion: '1.0.0',
+    currentVersion: '1.0.4',
     downloadedBytes: 0,
     totalBytes: 0,
   });
@@ -1247,7 +1247,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <b style={{ color: 'var(--txt)', fontSize: 14 }}>TORI Download Manager — Release Notes v1.0.0</b>
+                <b style={{ color: 'var(--txt)', fontSize: 14 }}>TORI Download Manager — Release Notes v{appVersion}</b>
                 <button className="btn" onClick={() => setShowNotesModal(false)} style={{ padding: '2px 8px' }}>
                   ✕
                 </button>
@@ -1266,16 +1266,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   whiteSpace: 'pre-wrap',
                 }}
               >
-                {`TORI Download Manager v1.0.0 (Initial Public Production Release)
-• High-performance multi-connection partitioned HTTP ranges (up to 32 connections)
-• RFC 8216 Apple HLS & ISO/IEC 23009-1 MPEG-DASH manifest resolution & stream-copy remuxing
-• BitTorrent and magnet download client powered by librqbit
-• Manifest V3 browser extension for Chrome & Microsoft Edge with media discrimination
-• Windows System Tray support with background downloads persistence and Close-to-Tray mode
-• Floating DPI-aware Download Toast window with interactive controls and drawer expansion
-• Recursive WebView2 and process tree memory trimming via Win32 SetProcessWorkingSetSize
-• Signed auto-updater with Ed25519 verification and active download collision guards
-• Self-contained Windows NSIS installer with bundled offline runtime tools (FFmpeg, yt-dlp)`}
+                {`TORI Download Manager v${appVersion} (Production Stability & Large-File Release)
+• Instant NTFS sparse file allocation (FSCTL_SET_SPARSE) for 1 GB to 50+ GB downloads with zero pre-allocation stall
+• 256 KiB buffered worker writes, bounded straggler tail-splitting, and Presigned CDN (S3/R2/CloudFront) concurrency protection
+• 4-second HEAD probe timeout with automatic GET Range: bytes=0-0 fallback and first-byte transition to Downloading
+• Server-side in-flight and recent-URL browser handoff deduplication eliminating duplicate (1) downloads across Firefox & Chromium
+• Windows Job Object breakaway (CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS) preventing unexpected exit after Native Host spawn
+• Synchronized Close-to-Tray lifecycle with background download continuation, Tray restoration, and explicit Exit support
+• High-performance multi-connection partitioned HTTP ranges, HLS/DASH remuxing, and BitTorrent/magnet support
+• Signed auto-updater with Ed25519 verification and active download collision guards`}
               </div>
               <div style={{ textAlign: 'right', marginTop: 12 }}>
                 <button className="btn def" onClick={() => setShowNotesModal(false)}>

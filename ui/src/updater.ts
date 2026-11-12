@@ -25,7 +25,7 @@ export async function fetchAppVersion(): Promise<string> {
   try {
     return await invoke<string>('get_app_version');
   } catch {
-    return '1.0.0';
+    return '1.0.4';
   }
 }
 
