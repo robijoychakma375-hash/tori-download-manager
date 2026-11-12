@@ -120,3 +120,4 @@ verify().catch((e) => {
   console.error('[FAIL]', e.message);
   process.exit(1);
 });
+
