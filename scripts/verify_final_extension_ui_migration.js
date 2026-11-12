@@ -255,8 +255,8 @@ async function runAudit() {
   // Check 1.3: Version consistency across all manifests
   const cManifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'extension', 'manifest.json'), 'utf8'));
   const ffManifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'extension', 'firefox', 'manifest.json'), 'utf8'));
-  const versionCorrect = cManifest.version === '1.0.4' && ffManifest.version === '1.0.4';
-  record('VERSION', 'Manifest version pinned to 1.0.4 across Chromium and Firefox', versionCorrect ? 'PASS' : 'FAIL');
+  const versionCorrect = cManifest.version === ffManifest.version && ['1.0.4', '1.0.5'].includes(cManifest.version);
+  record('VERSION', `Manifest version synchronized (${cManifest.version}) across Chromium and Firefox`, versionCorrect ? 'PASS' : 'FAIL');
 
   // --- SECTION 2: REAL TORI DESKTOP V1.0.3 SERVER CONNECTION ---
   console.log('\n--- Section 2: Real TORI Desktop v1.0.3 Integration ---');

@@ -694,9 +694,9 @@ function normalizePlatformUrl(rawUrl) {
     mp.appendChild(pn);
     anchor.appendChild(mp);
 
-    // Isolate ALL mouse, pointer, touch, and click events so video player controls never intercept
+    // Isolate ALL mouse, touch, and click events so video player controls never intercept
     const isolateEvents = (el) => {
-      ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'touchstart', 'touchend', 'contextmenu'].forEach((evt) => {
+      ['mousedown', 'mouseup', 'click', 'dblclick', 'touchstart', 'touchend', 'contextmenu'].forEach((evt) => {
         el.addEventListener(evt, (e) => {
           e.stopPropagation();
         });
@@ -711,6 +711,8 @@ function normalizePlatformUrl(rawUrl) {
     let isPointerDown = false;
     let isDragging = false;
     let wasDragged = false;
+    let activePointerId = null;
+    let hasPointerCapture = false;
     let dragStartX = 0;
     let dragStartY = 0;
     let elemStartX = 0;
@@ -741,8 +743,72 @@ function normalizePlatformUrl(rawUrl) {
       });
     } catch (_) {}
 
+    const endDrag = (e, savePosition = true) => {
+      if (!isPointerDown && !isDragging) return;
+
+      const didDrag = isDragging;
+      isPointerDown = false;
+      isDragging = false;
+      mp.classList.remove('tori-dragging');
+
+      // Unbind capturing window listeners
+      window.removeEventListener('pointermove', onPointerMove, true);
+      window.removeEventListener('pointerup', onPointerUp, true);
+      window.removeEventListener('pointercancel', onPointerCancel, true);
+      window.removeEventListener('blur', onWindowBlur);
+
+      // Unbind element listeners
+      pill.removeEventListener('pointerup', onPointerUp);
+      pill.removeEventListener('pointercancel', onPointerCancel);
+      pill.removeEventListener('lostpointercapture', onLostPointerCapture);
+
+      // Safely release pointer capture if active
+      if (hasPointerCapture && activePointerId !== null) {
+        try {
+          if (pill.hasPointerCapture && pill.hasPointerCapture(activePointerId)) {
+            pill.releasePointerCapture(activePointerId);
+          }
+        } catch (_) {}
+        hasPointerCapture = false;
+      }
+      activePointerId = null;
+
+      if (didDrag) {
+        wasDragged = true;
+
+        if (savePosition) {
+          const aRect = anchor.getBoundingClientRect();
+          if (aRect.width > 0 && aRect.height > 0) {
+            const l = parseFloat(mp.style.left) || 0;
+            const t = parseFloat(mp.style.top) || 0;
+            const rx = Math.min(Math.max(0, l / aRect.width), 1);
+            const ry = Math.min(Math.max(0, t / aRect.height), 1);
+            mp.setAttribute('data-pos-rx', rx.toFixed(4));
+            mp.setAttribute('data-pos-ry', ry.toFixed(4));
+            try {
+              chrome.storage.local.set({
+                tori_custom_overlay_pos: { rx, ry },
+              });
+            } catch (_) {}
+          }
+        }
+
+        setTimeout(() => {
+          wasDragged = false;
+        }, 120);
+      }
+    };
+
     const onPointerMove = (e) => {
       if (!isPointerDown) return;
+      if (activePointerId !== null && e.pointerId !== activePointerId) return;
+
+      // Primary mouse button must remain pressed during drag
+      if (e.pointerType === 'mouse' && (e.buttons & 1) === 0) {
+        endDrag(e, false);
+        return;
+      }
+
       const dx = e.clientX - dragStartX;
       const dy = e.clientY - dragStartY;
 
@@ -752,8 +818,11 @@ function normalizePlatformUrl(rawUrl) {
           wasDragged = true;
           mp.classList.add('tori-dragging');
           try {
-            pill.setPointerCapture(e.pointerId);
+            pill.setPointerCapture(activePointerId);
+            hasPointerCapture = true;
           } catch (_) {}
+        } else {
+          return;
         }
       }
 
@@ -777,45 +846,34 @@ function normalizePlatformUrl(rawUrl) {
     };
 
     const onPointerUp = (e) => {
-      if (!isPointerDown) return;
-      isPointerDown = false;
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointercancel', onPointerUp);
+      endDrag(e, true);
+    };
 
-      if (isDragging) {
-        isDragging = false;
-        mp.classList.remove('tori-dragging');
-        try {
-          pill.releasePointerCapture(e.pointerId);
-        } catch (_) {}
+    const onPointerCancel = (e) => {
+      endDrag(e, false);
+    };
 
-        const aRect = anchor.getBoundingClientRect();
-        if (aRect.width > 0 && aRect.height > 0) {
-          const l = parseFloat(mp.style.left) || 0;
-          const t = parseFloat(mp.style.top) || 0;
-          const rx = Math.min(Math.max(0, l / aRect.width), 1);
-          const ry = Math.min(Math.max(0, t / aRect.height), 1);
-          mp.setAttribute('data-pos-rx', rx.toFixed(4));
-          mp.setAttribute('data-pos-ry', ry.toFixed(4));
-          try {
-            chrome.storage.local.set({
-              tori_custom_overlay_pos: { rx, ry },
-            });
-          } catch (_) {}
-        }
+    const onLostPointerCapture = (e) => {
+      endDrag(e, true);
+    };
 
-        setTimeout(() => {
-          wasDragged = false;
-        }, 100);
-      }
+    const onWindowBlur = () => {
+      endDrag(null, false);
     };
 
     pill.addEventListener('pointerdown', (e) => {
+      // Only primary mouse button can initiate mouse dragging
       if (e.button !== 0) return;
+
+      if (isPointerDown || isDragging) {
+        endDrag(e, false);
+      }
+
       isPointerDown = true;
       isDragging = false;
       wasDragged = false;
+      activePointerId = e.pointerId;
+      hasPointerCapture = false;
       dragStartX = e.clientX;
       dragStartY = e.clientY;
 
@@ -824,9 +882,14 @@ function normalizePlatformUrl(rawUrl) {
       elemStartX = mRect.left - aRect.left;
       elemStartY = mRect.top - aRect.top;
 
-      window.addEventListener('pointermove', onPointerMove, { passive: false });
-      window.addEventListener('pointerup', onPointerUp);
-      window.addEventListener('pointercancel', onPointerUp);
+      window.addEventListener('pointermove', onPointerMove, { capture: true, passive: false });
+      window.addEventListener('pointerup', onPointerUp, { capture: true });
+      window.addEventListener('pointercancel', onPointerCancel, { capture: true });
+      window.addEventListener('blur', onWindowBlur);
+
+      pill.addEventListener('pointerup', onPointerUp);
+      pill.addEventListener('pointercancel', onPointerCancel);
+      pill.addEventListener('lostpointercapture', onLostPointerCapture);
     });
 
     const onResizeClamp = () => {
