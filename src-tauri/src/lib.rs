@@ -100,7 +100,13 @@ pub fn run() {
             .expect("Failed to initialize TDM Download Manager"),
     );
 
-    if force_enable_close_to_tray {
+    let already_migrated_tray = db
+        .get_setting("close_to_tray_migrated_v104")
+        .ok()
+        .flatten()
+        .is_some();
+
+    if !already_migrated_tray || force_enable_close_to_tray {
         let mut settings_obj = db
             .get_setting("app_settings")
             .ok()
@@ -112,10 +118,11 @@ pub fn run() {
         }
         if let Ok(serialized) = serde_json::to_string(&settings_obj) {
             let _ = db.set_setting("app_settings", &serialized);
+            let _ = db.set_setting("close_to_tray_migrated_v104", "true");
             lifecycle::log_event(
                 "APP",
                 "CLOSE_TO_TRAY_ENABLED",
-                "Explicitly enabled closeToTray in app_settings via flag/env without resetting other settings",
+                "Default v1.0.4 closeToTray migration activated in app_settings without resetting other settings",
             );
         }
     }

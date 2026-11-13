@@ -582,7 +582,7 @@ async fn test_server_media_endpoints() {
     assert_eq!(dl_json["status"], "ok");
     assert!(dl_json["job_id"].is_string());
 
-    // 5. POST /api/v1/media/download with duplicate active URL -> returns already_exists
+    // 5. POST /api/v1/media/download with duplicate active URL and SAME format -> returns already_exists
     let dup_resp = client
         .post(format!("{}/api/v1/media/download", base_url))
         .header(HOST, format!("127.0.0.1:{}", port))
@@ -600,6 +600,67 @@ async fn test_server_media_endpoints() {
     let dup_json: serde_json::Value = dup_resp.json().await.unwrap();
     assert_eq!(dup_json["status"], "already_exists");
     assert_eq!(dup_json["job_id"], dl_json["job_id"]);
+
+    // 6. Gate 27 Regression Fix: POST /api/v1/media/download with Audio-only format (e.g. 140)
+    // from the SAME media URL must NOT be blocked as duplicate; returns ok with distinct job_id
+    let audio_resp = client
+        .post(format!("{}/api/v1/media/download", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &token)
+        .json(&serde_json::json!({
+            "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+            "format_id": "140",
+            "filename": "test_bunny_audio.m4a",
+            "destination": temp_dir.path().to_str().unwrap()
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(audio_resp.status(), 200);
+    let audio_json: serde_json::Value = audio_resp.json().await.unwrap();
+    assert_eq!(audio_json["status"], "ok");
+    assert!(audio_json["job_id"].is_string());
+    assert_ne!(audio_json["job_id"], dl_json["job_id"]);
+
+    // 7. Gate 27 Regression Fix: POST /api/v1/media/download with another Video format (e.g. 22 / 720p)
+    // from the SAME media URL must also succeed with a distinct job_id
+    let v720_resp = client
+        .post(format!("{}/api/v1/media/download", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &token)
+        .json(&serde_json::json!({
+            "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+            "format_id": "22",
+            "filename": "test_bunny_720p.mp4",
+            "destination": temp_dir.path().to_str().unwrap()
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(v720_resp.status(), 200);
+    let v720_json: serde_json::Value = v720_resp.json().await.unwrap();
+    assert_eq!(v720_json["status"], "ok");
+    assert_ne!(v720_json["job_id"], dl_json["job_id"]);
+    assert_ne!(v720_json["job_id"], audio_json["job_id"]);
+
+    // 8. Repeated click for Audio format (140) while active -> returns already_exists for audio job
+    let dup_audio_resp = client
+        .post(format!("{}/api/v1/media/download", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &token)
+        .json(&serde_json::json!({
+            "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+            "format_id": "140",
+            "filename": "test_bunny_audio.m4a",
+            "destination": temp_dir.path().to_str().unwrap()
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dup_audio_resp.status(), 200);
+    let dup_audio_json: serde_json::Value = dup_audio_resp.json().await.unwrap();
+    assert_eq!(dup_audio_json["status"], "already_exists");
+    assert_eq!(dup_audio_json["job_id"], audio_json["job_id"]);
 
     shutdown.cancel();
 }

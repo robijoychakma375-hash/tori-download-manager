@@ -501,7 +501,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
 
-                <div className="sr">
+                <div
+                  className="sr"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => {
+                    const nextVal = settings.closeToTray === false;
+                    update('closeToTray', nextVal);
+                    flash(nextVal ? 'Close to System Tray enabled' : 'Close to System Tray disabled');
+                  }}
+                >
                   <div>
                     <b>Close to System Tray</b>
                     <span className="sub">
@@ -510,10 +518,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         : 'Exit application when window is closed'}
                     </span>
                   </div>
-                  <div className="sc">
+                  <div className="sc" onClick={(e) => e.stopPropagation()}>
                     <ToggleSwitch
+                      id="setting-close-to-tray"
                       checked={settings.closeToTray !== false}
-                      onChange={(checked) => update('closeToTray', checked)}
+                      onChange={(checked) => {
+                        update('closeToTray', checked);
+                        flash(checked ? 'Close to System Tray enabled' : 'Close to System Tray disabled');
+                      }}
                       ariaLabel="Close to System Tray"
                     />
                   </div>

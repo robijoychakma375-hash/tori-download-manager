@@ -551,6 +551,13 @@ pub async fn update_engine_settings(
         .database()
         .set_setting("app_settings", &serialized)
         .map_err(|e| e.to_string())?;
+    if let Some(close_to_tray) = settings.get("closeToTray").and_then(|v| v.as_bool()) {
+        crate::lifecycle::log_event(
+            "SETTINGS",
+            "CLOSE_TO_TRAY_UPDATED",
+            &format!("enabled={}", close_to_tray),
+        );
+    }
     Ok(())
 }
 

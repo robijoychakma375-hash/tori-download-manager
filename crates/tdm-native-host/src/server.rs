@@ -855,10 +855,16 @@ async fn handle_create_media_download(
             .unwrap_or_else(|_| raw_target_media_url.to_string());
     let target_media_url = normalized_media_url.as_str();
 
-    // Duplicate check for media download
+    // Duplicate check for media download: match by canonical URL and format identifier
     if let Ok(jobs) = state.db.list_jobs() {
         if let Some(existing) = jobs.iter().find(|j| {
-            (j.url == raw_url || j.url == target_media_url)
+            let url_matches = j.url == raw_url || j.url == target_media_url;
+            let format_matches = match j.resolved_url.as_deref() {
+                Some(existing_fmt) => existing_fmt == format_id,
+                None => format_id == "best" || format_id.is_empty(),
+            };
+            url_matches
+                && format_matches
                 && (j.state != tdm_core::JobState::Failed
                     && j.state != tdm_core::JobState::Cancelled)
         }) {

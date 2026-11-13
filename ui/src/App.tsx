@@ -375,21 +375,34 @@ export function App() {
   useEffect(() => {
     const syncSettings = async () => {
       try {
+        const migratedKey = 'tori_settings_v104_tray_migrated';
+        const hasMigrated = localStorage.getItem(migratedKey) === 'true';
+
         const backendSettings = await invoke<AppSettings | null>('get_engine_settings');
         if (backendSettings) {
           setSettings((prev) => {
+            let closeToTrayVal =
+              typeof backendSettings.closeToTray === 'boolean'
+                ? backendSettings.closeToTray
+                : true;
+
+            if (!hasMigrated) {
+              closeToTrayVal = true;
+              localStorage.setItem(migratedKey, 'true');
+            }
+
             const merged: AppSettings = {
               ...prev,
               ...backendSettings,
-              closeToTray:
-                typeof backendSettings.closeToTray === 'boolean'
-                  ? backendSettings.closeToTray
-                  : true,
+              closeToTray: closeToTrayVal,
             };
             try {
               localStorage.setItem('tori_settings_v2', JSON.stringify(merged));
             } catch {
               // ignore
+            }
+            if (!hasMigrated && backendSettings.closeToTray !== true) {
+              invoke('update_engine_settings', { settings: merged }).catch(() => {});
             }
             return merged;
           });
@@ -397,6 +410,7 @@ export function App() {
           // Fresh SQLite database: ensure closeToTray defaults to true on first initialization
           // so stale WebView2 localStorage from prior sessions cannot silently disable tray mode.
           const initial: AppSettings = { ...settings, closeToTray: true };
+          localStorage.setItem(migratedKey, 'true');
           setSettings(initial);
           try {
             localStorage.setItem('tori_settings_v2', JSON.stringify(initial));
