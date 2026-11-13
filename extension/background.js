@@ -2039,6 +2039,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === 'OPEN_PLAYLIST') {
+    const rawUrl = (message.url || '').trim();
+    if (!rawUrl) {
+      sendResponse({ status: 'error', message: 'Missing playlist URL' });
+      return false;
+    }
+    callDesktopApi('/api/v1/media/playlist/open', 'POST', { url: rawUrl }).then(async (httpRes) => {
+      if (httpRes.ok && httpRes.data) {
+        sendResponse(httpRes.data);
+      } else {
+        sendResponse(await sendNativeMessage({ action: 'open_playlist', url: rawUrl }));
+      }
+    }).catch(async (err) => {
+      sendResponse(await sendNativeMessage({ action: 'open_playlist', url: rawUrl }));
+    });
+    return true;
+  }
+
   if (message.action === 'RESOLVE_PLAYLIST') {
     const rawUrl = (message.url || '').trim();
     if (!rawUrl) {

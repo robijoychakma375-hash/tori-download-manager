@@ -148,6 +148,8 @@ pub struct PlaylistItem {
     pub thumbnail_url: Option<String>,
     pub channel: Option<String>,
     pub index: usize,
+    #[serde(default)]
+    pub is_available: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -242,9 +242,123 @@ export function isTransientCdnUrl(url: string): boolean {
   );
 }
 
+export interface PlaylistInspection {
+  isPlaylist: boolean;
+  isSupported: boolean;
+  type: 'regular' | 'mix' | 'unsupported' | 'none';
+  playlistId?: string;
+  message?: string;
+  canonicalUrl?: string;
+}
+
+export function inspectPlaylistUrl(rawUrl: string): PlaylistInspection {
+  if (!rawUrl) return { isPlaylist: false, isSupported: false, type: 'none' };
+  try {
+    const u = new URL(rawUrl);
+    const host = u.hostname.toLowerCase();
+
+    if (host.includes('youtube.com') || host.includes('youtu.be')) {
+      const listParam = u.searchParams.get('list');
+      const startRadio = u.searchParams.get('start_radio');
+
+      if (!listParam) {
+        return { isPlaylist: false, isSupported: false, type: 'none' };
+      }
+
+      const cleanList = listParam.trim();
+
+      // YouTube Mix / Radio collections:
+      // RD = dynamic radio mix (e.g. RDmVeAD3nbXGs, RDMM, RDCLAK, RDAO, RDEM)
+      // UL = upload radio queue
+      // start_radio=1 = radio flag
+      if (
+        cleanList.startsWith('RD') ||
+        cleanList.startsWith('UL') ||
+        startRadio === '1'
+      ) {
+        return {
+          isPlaylist: true,
+          isSupported: false,
+          type: 'mix',
+          playlistId: cleanList,
+          message:
+            'YouTube Mix/Radio queues are auto-generated dynamic playlists and cannot be downloaded as a fixed batch.',
+        };
+      }
+
+      // Private / account collections:
+      if (cleanList === 'WL' || cleanList === 'LL') {
+        return {
+          isPlaylist: true,
+          isSupported: false,
+          type: 'unsupported',
+          playlistId: cleanList,
+          message:
+            'Watch Later and Liked Videos are private collections requiring platform authorization.',
+        };
+      }
+
+      // Regular supported playlists:
+      // PL = standard user playlists
+      // OLAK = album playlists
+      // UU = user uploads
+      // FL = favorites
+      if (
+        cleanList.startsWith('PL') ||
+        cleanList.startsWith('OLAK') ||
+        cleanList.startsWith('UU') ||
+        cleanList.startsWith('FL')
+      ) {
+        return {
+          isPlaylist: true,
+          isSupported: true,
+          type: 'regular',
+          playlistId: cleanList,
+          canonicalUrl: `https://www.youtube.com/playlist?list=${cleanList}`,
+        };
+      }
+
+      // Other list IDs or /playlist path
+      if (u.pathname === '/playlist' || cleanList.length >= 10) {
+        return {
+          isPlaylist: true,
+          isSupported: true,
+          type: 'regular',
+          playlistId: cleanList,
+          canonicalUrl: `https://www.youtube.com/playlist?list=${cleanList}`,
+        };
+      }
+
+      return {
+        isPlaylist: true,
+        isSupported: false,
+        type: 'unsupported',
+        playlistId: cleanList,
+        message: 'Unsupported YouTube playlist collection.',
+      };
+    }
+
+    if (
+      u.pathname.includes('/playlist') ||
+      u.pathname.includes('/album') ||
+      u.pathname.includes('/sets/')
+    ) {
+      return {
+        isPlaylist: true,
+        isSupported: true,
+        type: 'regular',
+        canonicalUrl: rawUrl,
+      };
+    }
+
+    return { isPlaylist: false, isSupported: false, type: 'none' };
+  } catch {
+    return { isPlaylist: false, isSupported: false, type: 'none' };
+  }
+}
+
 export function isPlaylistUrl(url: string): boolean {
-  if (!url) return false;
-  const u = url.trim().toLowerCase();
-  return u.includes('list=') || u.includes('playlist');
+  const inspection = inspectPlaylistUrl(url);
+  return inspection.isPlaylist && inspection.isSupported;
 }
 

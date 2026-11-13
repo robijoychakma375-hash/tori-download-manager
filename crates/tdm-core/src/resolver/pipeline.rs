@@ -165,6 +165,17 @@ impl MediaResolver {
         let safe_url = validate_safe_media_url(raw_url).await?;
         let url_str = safe_url.as_str();
 
+        // Reject YouTube Mix / Radio collections as unsupported
+        let lower = url_str.to_lowercase();
+        if (lower.contains("list=rd") || lower.contains("list=ul") || lower.contains("start_radio=1"))
+            && !lower.contains("list=pl")
+            && !lower.contains("list=olak")
+        {
+            return Err(EngineError::Other(
+                "YouTube Mix/Radio queues are auto-generated dynamic collections and cannot be downloaded as a fixed batch.".to_string(),
+            ));
+        }
+
         let json_val = execute_yt_dlp_playlist_dump(url_str, limit, None).await?;
         parse_ytdlp_playlist_metadata(url_str, &json_val)
     }
@@ -1367,6 +1378,12 @@ pub fn parse_ytdlp_playlist_metadata(
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
 
+            let is_unavailable = item_title.contains("[Private video]")
+                || item_title.contains("[Deleted video]")
+                || item_title.contains("[Unavailable]")
+                || entry.get("availability").and_then(|v| v.as_str()) == Some("private")
+                || item_id.is_empty();
+
             items.push(PlaylistItem {
                 id: item_id,
                 title: item_title,
@@ -1375,6 +1392,7 @@ pub fn parse_ytdlp_playlist_metadata(
                 thumbnail_url: item_thumb,
                 channel: item_channel,
                 index: i + 1,
+                is_available: Some(!is_unavailable),
             });
         }
     } else {
@@ -1403,6 +1421,7 @@ pub fn parse_ytdlp_playlist_metadata(
             thumbnail_url: thumbnail_url.clone(),
             channel: channel.clone(),
             index: 1,
+            is_available: Some(true),
         });
     }
 

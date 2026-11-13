@@ -108,6 +108,11 @@ pub struct CreateMediaDownloadReq {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct OpenPlaylistReq {
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ResolvePlaylistReq {
     pub url: String,
     pub limit: Option<usize>,
@@ -1005,6 +1010,43 @@ async fn handle_playlist_resolve(
     }
 }
 
+async fn handle_open_playlist(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(payload): Json<OpenPlaylistReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let config = state.config.read().await;
+    if !check_auth(&headers, None, &config.token) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Authentication required."
+            })),
+        ));
+    }
+
+    let raw_url = payload.url.trim().to_string();
+    if raw_url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Missing playlist URL"
+            })),
+        ));
+    }
+
+    // Bring desktop window to front and open playlist modal
+    state.manager.event_bus().emit(tdm_core::DownloadEvent::ShowWindow);
+    state.manager.event_bus().emit(tdm_core::DownloadEvent::OpenPlaylistModal { url: raw_url });
+
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "message": "Playlist opened in TORI Desktop"
+    })))
+}
+
 async fn handle_playlist_enqueue(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -1039,13 +1081,28 @@ async fn handle_playlist_enqueue(
         .resolve_destination_folder("playlist_video.mp4", payload.destination.as_deref());
 
     let format = payload.format_id.as_deref().unwrap_or("best");
+    let ext = if format.contains("audio") { "m4a" } else { "mp4" };
     let mut job_ids = Vec::new();
+
+    let existing_jobs = state.db.list_jobs().unwrap_or_default();
 
     for item in payload.items {
         if item.url.trim().is_empty() {
             continue;
         }
-        let clean_filename = format!("{}.mp4", tdm_core::sanitize_filename(&item.title));
+
+        // Deduplication: prevent creating duplicate jobs for identical URL and format
+        if let Some(existing) = existing_jobs.iter().find(|j| {
+            j.url == item.url
+                && j.resolved_url.as_deref() == Some(format)
+                && j.state != tdm_core::JobState::Failed
+                && j.state != tdm_core::JobState::Cancelled
+        }) {
+            job_ids.push(existing.id.clone());
+            continue;
+        }
+
+        let clean_filename = format!("{}.{}", tdm_core::sanitize_filename(&item.title), ext);
         match state
             .manager
             .create_managed_media_download(
@@ -1453,6 +1510,10 @@ async fn handle_events(
                     let payload = serde_json::json!({ "id": id });
                     yield Ok(Event::default().event("deleted").data(payload.to_string()));
                 }
+                tdm_core::DownloadEvent::OpenPlaylistModal { url } => {
+                    let payload = serde_json::json!({ "url": url });
+                    yield Ok(Event::default().event("open_playlist").data(payload.to_string()));
+                }
             }
         }
     };
@@ -1556,6 +1617,10 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
         .route(
             "/api/v1/media/playlist/enqueue",
             post(handle_playlist_enqueue),
+        )
+        .route(
+            "/api/v1/media/playlist/open",
+            post(handle_open_playlist),
         )
         .route("/api/v1/thumbnails/{id}", get(handle_get_thumbnail))
         .layer(middleware::from_fn_with_state(

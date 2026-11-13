@@ -28,6 +28,111 @@ function isManagedPlatform(urlOrHost) {
   );
 }
 
+function inspectPlaylistUrl(rawUrl) {
+  if (!rawUrl) return { isPlaylist: false, isSupported: false, type: 'none' };
+  try {
+    const u = new URL(rawUrl);
+    const host = u.hostname.toLowerCase();
+
+    if (host.includes('youtube.com') || host.includes('youtu.be')) {
+      const listParam = u.searchParams.get('list');
+      const startRadio = u.searchParams.get('start_radio');
+
+      if (!listParam) {
+        return { isPlaylist: false, isSupported: false, type: 'none' };
+      }
+
+      const cleanList = listParam.trim();
+
+      // YouTube Mix / Radio collections:
+      // RD: dynamic algorithmic radio mix (e.g. RDmVeAD3nbXGs, RDMM, RDCLAK, RDAO, RDEM)
+      // UL: upload radio queue
+      // start_radio=1: mix radio indicator
+      if (
+        cleanList.startsWith('RD') ||
+        cleanList.startsWith('UL') ||
+        startRadio === '1'
+      ) {
+        return {
+          isPlaylist: true,
+          isSupported: false,
+          type: 'mix',
+          playlistId: cleanList,
+          message:
+            'YouTube Mix/Radio queues are auto-generated dynamic playlists and cannot be downloaded as a fixed batch.',
+        };
+      }
+
+      // Private / account collections:
+      if (cleanList === 'WL' || cleanList === 'LL') {
+        return {
+          isPlaylist: true,
+          isSupported: false,
+          type: 'unsupported',
+          playlistId: cleanList,
+          message:
+            'Watch Later and Liked Videos are private collections requiring platform authorization.',
+        };
+      }
+
+      // Regular supported playlists:
+      // PL: standard user playlists
+      // OLAK: album playlists
+      // UU: user uploads
+      // FL: favorites
+      if (
+        cleanList.startsWith('PL') ||
+        cleanList.startsWith('OLAK') ||
+        cleanList.startsWith('UU') ||
+        cleanList.startsWith('FL')
+      ) {
+        return {
+          isPlaylist: true,
+          isSupported: true,
+          type: 'regular',
+          playlistId: cleanList,
+          canonicalUrl: `https://www.youtube.com/playlist?list=${cleanList}`,
+        };
+      }
+
+      if (u.pathname === '/playlist' || cleanList.length >= 10) {
+        return {
+          isPlaylist: true,
+          isSupported: true,
+          type: 'regular',
+          playlistId: cleanList,
+          canonicalUrl: `https://www.youtube.com/playlist?list=${cleanList}`,
+        };
+      }
+
+      return {
+        isPlaylist: true,
+        isSupported: false,
+        type: 'unsupported',
+        playlistId: cleanList,
+        message: 'Unsupported YouTube playlist collection.',
+      };
+    }
+
+    if (
+      u.pathname.includes('/playlist') ||
+      u.pathname.includes('/album') ||
+      u.pathname.includes('/sets/')
+    ) {
+      return {
+        isPlaylist: true,
+        isSupported: true,
+        type: 'regular',
+        canonicalUrl: rawUrl,
+      };
+    }
+
+    return { isPlaylist: false, isSupported: false, type: 'none' };
+  } catch (_) {
+    return { isPlaylist: false, isSupported: false, type: 'none' };
+  }
+}
+
 function normalizePlatformUrl(rawUrl) {
   if (!rawUrl) return { url: '', videoId: '', isSpecific: false, platform: 'unknown' };
   try {
@@ -1514,13 +1619,32 @@ function normalizePlatformUrl(rawUrl) {
         </div>
 
         ${
-          window.location.href.includes('list=')
-            ? `
+          (() => {
+            const pInfo = inspectPlaylistUrl(window.location.href);
+            if (pInfo.isPlaylist && pInfo.isSupported) {
+              return `
         <div style="margin: 4px 14px 2px; padding: 6px 10px; background: rgba(91,91,240,0.1); border: 1px solid rgba(91,91,240,0.25); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
           <span style="font-size: 11.5px; color: #4338ca; font-weight: 600;">⚡ Playlist available</span>
-          <button type="button" data-act="open-playlist" style="font-size: 11px; padding: 3px 8px; background: #5b5bf0; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Download Playlist</button>
-        </div>`
-            : ''
+          <button type="button" data-act="open-playlist" data-canonical-url="${escapeHtml(pInfo.canonicalUrl || window.location.href)}" style="font-size: 11px; padding: 3px 8px; background: #5b5bf0; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Download Playlist</button>
+        </div>`;
+            } else if (pInfo.isPlaylist && pInfo.type === 'mix') {
+              return `
+        <div style="margin: 4px 14px 2px; padding: 6px 10px; background: rgba(234, 88, 12, 0.08); border: 1px solid rgba(234, 88, 12, 0.25); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <div style="display: flex; flex-direction: column; min-width: 0;">
+            <span style="font-size: 11.5px; color: #c2410c; font-weight: 600;">📻 YouTube Mix (Radio)</span>
+            <span style="font-size: 10px; color: #7c2d12; opacity: 0.85;">Dynamic queue cannot be downloaded as a batch</span>
+          </div>
+          <button type="button" data-act="mix-info" style="font-size: 10.5px; padding: 2px 7px; background: transparent; color: #c2410c; border: 1px solid rgba(234, 88, 12, 0.4); border-radius: 6px; cursor: pointer; font-weight: 600;">Info</button>
+        </div>`;
+            } else if (pInfo.isPlaylist && pInfo.type === 'unsupported') {
+              return `
+        <div style="margin: 4px 14px 2px; padding: 6px 10px; background: rgba(100, 116, 139, 0.08); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <span style="font-size: 11px; color: #475569; font-weight: 500;">🔒 Private / restricted playlist</span>
+          <button type="button" data-act="mix-info" style="font-size: 10.5px; padding: 2px 7px; background: transparent; color: #475569; border: 1px solid rgba(100, 116, 139, 0.4); border-radius: 6px; cursor: pointer; font-weight: 500;">Info</button>
+        </div>`;
+            }
+            return '';
+          })()
         }
 
         <div class="seg tori-seg" role="tablist">
@@ -1603,13 +1727,23 @@ function normalizePlatformUrl(rawUrl) {
       if (playlistBtn) {
         playlistBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          chrome.runtime.sendMessage({ action: 'SHOW_DESKTOP' });
+          const targetUrl = playlistBtn.getAttribute('data-canonical-url') || window.location.href;
           chrome.runtime.sendMessage({
-            action: 'RESOLVE_PLAYLIST',
-            url: window.location.href,
+            action: 'OPEN_PLAYLIST',
+            url: targetUrl,
           });
           pn.classList.remove('on');
+          pill.setAttribute('aria-expanded', 'false');
           showToast('Opening Playlist in TORI...');
+        });
+      }
+
+      const mixInfoBtn = pn.querySelector('[data-act="mix-info"]');
+      if (mixInfoBtn) {
+        mixInfoBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const pInfo = inspectPlaylistUrl(window.location.href);
+          showToast(pInfo.message || 'This playlist queue cannot be downloaded as a fixed batch.');
         });
       }
 

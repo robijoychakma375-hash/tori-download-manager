@@ -18,6 +18,9 @@ pub enum DownloadEvent {
     OpenProgressWindow {
         id: String,
     },
+    OpenPlaylistModal {
+        url: String,
+    },
 }
 
 #[derive(Clone)]

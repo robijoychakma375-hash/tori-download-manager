@@ -117,7 +117,17 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
         limit: 100,
       });
       setPlaylist(res);
-      setSelectedIds(new Set(res.items.map((i) => i.id)));
+      // Select only available, non-deleted items by default
+      const availableIds = res.items
+        .filter(
+          (i) =>
+            i.is_available !== false &&
+            !i.title.includes('[Private') &&
+            !i.title.includes('[Deleted') &&
+            !i.title.includes('[Unavailable')
+        )
+        .map((i) => i.id);
+      setSelectedIds(new Set(availableIds));
     } catch (err: unknown) {
       console.error('Failed to resolve playlist:', err);
       setError(String(err));
@@ -126,16 +136,28 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
     }
   };
 
+  const availableItems = useMemo(() => {
+    if (!playlist) return [];
+    return playlist.items.filter(
+      (i) =>
+        i.is_available !== false &&
+        !i.title.includes('[Private') &&
+        !i.title.includes('[Deleted') &&
+        !i.title.includes('[Unavailable')
+    );
+  }, [playlist]);
+
   const toggleSelectAll = () => {
     if (!playlist) return;
-    if (selectedIds.size === playlist.items.length) {
+    if (selectedIds.size === availableItems.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(playlist.items.map((i) => i.id)));
+      setSelectedIds(new Set(availableItems.map((i) => i.id)));
     }
   };
 
-  const toggleItem = (id: string) => {
+  const toggleItem = (id: string, isUnavailable: boolean) => {
+    if (isUnavailable) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -381,11 +403,17 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                   value={formatId}
                   onChange={(e) => setFormatId(e.target.value)}
                 >
-                  <option value="best">Best Quality (MP4)</option>
-                  <option value="1080p">1080p Full HD</option>
-                  <option value="720p">720p HD</option>
-                  <option value="480p">480p Standard</option>
-                  <option value="audio_only">Audio Only (MP3)</option>
+                  <optgroup label="Video Downloads">
+                    <option value="best">Best Quality Video (MP4 / MKV)</option>
+                    <option value="1080p">1080p Full HD Video</option>
+                    <option value="720p">720p HD Video</option>
+                    <option value="480p">480p Standard Video</option>
+                  </optgroup>
+                  <optgroup label="Audio-Only Downloads">
+                    <option value="audio_only">Audio Only (Best Quality)</option>
+                    <option value="audio_mp3">Audio Only (MP3)</option>
+                    <option value="audio_m4a">Audio Only (M4A)</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -413,19 +441,30 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                   </div>
                 ) : (
                   filteredItems.map((item) => {
-                    const isSelected = selectedIds.has(item.id);
+                    const isUnavailable =
+                      item.is_available === false ||
+                      item.title.includes('[Private') ||
+                      item.title.includes('[Deleted') ||
+                      item.title.includes('[Unavailable') ||
+                      !item.url;
+                    const isSelected = !isUnavailable && selectedIds.has(item.id);
                     return (
                       <div
                         key={item.id}
-                        onClick={() => toggleItem(item.id)}
+                        onClick={() => toggleItem(item.id, isUnavailable)}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
                           gap: 10,
                           padding: '6px 12px',
                           borderBottom: '1px solid var(--border-subtle, #27272a)',
-                          background: isSelected ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
-                          cursor: 'pointer',
+                          background: isSelected
+                            ? 'rgba(99, 102, 241, 0.12)'
+                            : isUnavailable
+                            ? 'rgba(239, 68, 68, 0.05)'
+                            : 'transparent',
+                          cursor: isUnavailable ? 'not-allowed' : 'pointer',
+                          opacity: isUnavailable ? 0.6 : 1,
                           userSelect: 'none',
                           transition: 'background 0.15s ease',
                         }}
@@ -433,8 +472,9 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                         <input
                           type="checkbox"
                           checked={isSelected}
+                          disabled={isUnavailable}
                           onChange={() => {}} // handled by parent div
-                          style={{ cursor: 'pointer', accentColor: 'var(--accent, #6366f1)' }}
+                          style={{ cursor: isUnavailable ? 'not-allowed' : 'pointer', accentColor: 'var(--accent, #6366f1)' }}
                         />
 
                         <span
@@ -476,7 +516,11 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                           style={{
                             flex: 1,
                             fontSize: 12,
-                            color: isSelected ? 'var(--txt, #f4f4f5)' : 'var(--txt-subtle, #d4d4d8)',
+                            color: isUnavailable
+                              ? 'var(--bad, #f87171)'
+                              : isSelected
+                              ? 'var(--txt, #f4f4f5)'
+                              : 'var(--txt-subtle, #d4d4d8)',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
@@ -484,6 +528,21 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
                           title={item.title}
                         >
                           {item.title}
+                          {isUnavailable && (
+                            <span
+                              style={{
+                                marginLeft: 8,
+                                fontSize: 10,
+                                padding: '1px 5px',
+                                borderRadius: 4,
+                                background: 'rgba(239,68,68,0.2)',
+                                color: '#f87171',
+                                fontWeight: 600,
+                              }}
+                            >
+                              Unavailable
+                            </span>
+                          )}
                         </span>
 
                         <span

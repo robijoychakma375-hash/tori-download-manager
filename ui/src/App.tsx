@@ -548,6 +548,11 @@ export function App() {
           next.delete(id);
           return next;
         });
+      } else if (payload.type === 'OpenPlaylistModal') {
+        const { url } = payload.payload;
+        if (url) {
+          setPlaylistModalUrl(url);
+        }
       }
     });
 
@@ -564,11 +569,19 @@ export function App() {
       }
     });
 
+    const unlistenPlaylistModalPromise = listen<string>('open-playlist-modal', (event) => {
+      const url = event.payload;
+      if (url) {
+        setPlaylistModalUrl(url);
+      }
+    });
+
     return () => {
       clearInterval(extInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       unlistenPromise.then((unlisten) => unlisten());
       unlistenDeletedPromise.then((unlisten) => unlisten());
+      unlistenPlaylistModalPromise.then((unlisten) => unlisten());
     };
   }, [loadDownloads]);
 

@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { TitleBar } from './TitleBar';
 import type { MediaMetadata } from '../types';
-import { isMediaPageUrl, isPlaylistUrl, fmtB, fmtT } from '../utils';
+import { isMediaPageUrl, isPlaylistUrl, inspectPlaylistUrl, fmtB, fmtT } from '../utils';
 
 interface AddDownloadModalProps {
   defaultDir: string;
@@ -72,6 +72,8 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
   const isMedia = isSingleLine && isMediaPageUrl(trimmedUrl);
   const hasPlaylist = isPlaylistUrl(trimmedUrl);
   const hasBoth = isMedia && hasPlaylist;
+  const playlistInspection = useMemo(() => inspectPlaylistUrl(trimmedUrl), [trimmedUrl]);
+  const isMix = isSingleLine && playlistInspection.type === 'mix';
 
   const scheduledIso = useMemo(() => {
     if (!isScheduled) return null;
@@ -323,6 +325,22 @@ export const AddDownloadModal: React.FC<AddDownloadModalProps> = ({
                   >
                     ⚡ Detected Playlist — Open in Playlist Downloader
                   </button>
+                </div>
+              )}
+
+              {isMix && (
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: '5px 10px',
+                    borderRadius: 6,
+                    background: 'rgba(245,158,11,0.1)',
+                    border: '1px solid rgba(245,158,11,0.25)',
+                    color: '#d97706',
+                    fontSize: 11,
+                  }}
+                >
+                  📻 YouTube Mix/Radio detected — will download current video (Mix queues are dynamic and cannot be downloaded as batch playlists).
                 </div>
               )}
             </div>

@@ -334,14 +334,31 @@ pub fn build_format_selector(fmt: &str) -> Option<String> {
     } else {
         trimmed
     };
+
+    // Map user-friendly quality presets to standard yt-dlp format expressions
+    match format_arg.to_lowercase().as_str() {
+        "best" | "direct" => return Some("bestvideo+bestaudio/best".to_string()),
+        "1080p" | "fhd" => {
+            return Some("bestvideo[height<=1080]+bestaudio/best[height<=1080]/best".to_string())
+        }
+        "720p" | "hd" => {
+            return Some("bestvideo[height<=720]+bestaudio/best[height<=720]/best".to_string())
+        }
+        "480p" | "sd" => {
+            return Some("bestvideo[height<=480]+bestaudio/best[height<=480]/best".to_string())
+        }
+        "audio_only" | "audio" | "audio-best" | "bestaudio" | "ba" => {
+            return Some("bestaudio/best".to_string())
+        }
+        "audio_mp3" => return Some("bestaudio[ext=mp3]/bestaudio/best".to_string()),
+        "audio_m4a" => return Some("bestaudio[ext=m4a]/bestaudio/best".to_string()),
+        _ => {}
+    }
+
     let is_audio = format_arg.contains("audio")
         || format_arg.contains("ba")
         || is_common_audio_format(format_arg);
-    if format_arg == "best"
-        || format_arg == "direct"
-        || format_arg.starts_with("hls_")
-        || format_arg.starts_with("dash_")
-    {
+    if format_arg.starts_with("hls_") || format_arg.starts_with("dash_") {
         Some("bestvideo+bestaudio/best".to_string())
     } else if format_arg.contains('+') || format_arg.contains('/') || is_audio {
         Some(format_arg.to_string())

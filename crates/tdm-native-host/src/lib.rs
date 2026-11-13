@@ -90,6 +90,27 @@ pub async fn run() -> io::Result<()> {
         }
     };
 
+    if args.len() > 1 && args[1] == "--serve" {
+        if let Some(p_str) = args.get(2) {
+            if let Ok(p) = p_str.parse::<u16>() {
+                let _ = db.set_setting("server_port", &p.to_string());
+            }
+        }
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        match server::start_server(manager, db, shutdown.clone()).await {
+            Ok((port, token)) => {
+                println!("SERVER_READY port={} token={}", port, token);
+                tokio::signal::ctrl_c().await.ok();
+                shutdown.cancel();
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("[TORI Native Host] Failed to start server: {}", e);
+                return Err(io::Error::other(e));
+            }
+        }
+    }
+
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());
     let stdout = io::stdout();
@@ -184,6 +205,27 @@ pub async fn handle_message(
                 version: Some("1.0.1".to_string()),
                 message: Some("Window focus request emitted to persistent desktop engine".to_string()),
                 ..Default::default()
+            }
+        },
+
+        "open_playlist" => {
+            if let Some(url) = msg.url {
+                manager.event_bus().emit(tdm_core::DownloadEvent::ShowWindow);
+                manager.event_bus().emit(tdm_core::DownloadEvent::OpenPlaylistModal { url: url.clone() });
+                NativeResponse {
+                    status: "ok".to_string(),
+                    action: "open_playlist".to_string(),
+                    version: Some("2.0.0".to_string()),
+                    message: Some("Playlist modal opened in TORI Desktop".to_string()),
+                    ..Default::default()
+                }
+            } else {
+                NativeResponse {
+                    status: "error".to_string(),
+                    action: "open_playlist".to_string(),
+                    message: Some("Missing 'url'".to_string()),
+                    ..Default::default()
+                }
             }
         },
 

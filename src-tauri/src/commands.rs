@@ -1081,13 +1081,28 @@ pub async fn enqueue_playlist_items(
         .resolve_destination_folder("playlist.mp4", destination.as_deref());
 
     let format = format_id.as_deref().unwrap_or("best");
+    let ext = if format.contains("audio") { "m4a" } else { "mp4" };
     let mut created_ids = Vec::new();
+
+    let existing_jobs = state.manager.list_downloads().unwrap_or_default();
 
     for item in items {
         if item.url.trim().is_empty() {
             continue;
         }
-        let clean_filename = format!("{}.mp4", tdm_core::sanitize_filename(&item.title));
+
+        // Deduplication: prevent creating duplicate jobs for identical URL and format
+        if let Some(existing) = existing_jobs.iter().find(|j| {
+            j.url == item.url
+                && j.resolved_url.as_deref() == Some(format)
+                && j.state != tdm_core::JobState::Failed
+                && j.state != tdm_core::JobState::Cancelled
+        }) {
+            created_ids.push(existing.id.clone());
+            continue;
+        }
+
+        let clean_filename = format!("{}.{}", tdm_core::sanitize_filename(&item.title), ext);
         match state
             .manager
             .create_managed_media_download(

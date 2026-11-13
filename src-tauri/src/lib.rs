@@ -202,6 +202,9 @@ pub fn run() {
                         tdm_core::DownloadEvent::Deleted { id } => {
                             let _ = bus_app_handle.emit("download-deleted", id);
                         }
+                        tdm_core::DownloadEvent::OpenPlaylistModal { url } => {
+                            let _ = bus_app_handle.emit("open-playlist-modal", url);
+                        }
                         _ => {}
                     }
                     let _ = bus_app_handle.emit("download-event", &event);

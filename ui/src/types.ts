@@ -65,7 +65,8 @@ export type DownloadEvent =
   | { type: 'Deleted'; payload: { id: string } }
   | { type: 'ShowWindow' }
   | { type: 'HideWindow' }
-  | { type: 'OpenProgressWindow'; payload: { id: string } };
+  | { type: 'OpenProgressWindow'; payload: { id: string } }
+  | { type: 'OpenPlaylistModal'; payload: { url: string } };
 
 export type CategoryKey =
   | 'all'
@@ -117,6 +118,7 @@ export interface PlaylistItem {
   thumbnail_url: string | null;
   channel: string | null;
   index: number;
+  is_available?: boolean | null;
 }
 
 export interface PlaylistMetadata {
