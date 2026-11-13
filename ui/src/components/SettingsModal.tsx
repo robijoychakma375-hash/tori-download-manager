@@ -124,10 +124,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     return initialTab || 'engine';
   });
-  const [appVersion, setAppVersion] = useState<string>('1.0.4');
+  const [appVersion, setAppVersion] = useState<string>('1.0.5');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
     state: 'idle',
-    currentVersion: '1.0.4',
+    currentVersion: '1.0.5',
     downloadedBytes: 0,
     totalBytes: 0,
   });
