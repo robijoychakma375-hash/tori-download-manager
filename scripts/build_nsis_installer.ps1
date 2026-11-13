@@ -6,8 +6,10 @@ npm --prefix ui run build
 
 Write-Host "Ensuring resource binaries are in sync..."
 Copy-Item "target\release\tdm-native-host.exe" "resources\bin\tdm-native-host.exe" -Force
+Copy-Item "target\release\tdm-cli.exe" "resources\bin\tdm-cli.exe" -Force
 if (Test-Path "target\release\bin") {
     Copy-Item "target\release\tdm-native-host.exe" "target\release\bin\tdm-native-host.exe" -Force
+    Copy-Item "target\release\tdm-cli.exe" "target\release\bin\tdm-cli.exe" -Force
 }
 
 $keyPath = Join-Path $env:USERPROFILE ".tori-keys\tori-updater.key"
