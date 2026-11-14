@@ -954,11 +954,10 @@ async function run() {
   metrics.synthetic2_9gb = { totalBytes: synthJob?.total_bytes || 0, chunkCount: synthChunkCount, probeBytesTransferred: syntheticBytesServed };
 
   // Wait for the 5 real completed transfers (24M + 12M CD + 4M Unicode + 8M Redirect + 6M MP4)
-  // Note: /cd_blob lacks a file extension at initial job creation before HTTP headers resolve filename,
-  // so TORI stores Cosmic_Odyssey_1080p_BluRay.mkv cleanly under Other/ while keeping full Content-Disposition filename.
+  // Gate 27.8 fix: post-probe HTTP Content-Disposition resolves Cosmic_Odyssey_1080p_BluRay.mkv directly into Video/ before DB persistence.
   const expectedFiles = [
     { name: 'standard_24m.mkv', expectedFolder: 'Video', bytes: mkvStd24.length, digest: sha.mkvStd24 },
-    { name: 'Cosmic_Odyssey_1080p_BluRay.mkv', expectedFolder: 'Other', bytes: mkvCd12.length, digest: sha.mkvCd12 },
+    { name: 'Cosmic_Odyssey_1080p_BluRay.mkv', expectedFolder: 'Video', bytes: mkvCd12.length, digest: sha.mkvCd12 },
     { name: 'Test Film 大型 映画 (2026).mkv', expectedFolder: 'Video', bytes: mkvUni4.length, digest: sha.mkvUni4 },
     { name: 'Signed_Transfer_2026.mkv', expectedFolder: 'Video', bytes: mkvRedir8.length, digest: sha.mkvRedir8 },
     { name: 'Normal_Film_6m.mp4', expectedFolder: 'Video', bytes: mp4Norm6.length, digest: sha.mp4Norm6 },

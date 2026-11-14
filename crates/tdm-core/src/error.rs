@@ -15,6 +15,9 @@ pub enum EngineError {
     #[error("Invalid URL: {0}")]
     InvalidUrl(String),
 
+    #[error("Invalid destination path: {0}")]
+    InvalidDestination(String),
+
     #[error("Invalid Range header: {0}")]
     InvalidRangeHeader(String),
 

@@ -526,22 +526,16 @@ async fn handle_create_download(
 
     // Sanitize destination path if provided
     if let Some(ref d) = payload.destination {
-        let clean = d.trim();
-        if clean.contains("..") {
+        if let Err(e) = tdm_core::DownloadManager::validate_destination_path(d) {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
                     "status": "error",
-                    "message": "Invalid destination path: directory traversal rejected."
+                    "message": e.to_string()
                 })),
             ));
         }
     }
-
-    let dest_hint = payload.filename.as_deref().unwrap_or(raw_url);
-    let dest_path = state
-        .manager
-        .resolve_destination_folder(dest_hint, payload.destination.as_deref());
 
     let prio = match payload.priority.as_deref() {
         Some("high") => Priority::High,
@@ -567,6 +561,7 @@ async fn handle_create_download(
 
     let state_clone = state.clone();
     let url_owned = raw_url.to_string();
+    let dest_owned = payload.destination.clone();
     let handoff_owned = payload.handoff_id.clone();
     let thumb_owned = payload.thumbnail_url.clone();
     let filename_owned = payload.filename.clone();
@@ -574,9 +569,9 @@ async fn handle_create_download(
     let create_res = tokio::spawn(async move {
         let res = state_clone
             .manager
-            .create_or_coalesce_download_with_filename(
+            .create_or_coalesce_download_to_destination(
                 &url_owned,
-                &dest_path,
+                dest_owned.as_deref(),
                 prio,
                 clean_referer,
                 clean_user_agent,

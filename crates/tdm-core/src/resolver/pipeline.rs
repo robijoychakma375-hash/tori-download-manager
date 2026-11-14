@@ -1228,7 +1228,7 @@ fn is_direct_media_extension(url: &str) -> bool {
 fn extract_filename(url: &str, headers: &reqwest::header::HeaderMap) -> String {
     if let Some(cd) = headers.get(reqwest::header::CONTENT_DISPOSITION) {
         if let Ok(cd_str) = cd.to_str() {
-            if let Some(filename) = parse_content_disposition(cd_str) {
+            if let Some(filename) = crate::engine::probe::parse_content_disposition_filename(cd_str) {
                 return filename;
             }
         }
@@ -1254,28 +1254,6 @@ fn url_decode_str(s: &str) -> String {
         .next()
         .map(|(k, _)| k.to_string())
         .unwrap_or_else(|| s.to_string())
-}
-
-fn parse_content_disposition(header: &str) -> Option<String> {
-    for part in header.split(';') {
-        let trimmed = part.trim();
-        if trimmed.to_lowercase().starts_with("filename*=") {
-            let val = trimmed["filename*=".len()..].trim();
-            if let Some(actual) = val
-                .strip_prefix("UTF-8''")
-                .or_else(|| val.strip_prefix("utf-8''"))
-            {
-                let unquoted = actual.trim_matches('"');
-                return Some(url_decode_str(unquoted));
-            }
-        } else if trimmed.to_lowercase().starts_with("filename=") {
-            let val = trimmed["filename=".len()..].trim().trim_matches('"');
-            if !val.is_empty() {
-                return Some(val.to_string());
-            }
-        }
-    }
-    None
 }
 
 /// Parses yt-dlp flat-playlist JSON into structured PlaylistMetadata.

@@ -17,7 +17,10 @@ pub use events::{DownloadEvent, EventBus};
 pub use governor::{ConcurrencyGovernor, ConnectionPermit, GovernorConfig};
 pub use limiter::BandwidthLimiter;
 pub use manager::DownloadManager;
-pub use probe::{probe_url, sanitize_filename, ProbeResult};
+pub use probe::{
+    extract_safe_header_filename_candidate, parse_content_disposition_filename, probe_url,
+    sanitize_filename, ProbeResult,
+};
 pub use referer::{apply_referer, sanitize_and_validate_referer};
 pub use thumbnail::{
     backfill_missing_thumbnails, ensure_cached_thumbnail, extract_thumbnail_from_video,

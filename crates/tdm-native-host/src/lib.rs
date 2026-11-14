@@ -347,9 +347,16 @@ pub async fn handle_message(
                 };
             }
 
-            let dest_hint = msg.filename.as_deref().unwrap_or(trimmed_url);
-            let dest_dir = manager
-                .resolve_destination_folder(dest_hint, msg.destination.as_deref());
+            if let Some(ref d) = msg.destination {
+                if let Err(e) = tdm_core::DownloadManager::validate_destination_path(d) {
+                    return NativeResponse {
+                        status: "error".to_string(),
+                        action: "start_download".to_string(),
+                        message: Some(e.to_string()),
+                        ..Default::default()
+                    };
+                }
+            }
 
             let priority = match msg.priority.as_deref() {
                 Some("high") => Priority::High,
@@ -374,9 +381,9 @@ pub async fn handle_message(
                 .map(|dt| dt.with_timezone(&chrono::Utc));
 
             match manager
-                .create_or_coalesce_download_with_filename(
+                .create_or_coalesce_download_to_destination(
                     trimmed_url,
-                    &dest_dir,
+                    msg.destination.as_deref(),
                     priority,
                     clean_referer,
                     clean_user_agent,

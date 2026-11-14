@@ -48,9 +48,9 @@ pub async fn create_download(
     scheduled_at: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<DownloadJob, String> {
-    let dest_dir = state
-        .manager
-        .resolve_destination_folder(&url, destination.as_deref());
+    if let Some(ref d) = destination {
+        tdm_core::DownloadManager::validate_destination_path(d).map_err(|e| e.to_string())?;
+    }
 
     let prio = match priority.as_deref() {
         Some(p) => p.parse::<tdm_core::Priority>().unwrap_or_default(),
@@ -71,6 +71,9 @@ pub async fn create_download(
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
     let job = if is_media_portal_url(&url) {
+        let dest_dir = state
+            .manager
+            .resolve_destination_folder("media_download.mp4", destination.as_deref());
         state
             .manager
             .create_managed_media_download_with_all_options_scheduled(
@@ -89,9 +92,9 @@ pub async fn create_download(
     } else {
         state
             .manager
-            .create_download_with_all_options_scheduled(
+            .create_download_to_destination(
                 &url,
-                &dest_dir,
+                destination.as_deref(),
                 prio,
                 clean_referer,
                 clean_user_agent,

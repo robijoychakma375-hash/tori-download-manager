@@ -11,6 +11,7 @@ pub struct ProbeResult {
     pub resolved_url: String,
     pub filename: String,
     pub has_filename_from_header: bool,
+    pub content_type: Option<String>,
     pub total_bytes: Option<u64>,
     pub supports_ranges: bool,
     pub etag: Option<String>,
@@ -49,6 +50,7 @@ pub async fn probe_url_with_options(
             resolved_url: trimmed.to_string(),
             filename: name,
             has_filename_from_header: has_header,
+            content_type: None,
             total_bytes: parsed.exact_length,
             supports_ranges: true,
             etag: None,
@@ -73,6 +75,7 @@ pub async fn probe_url_with_options(
                 resolved_url: trimmed.to_string(),
                 filename: meta.name,
                 has_filename_from_header: true,
+                content_type: None,
                 total_bytes: Some(meta.total_bytes),
                 supports_ranges: true,
                 etag: None,
@@ -107,6 +110,7 @@ pub async fn probe_url_with_options(
             resolved_url: trimmed.to_string(),
             filename: stream_name,
             has_filename_from_header: false,
+            content_type: None,
             total_bytes: None,
             supports_ranges: false,
             etag: None,
@@ -330,12 +334,22 @@ pub async fn probe_url_with_options(
         resolved_url,
         filename: sanitize_filename(&filename),
         has_filename_from_header,
+        content_type: response_content_type.as_deref().and_then(normalize_content_type),
         total_bytes: final_total_bytes,
         supports_ranges: final_supports_ranges,
         etag: final_etag,
         is_strong_etag,
         last_modified: final_last_modified,
     })
+}
+
+fn normalize_content_type(ct: &str) -> Option<String> {
+    let media_type = ct.split(';').next()?.trim().to_ascii_lowercase();
+    if media_type.is_empty() {
+        None
+    } else {
+        Some(media_type)
+    }
 }
 
 pub fn parse_content_range_total(content_range: &str) -> Option<u64> {
@@ -375,28 +389,136 @@ pub fn parse_content_range_bounds(content_range: &str) -> Option<(u64, u64, Opti
     Some((start, end, total))
 }
 
-fn parse_content_disposition_filename(cd: &str) -> Option<String> {
-    // filename="example.mp4" or filename*=UTF-8''example.mp4
-    for part in cd.split(';') {
-        let part = part.trim();
-        if let Some(stripped) = part.strip_prefix("filename*=") {
-            let clean = stripped.trim_matches('"');
-            if let Some(idx) = clean.find("''") {
-                let name = &clean[idx + 2..];
-                if let Some(decoded) = percent_decode_str(name) {
-                    return Some(decoded);
-                }
-                return Some(name.to_string());
-            }
-        } else if let Some(stripped) = part.strip_prefix("filename=") {
-            let clean = stripped.trim_matches('"').trim_matches('\'');
-            return Some(clean.to_string());
+fn split_header_params(header: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut in_quotes = false;
+    let mut escaped = false;
+
+    for (idx, ch) in header.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_quotes && ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            in_quotes = !in_quotes;
+        } else if ch == ';' && !in_quotes {
+            parts.push(&header[start..idx]);
+            start = idx + 1;
         }
     }
-    None
+    parts.push(&header[start..]);
+    parts
 }
 
-pub fn percent_decode_str(s: &str) -> Option<String> {
+fn unescape_quoted_header_value(val: &str) -> String {
+    let trimmed = val.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        let mut out = String::with_capacity(inner.len());
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                if let Some(next) = chars.next() {
+                    // Only unescape quoted-pair characters (`\"` / `\\`) so raw Windows paths retain `\`.
+                    if next == '"' || next == '\\' {
+                        out.push(next);
+                    } else {
+                        out.push('\\');
+                        out.push(next);
+                    }
+                } else {
+                    out.push('\\');
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        return out;
+    }
+    if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        return trimmed[1..trimmed.len() - 1].to_string();
+    }
+    trimmed.to_string()
+}
+
+/// Rejects NUL/control bytes, strips directory/drive prefixes, and drops `.` / `..` / empty names.
+pub fn extract_safe_header_filename_candidate(raw: &str) -> Option<String> {
+    if raw.chars().any(|c| c == '\0' || (c as u32) < 32 || c == '\x7f') {
+        return None;
+    }
+
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut basename = trimmed.rsplit(['/', '\\']).next()?.trim();
+    let bytes = basename.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        basename = basename[2..].rsplit(['/', '\\']).next()?.trim();
+    }
+
+    if basename.is_empty() || basename == "." || basename == ".." || basename.chars().all(|c| c == '.' || c.is_whitespace()) {
+        return None;
+    }
+
+    Some(basename.to_string())
+}
+
+fn decode_rfc5987_ext_value(raw: &str) -> Option<String> {
+    let unquoted = raw.trim().trim_matches('"').trim();
+    if let Some(first_quote) = unquoted.find('\'') {
+        let charset = unquoted[..first_quote].trim();
+        let after_first = &unquoted[first_quote + 1..];
+        if let Some(second_quote) = after_first.find('\'') {
+            let value_part = &after_first[second_quote + 1..];
+            let decoded_bytes = percent_decode_bytes(value_part);
+            if charset.eq_ignore_ascii_case("iso-8859-1") || charset.eq_ignore_ascii_case("latin1") {
+                return Some(decoded_bytes.into_iter().map(|b| b as char).collect());
+            }
+            return String::from_utf8(decoded_bytes).ok();
+        }
+    }
+    percent_decode_str(unquoted)
+}
+
+pub fn parse_content_disposition_filename(cd: &str) -> Option<String> {
+    let mut ext_candidate: Option<String> = None;
+    let mut basic_candidate: Option<String> = None;
+
+    for part in split_header_params(cd) {
+        let Some((raw_key, raw_val)) = part.split_once('=') else {
+            continue;
+        };
+        let key = raw_key.trim().to_ascii_lowercase();
+        let val = raw_val.trim();
+
+        if key == "filename*" {
+            if let Some(decoded) = decode_rfc5987_ext_value(val) {
+                if let Some(safe) = extract_safe_header_filename_candidate(&decoded) {
+                    ext_candidate = Some(safe);
+                }
+            }
+        } else if key == "filename" {
+            let unquoted = unescape_quoted_header_value(val);
+            if let Some(safe) = extract_safe_header_filename_candidate(&unquoted) {
+                if basic_candidate.is_none() {
+                    basic_candidate = Some(safe);
+                }
+            }
+        }
+    }
+
+    // RFC 6266: `filename*` takes precedence over `filename` regardless of parameter order.
+    ext_candidate.or(basic_candidate)
+}
+
+fn percent_decode_bytes(s: &str) -> Vec<u8> {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -413,7 +535,11 @@ pub fn percent_decode_str(s: &str) -> Option<String> {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8(out).ok()
+    out
+}
+
+pub fn percent_decode_str(s: &str) -> Option<String> {
+    String::from_utf8(percent_decode_bytes(s)).ok()
 }
 
 fn extract_filename_from_url(url_str: &str) -> String {

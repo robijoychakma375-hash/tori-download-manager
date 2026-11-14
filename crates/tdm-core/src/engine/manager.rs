@@ -17,7 +17,7 @@ use crate::engine::events::{DownloadEvent, EventBus};
 use crate::engine::governor::{ConcurrencyGovernor, GovernorConfig};
 use crate::engine::limiter::BandwidthLimiter;
 use crate::engine::planner::plan_chunks;
-use crate::engine::probe::sanitize_filename;
+use crate::engine::probe::{extract_safe_header_filename_candidate, sanitize_filename, ProbeResult};
 use crate::engine::worker::{download_chunk_with_options, download_stream_with_options};
 use crate::engine::writer::PartFileWriter;
 use crate::error::{EngineError, Result};
@@ -43,6 +43,42 @@ pub struct DownloadManager {
     in_flight_creations: Arc<Mutex<HashMap<String, Arc<tokio::sync::Notify>>>>,
     recent_handoffs: Arc<Mutex<HashMap<String, (String, Instant)>>>,
     path_alloc_lock: Arc<Mutex<()>>,
+}
+
+#[derive(Clone, Copy)]
+enum DestinationTarget<'a> {
+    Fixed(&'a Path),
+    Configured(Option<&'a str>),
+}
+
+fn choose_http_filename(probe: &ProbeResult, suggested_filename: Option<&str>) -> String {
+    if probe.has_filename_from_header {
+        return sanitize_filename(&probe.filename);
+    }
+    if let Some(raw_suggested) = suggested_filename.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(cand) = extract_safe_header_filename_candidate(raw_suggested) {
+            let cand_ext = Path::new(&cand)
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            let is_browser_temp = matches!(
+                cand_ext.as_str(),
+                "crdownload" | "part" | "partial" | "tmp" | "download"
+            );
+            let probe_ext = Path::new(&probe.filename)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let cand_has_real_ext = !cand_ext.is_empty() && !is_browser_temp;
+            let probe_lacks_real_ext =
+                probe_ext.is_empty() || probe.filename.eq_ignore_ascii_case("download.bin");
+            if cand_has_real_ext || probe_lacks_real_ext {
+                return sanitize_filename(&cand);
+            }
+        }
+    }
+    sanitize_filename(&probe.filename)
 }
 
 impl DownloadManager {
@@ -314,7 +350,8 @@ impl DownloadManager {
         match ext.as_str() {
             "exe" | "msi" | "dmg" | "bat" | "cmd" | "sh" | "apk" => "Programs",
             "iso" | "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" => "Compressed",
-            "mp4" | "mkv" | "webm" | "mov" | "avi" | "flv" | "wmv" | "m4v" | "ts" => "Video",
+            "mp4" | "mkv" | "webm" | "mov" | "avi" | "flv" | "wmv" | "m4v" | "ts" | "m2ts"
+            | "mts" | "mpg" | "mpeg" | "vob" | "ogv" | "3gp" => "Video",
             "mp3" | "m4a" | "aac" | "flac" | "ogg" | "opus" | "wav" => "Music",
             "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "csv" | "md" => {
                 "Documents"
@@ -323,36 +360,154 @@ impl DownloadManager {
         }
     }
 
+    /// Classifies destination folder using the resolved filename extension first, falling back to
+    /// specific container/media `Content-Type` headers only when no meaningful extension exists.
+    pub fn classify_category_with_content_type(
+        hint: &str,
+        content_type: Option<&str>,
+    ) -> &'static str {
+        let by_ext = Self::classify_category(hint);
+        if by_ext != "Other" {
+            return by_ext;
+        }
+
+        let clean = hint.split('?').next().unwrap_or(hint);
+        let clean = clean.split('#').next().unwrap_or(clean);
+        let ext = Path::new(clean)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        let has_meaningful_ext = !ext.is_empty() && !clean.eq_ignore_ascii_case("download.bin");
+        if has_meaningful_ext {
+            return "Other";
+        }
+
+        let Some(raw_ct) = content_type else {
+            return "Other";
+        };
+        let mime = raw_ct
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+
+        // Never treat generic binary/text streams as media without filename/extension evidence.
+        if mime.is_empty()
+            || mime == "application/octet-stream"
+            || mime == "binary/octet-stream"
+            || mime == "application/unknown"
+            || mime == "text/plain"
+        {
+            return "Other";
+        }
+
+        if mime.starts_with("video/")
+            || matches!(mime.as_str(), "application/x-matroska" | "application/matroska")
+        {
+            "Video"
+        } else if mime.starts_with("audio/") {
+            "Music"
+        } else if matches!(
+            mime.as_str(),
+            "application/pdf"
+                | "application/msword"
+                | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                | "application/vnd.ms-excel"
+                | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                | "application/vnd.ms-powerpoint"
+                | "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                | "text/csv"
+                | "text/markdown"
+        ) {
+            "Documents"
+        } else if matches!(
+            mime.as_str(),
+            "application/zip"
+                | "application/x-rar-compressed"
+                | "application/vnd.rar"
+                | "application/x-7z-compressed"
+                | "application/x-tar"
+                | "application/gzip"
+                | "application/x-bzip2"
+                | "application/x-xz"
+                | "application/x-iso9660-image"
+        ) {
+            "Compressed"
+        } else if matches!(
+            mime.as_str(),
+            "application/vnd.microsoft.portable-executable"
+                | "application/x-msdownload"
+                | "application/x-msi"
+                | "application/x-apple-diskimage"
+                | "application/vnd.android.package-archive"
+        ) {
+            "Programs"
+        } else {
+            "Other"
+        }
+    }
+
+    pub fn validate_destination_path(dest: &str) -> Result<()> {
+        let clean = dest.trim();
+        if clean.is_empty() {
+            return Ok(());
+        }
+        if clean.chars().any(|c| c == '\0' || (c as u32) < 32 || c == '\x7f') {
+            return Err(EngineError::InvalidDestination(
+                "Invalid destination path: control characters rejected.".to_string(),
+            ));
+        }
+        if clean.contains("..")
+            || Path::new(clean)
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(EngineError::InvalidDestination(
+                "Invalid destination path: directory traversal rejected.".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn resolve_destination_folder(
         &self,
         hint_filename_or_url: &str,
         explicit_dest: Option<&str>,
     ) -> PathBuf {
+        self.resolve_destination_folder_with_content_type(
+            hint_filename_or_url,
+            None,
+            explicit_dest,
+        )
+    }
+
+    pub fn resolve_destination_folder_with_content_type(
+        &self,
+        hint_filename_or_url: &str,
+        content_type: Option<&str>,
+        explicit_dest: Option<&str>,
+    ) -> PathBuf {
         let default_dir = self.default_download_dir();
-        let is_explicit_override = match explicit_dest {
-            Some(d) => {
-                let clean = d.trim();
-                if clean.is_empty() {
+        let safe_explicit = explicit_dest.and_then(|d| {
+            let clean = d.trim();
+            if clean.is_empty() || Self::validate_destination_path(clean).is_err() {
+                None
+            } else {
+                Some(clean)
+            }
+        });
+
+        let is_explicit_override = match safe_explicit {
+            Some(clean) => {
+                let pa = Path::new(clean);
+                let pb = match default_dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    Some(def) => PathBuf::from(def),
+                    None => Self::get_system_download_dir(),
+                };
+                if pa == pb.as_path() {
                     false
-                } else if let Some(ref def) = default_dir {
-                    let pa = Path::new(clean);
-                    let pb = Path::new(def.trim());
-                    if pa == pb {
-                        false
-                    } else {
-                        let ca: Vec<_> = pa
-                            .components()
-                            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
-                            .collect();
-                        let cb: Vec<_> = pb
-                            .components()
-                            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
-                            .collect();
-                        ca != cb
-                    }
                 } else {
-                    let pa = Path::new(clean);
-                    let pb = Self::get_system_download_dir();
                     let ca: Vec<_> = pa
                         .components()
                         .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
@@ -368,7 +523,7 @@ impl DownloadManager {
         };
 
         if is_explicit_override {
-            let p = PathBuf::from(explicit_dest.unwrap().trim());
+            let p = PathBuf::from(safe_explicit.unwrap());
             let _ = fs::create_dir_all(&p);
             return p;
         }
@@ -385,7 +540,8 @@ impl DownloadManager {
         };
 
         if self.is_use_category_by_default() {
-            let category = Self::classify_category(hint_filename_or_url);
+            let category =
+                Self::classify_category_with_content_type(hint_filename_or_url, content_type);
             let already_in_category = base_dir
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -685,20 +841,84 @@ impl DownloadManager {
         handoff_id: Option<&str>,
         suggested_filename: Option<&str>,
     ) -> Result<(DownloadJob, bool)> {
+        self.create_or_coalesce_download_inner(
+            url,
+            DestinationTarget::Fixed(destination_dir.as_ref()),
+            priority,
+            referer,
+            user_agent,
+            scheduled_at,
+            handoff_id,
+            suggested_filename,
+        )
+        .await
+    }
+
+    /// Idempotent handoff & creation entrypoint that resolves destination category folders after
+    /// HTTP probing (`Content-Disposition`, redirects, `Content-Type`), while honoring explicit
+    /// custom destination overrides.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_or_coalesce_download_to_destination(
+        &self,
+        url: &str,
+        explicit_destination: Option<&str>,
+        priority: Priority,
+        referer: Option<String>,
+        user_agent: Option<String>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+        handoff_id: Option<&str>,
+        suggested_filename: Option<&str>,
+    ) -> Result<(DownloadJob, bool)> {
+        self.create_or_coalesce_download_inner(
+            url,
+            DestinationTarget::Configured(explicit_destination),
+            priority,
+            referer,
+            user_agent,
+            scheduled_at,
+            handoff_id,
+            suggested_filename,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn create_or_coalesce_download_inner(
+        &self,
+        url: &str,
+        destination_target: DestinationTarget<'_>,
+        priority: Priority,
+        referer: Option<String>,
+        user_agent: Option<String>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+        handoff_id: Option<&str>,
+        suggested_filename: Option<&str>,
+    ) -> Result<(DownloadJob, bool)> {
+        if let DestinationTarget::Configured(Some(dest)) = destination_target {
+            Self::validate_destination_path(dest)?;
+        }
+
         let trimmed_url = url.trim();
         let clean_handoff = handoff_id.map(|s| s.trim()).filter(|s| !s.is_empty());
+        // Scope handoff coalescing per URL so identical per-browser download IDs (e.g.
+        // Chrome `browser_dl_1` vs Edge/Firefox `browser_dl_1`) never falsely coalesce
+        // unrelated URLs across browsers or restarted browser profiles.
+        let scoped_handoff = clean_handoff.map(|hid| format!("handoff:{}\0{}", hid, trimmed_url));
 
         // 1. Check recent handoff ID cache (120s TTL)
-        if let Some(hid) = clean_handoff {
+        if let Some(ref hid_key) = scoped_handoff {
             let cached_job_id = {
                 let mut guard = self.recent_handoffs.lock().unwrap();
                 let now = Instant::now();
                 guard.retain(|_, (_, ts)| now.duration_since(*ts) < Duration::from_secs(120));
-                guard.get(hid).map(|(jid, _)| jid.clone())
+                guard.get(hid_key).map(|(jid, _)| jid.clone())
             };
             if let Some(jid) = cached_job_id {
                 if let Ok(Some(existing)) = self.db.get_job(&jid) {
-                    if existing.state != JobState::Failed && existing.state != JobState::Cancelled {
+                    if existing.state != JobState::Failed
+                        && existing.state != JobState::Cancelled
+                        && existing.url.trim() == trimmed_url
+                    {
                         return Ok((existing, true));
                     }
                 }
@@ -707,28 +927,28 @@ impl DownloadManager {
 
         // 2. Check existing persisted jobs in SQLite
         if let Some(existing) = self.find_active_or_completed_job_for_url(trimmed_url) {
-            if let Some(hid) = clean_handoff {
+            if let Some(ref hid_key) = scoped_handoff {
                 self.recent_handoffs
                     .lock()
                     .unwrap()
-                    .insert(hid.to_string(), (existing.id.clone(), Instant::now()));
+                    .insert(hid_key.clone(), (existing.id.clone(), Instant::now()));
             }
             return Ok((existing, true));
         }
 
-        // 3. Check or register in-flight probe/creation for this URL / handoff_id
+        // 3. Check or register in-flight probe/creation for this URL / scoped handoff_id
         let inflight_key = trimmed_url.to_string();
         let existing_notify = {
             let mut map = self.in_flight_creations.lock().unwrap();
             if let Some(n) = map.get(&inflight_key) {
                 Some(n.clone())
-            } else if let Some(hid) = clean_handoff {
-                if let Some(n) = map.get(hid) {
+            } else if let Some(ref hid_key) = scoped_handoff {
+                if let Some(n) = map.get(hid_key) {
                     Some(n.clone())
                 } else {
                     let n = Arc::new(tokio::sync::Notify::new());
                     map.insert(inflight_key.clone(), n.clone());
-                    map.insert(hid.to_string(), n);
+                    map.insert(hid_key.clone(), n);
                     None
                 }
             } else {
@@ -741,17 +961,18 @@ impl DownloadManager {
         if let Some(notify) = existing_notify {
             // Another request is currently probing this exact URL/handoff_id; wait for it to finish
             let _ = tokio::time::timeout(Duration::from_secs(20), notify.notified()).await;
-            if let Some(hid) = clean_handoff {
+            if let Some(ref hid_key) = scoped_handoff {
                 let cached_job_id = self
                     .recent_handoffs
                     .lock()
                     .unwrap()
-                    .get(hid)
+                    .get(hid_key)
                     .map(|(jid, _)| jid.clone());
                 if let Some(jid) = cached_job_id {
                     if let Ok(Some(existing)) = self.db.get_job(&jid) {
                         if existing.state != JobState::Failed
                             && existing.state != JobState::Cancelled
+                            && existing.url.trim() == trimmed_url
                         {
                             return Ok((existing, true));
                         }
@@ -759,11 +980,11 @@ impl DownloadManager {
                 }
             }
             if let Some(existing) = self.find_active_or_completed_job_for_url(trimmed_url) {
-                if let Some(hid) = clean_handoff {
+                if let Some(ref hid_key) = scoped_handoff {
                     self.recent_handoffs
                         .lock()
                         .unwrap()
-                        .insert(hid.to_string(), (existing.id.clone(), Instant::now()));
+                        .insert(hid_key.clone(), (existing.id.clone(), Instant::now()));
                 }
                 return Ok((existing, true));
             }
@@ -792,13 +1013,13 @@ impl DownloadManager {
         let _cleanup = InFlightCleanup {
             map: &self.in_flight_creations,
             key1: inflight_key,
-            key2: clean_handoff.map(|s| s.to_string()),
+            key2: scoped_handoff.clone(),
         };
 
         let job = self
-            .create_download_with_all_options_scheduled_and_filename(
+            .create_download_inner(
                 trimmed_url,
-                destination_dir,
+                destination_target,
                 priority,
                 referer,
                 user_agent,
@@ -807,14 +1028,35 @@ impl DownloadManager {
             )
             .await?;
 
-        if let Some(hid) = clean_handoff {
+        if let Some(hid_key) = scoped_handoff {
             self.recent_handoffs
                 .lock()
                 .unwrap()
-                .insert(hid.to_string(), (job.id.clone(), Instant::now()));
+                .insert(hid_key, (job.id.clone(), Instant::now()));
         }
 
         Ok((job, false))
+    }
+
+    pub async fn create_download_to_destination(
+        &self,
+        url: &str,
+        explicit_destination: Option<&str>,
+        priority: Priority,
+        referer: Option<String>,
+        user_agent: Option<String>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<DownloadJob> {
+        self.create_download_inner(
+            url,
+            DestinationTarget::Configured(explicit_destination),
+            priority,
+            referer,
+            user_agent,
+            scheduled_at,
+            None,
+        )
+        .await
     }
 
     pub async fn create_download_with_all_options_scheduled<P: AsRef<Path>>(
@@ -838,6 +1080,7 @@ impl DownloadManager {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_download_with_all_options_scheduled_and_filename<P: AsRef<Path>>(
         &self,
         url: &str,
@@ -848,6 +1091,33 @@ impl DownloadManager {
         scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
         suggested_filename: Option<&str>,
     ) -> Result<DownloadJob> {
+        self.create_download_inner(
+            url,
+            DestinationTarget::Fixed(destination_dir.as_ref()),
+            priority,
+            referer,
+            user_agent,
+            scheduled_at,
+            suggested_filename,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn create_download_inner(
+        &self,
+        url: &str,
+        destination_target: DestinationTarget<'_>,
+        priority: Priority,
+        referer: Option<String>,
+        user_agent: Option<String>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+        suggested_filename: Option<&str>,
+    ) -> Result<DownloadJob> {
+        if let DestinationTarget::Configured(Some(dest)) = destination_target {
+            Self::validate_destination_path(dest)?;
+        }
+
         let clean_referer = referer
             .as_deref()
             .and_then(|r| crate::engine::referer::sanitize_and_validate_referer(r, url));
@@ -862,11 +1132,6 @@ impl DownloadManager {
             clean_user_agent.as_deref(),
         )
         .await?;
-
-        let dir = destination_dir.as_ref();
-        if !dir.exists() {
-            fs::create_dir_all(dir)?;
-        }
 
         let is_live = crate::live::detect_live_protocol(url).is_some();
         let is_hls = url.to_lowercase().contains(".m3u8")
@@ -893,15 +1158,24 @@ impl DownloadManager {
         } else if is_torrent {
             (JobType::Torrent, sanitize_filename(&probe.filename))
         } else {
-            let chosen = if probe.has_filename_from_header {
-                &probe.filename
-            } else if let Some(suggested) = suggested_filename.filter(|s| !s.trim().is_empty()) {
-                suggested
-            } else {
-                &probe.filename
-            };
-            (JobType::HttpFile, sanitize_filename(chosen))
+            (
+                JobType::HttpFile,
+                choose_http_filename(&probe, suggested_filename),
+            )
         };
+
+        let dir = match destination_target {
+            DestinationTarget::Fixed(p) => p.to_path_buf(),
+            DestinationTarget::Configured(explicit_dest) => self
+                .resolve_destination_folder_with_content_type(
+                    &base_filename,
+                    probe.content_type.as_deref(),
+                    explicit_dest,
+                ),
+        };
+        if !dir.exists() {
+            fs::create_dir_all(&dir)?;
+        }
 
         let id = Uuid::new_v4().to_string();
         let con = self.max_connections_per_download();
@@ -920,7 +1194,7 @@ impl DownloadManager {
 
         let job = {
             let _alloc_guard = self.path_alloc_lock.lock().unwrap();
-            let (target_path, temp_path) = self.allocate_unique_paths(dir, &base_filename);
+            let (target_path, temp_path) = self.allocate_unique_paths(&dir, &base_filename);
 
             let job = DownloadJob {
                 id: id.clone(),
