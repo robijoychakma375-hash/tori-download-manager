@@ -659,6 +659,32 @@ impl DownloadManager {
         scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
         handoff_id: Option<&str>,
     ) -> Result<(DownloadJob, bool)> {
+        self.create_or_coalesce_download_with_filename(
+            url,
+            destination_dir,
+            priority,
+            referer,
+            user_agent,
+            scheduled_at,
+            handoff_id,
+            None,
+        )
+        .await
+    }
+
+    /// Idempotent handoff & creation entrypoint supporting an optional suggested filename.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_or_coalesce_download_with_filename<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        destination_dir: P,
+        priority: Priority,
+        referer: Option<String>,
+        user_agent: Option<String>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+        handoff_id: Option<&str>,
+        suggested_filename: Option<&str>,
+    ) -> Result<(DownloadJob, bool)> {
         let trimmed_url = url.trim();
         let clean_handoff = handoff_id.map(|s| s.trim()).filter(|s| !s.is_empty());
 
@@ -770,13 +796,14 @@ impl DownloadManager {
         };
 
         let job = self
-            .create_download_with_all_options_scheduled(
+            .create_download_with_all_options_scheduled_and_filename(
                 trimmed_url,
                 destination_dir,
                 priority,
                 referer,
                 user_agent,
                 scheduled_at,
+                suggested_filename,
             )
             .await?;
 
@@ -798,6 +825,28 @@ impl DownloadManager {
         referer: Option<String>,
         user_agent: Option<String>,
         scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<DownloadJob> {
+        self.create_download_with_all_options_scheduled_and_filename(
+            url,
+            destination_dir,
+            priority,
+            referer,
+            user_agent,
+            scheduled_at,
+            None,
+        )
+        .await
+    }
+
+    pub async fn create_download_with_all_options_scheduled_and_filename<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        destination_dir: P,
+        priority: Priority,
+        referer: Option<String>,
+        user_agent: Option<String>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+        suggested_filename: Option<&str>,
     ) -> Result<DownloadJob> {
         let clean_referer = referer
             .as_deref()
@@ -844,7 +893,14 @@ impl DownloadManager {
         } else if is_torrent {
             (JobType::Torrent, sanitize_filename(&probe.filename))
         } else {
-            (JobType::HttpFile, sanitize_filename(&probe.filename))
+            let chosen = if probe.has_filename_from_header {
+                &probe.filename
+            } else if let Some(suggested) = suggested_filename.filter(|s| !s.trim().is_empty()) {
+                suggested
+            } else {
+                &probe.filename
+            };
+            (JobType::HttpFile, sanitize_filename(chosen))
         };
 
         let id = Uuid::new_v4().to_string();

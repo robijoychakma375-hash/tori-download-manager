@@ -23,6 +23,32 @@ const N = [
   ['about', 'About', '#8e8e93', 'info'],
 ];
 
+const DEFAULT_CAPTURE_TYPES = [
+  'zip', 'rar', '7z', 'iso', 'tar', 'gz', 'bz2', 'xz',
+  'exe', 'msi', 'dmg', 'bin',
+  'pdf', 'epub',
+  'mkv', 'mp4', 'avi', 'mov', 'webm', 'flv', 'wmv', 'm4v',
+  'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'opus'
+];
+
+const LEGACY_DEFAULT_TYPES = ['zip', 'rar', '7z', 'iso', 'exe', 'dmg', 'pdf', 'mp4', 'mp3'];
+
+function normalizeCaptureTypes(types) {
+  if (!Array.isArray(types) || types.length === 0) {
+    return [...DEFAULT_CAPTURE_TYPES];
+  }
+  const clean = types.map((t) => (t || '').toLowerCase().replace(/^\./, '').trim()).filter(Boolean);
+  const isLegacy = clean.length === LEGACY_DEFAULT_TYPES.length &&
+    LEGACY_DEFAULT_TYPES.every((t) => clean.includes(t));
+  if (isLegacy) {
+    return [...DEFAULT_CAPTURE_TYPES];
+  }
+  if (!clean.includes('mkv')) {
+    clean.push('mkv');
+  }
+  return clean;
+}
+
 const DEFAULT_SETTINGS = {
   port: 6800,
   key: '',
@@ -31,7 +57,7 @@ const DEFAULT_SETTINGS = {
   min: 1,
   ask: false,
   alt: true,
-  types: ['zip', 'rar', '7z', 'iso', 'exe', 'dmg', 'pdf', 'mp4', 'mp3'],
+  types: [...DEFAULT_CAPTURE_TYPES],
   incog: false,
   pill: true,
   pos: 'Top right',
@@ -428,6 +454,7 @@ document.addEventListener('keydown', (e) => {
 chrome.storage.local.get(['tori_settings', 'tori_theme'], (res) => {
   if (res.tori_settings) {
     S = { ...DEFAULT_SETTINGS, ...res.tori_settings };
+    S.types = normalizeCaptureTypes(S.types);
   }
   if (res.tori_theme) {
     S.theme = res.tori_theme;

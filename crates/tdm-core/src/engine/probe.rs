@@ -10,6 +10,7 @@ use crate::error::{EngineError, Result};
 pub struct ProbeResult {
     pub resolved_url: String,
     pub filename: String,
+    pub has_filename_from_header: bool,
     pub total_bytes: Option<u64>,
     pub supports_ranges: bool,
     pub etag: Option<String>,
@@ -40,12 +41,14 @@ pub async fn probe_url_with_options(
     // Magnet links
     if trimmed.starts_with("magnet:") {
         let parsed = crate::torrent::parse_magnet_uri(trimmed)?;
+        let has_header = parsed.display_name.is_some();
         let name = parsed
             .display_name
             .unwrap_or_else(|| format!("magnet_{}", &parsed.info_hash_hex[..8]));
         return Ok(ProbeResult {
             resolved_url: trimmed.to_string(),
             filename: name,
+            has_filename_from_header: has_header,
             total_bytes: parsed.exact_length,
             supports_ranges: true,
             etag: None,
@@ -69,6 +72,7 @@ pub async fn probe_url_with_options(
             return Ok(ProbeResult {
                 resolved_url: trimmed.to_string(),
                 filename: meta.name,
+                has_filename_from_header: true,
                 total_bytes: Some(meta.total_bytes),
                 supports_ranges: true,
                 etag: None,
@@ -102,6 +106,7 @@ pub async fn probe_url_with_options(
         return Ok(ProbeResult {
             resolved_url: trimmed.to_string(),
             filename: stream_name,
+            has_filename_from_header: false,
             total_bytes: None,
             supports_ranges: false,
             etag: None,
@@ -310,6 +315,7 @@ pub async fn probe_url_with_options(
         }
     }
 
+    let has_filename_from_header = filename_from_header.is_some();
     let filename = filename_from_header.unwrap_or_else(|| extract_filename_from_url(&resolved_url));
     let (final_total_bytes, final_supports_ranges) = if is_hls || is_dash {
         (None, true)
@@ -323,6 +329,7 @@ pub async fn probe_url_with_options(
     Ok(ProbeResult {
         resolved_url,
         filename: sanitize_filename(&filename),
+        has_filename_from_header,
         total_bytes: final_total_bytes,
         supports_ranges: final_supports_ranges,
         etag: final_etag,

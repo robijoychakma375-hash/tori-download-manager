@@ -145,11 +145,19 @@ function run() {
   console.log(`SHA-256: ${ffHash}`);
 
   // 5. Write checksums file in release/v1.0.5-rc/extensions/
-  const checksumContent = [
+  const xpiFile = path.join(OUT_DIR, 'a70ed17e183648a9bcf4-1.0.6.xpi');
+  let xpiHash = '96a63c6be3eaf8488fbbd299ed2f07c8ef1e20b09128b8d0841a463026236038';
+  if (fs.existsSync(xpiFile)) {
+    xpiHash = sha256File(xpiFile);
+  }
+
+  const checksumLines = [
+    `${xpiHash}  a70ed17e183648a9bcf4-1.0.6.xpi`,
     `${chromeHash}  tori-companion-v1.0.6-chromium.zip`,
     `${ffHash}  tori-companion-v1.0.6-firefox.zip`,
-  ].join('\n') + '\n';
-  fs.writeFileSync(path.join(OUT_DIR, 'SHA256SUMS.txt'), checksumContent, 'utf8');
+    `${xpiHash}  tori-download-manager-firefox-v1.0.6.xpi`,
+  ];
+  fs.writeFileSync(path.join(OUT_DIR, 'SHA256SUMS.txt'), checksumLines.join('\n') + '\n', 'utf8');
 
   console.log('\n[5] Checksums saved to: ' + path.join(OUT_DIR, 'SHA256SUMS.txt'));
   console.log('\n=== Extension packaging complete ===');

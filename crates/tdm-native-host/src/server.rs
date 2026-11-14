@@ -538,9 +538,10 @@ async fn handle_create_download(
         }
     }
 
+    let dest_hint = payload.filename.as_deref().unwrap_or(raw_url);
     let dest_path = state
         .manager
-        .resolve_destination_folder(raw_url, payload.destination.as_deref());
+        .resolve_destination_folder(dest_hint, payload.destination.as_deref());
 
     let prio = match payload.priority.as_deref() {
         Some("high") => Priority::High,
@@ -568,11 +569,12 @@ async fn handle_create_download(
     let url_owned = raw_url.to_string();
     let handoff_owned = payload.handoff_id.clone();
     let thumb_owned = payload.thumbnail_url.clone();
+    let filename_owned = payload.filename.clone();
 
     let create_res = tokio::spawn(async move {
         let res = state_clone
             .manager
-            .create_or_coalesce_download(
+            .create_or_coalesce_download_with_filename(
                 &url_owned,
                 &dest_path,
                 prio,
@@ -580,6 +582,7 @@ async fn handle_create_download(
                 clean_user_agent,
                 parsed_sched,
                 handoff_owned.as_deref(),
+                filename_owned.as_deref(),
             )
             .await;
 

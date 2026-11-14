@@ -347,8 +347,9 @@ pub async fn handle_message(
                 };
             }
 
+            let dest_hint = msg.filename.as_deref().unwrap_or(trimmed_url);
             let dest_dir = manager
-                .resolve_destination_folder(trimmed_url, msg.destination.as_deref());
+                .resolve_destination_folder(dest_hint, msg.destination.as_deref());
 
             let priority = match msg.priority.as_deref() {
                 Some("high") => Priority::High,
@@ -373,7 +374,7 @@ pub async fn handle_message(
                 .map(|dt| dt.with_timezone(&chrono::Utc));
 
             match manager
-                .create_or_coalesce_download(
+                .create_or_coalesce_download_with_filename(
                     trimmed_url,
                     &dest_dir,
                     priority,
@@ -381,6 +382,7 @@ pub async fn handle_message(
                     clean_user_agent,
                     parsed_sched,
                     msg.handoff_id.as_deref(),
+                    msg.filename.as_deref(),
                 )
                 .await
             {

@@ -237,6 +237,32 @@ function removeTabMedia(tabId) {
   }
 }
 
+const DEFAULT_CAPTURE_TYPES = [
+  'zip', 'rar', '7z', 'iso', 'tar', 'gz', 'bz2', 'xz',
+  'exe', 'msi', 'dmg', 'bin',
+  'pdf', 'epub',
+  'mkv', 'mp4', 'avi', 'mov', 'webm', 'flv', 'wmv', 'm4v',
+  'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'opus'
+];
+
+const LEGACY_DEFAULT_TYPES = ['zip', 'rar', '7z', 'iso', 'exe', 'dmg', 'pdf', 'mp4', 'mp3'];
+
+function normalizeCaptureTypes(types) {
+  if (!Array.isArray(types) || types.length === 0) {
+    return [...DEFAULT_CAPTURE_TYPES];
+  }
+  const clean = types.map((t) => (t || '').toLowerCase().replace(/^\./, '').trim()).filter(Boolean);
+  const isLegacy = clean.length === LEGACY_DEFAULT_TYPES.length &&
+    LEGACY_DEFAULT_TYPES.every((t) => clean.includes(t));
+  if (isLegacy) {
+    return [...DEFAULT_CAPTURE_TYPES];
+  }
+  if (!clean.includes('mkv')) {
+    clean.push('mkv');
+  }
+  return clean;
+}
+
 // Extension configuration synchronized with storage
 let extSettings = {
   port: 6800,
@@ -246,7 +272,7 @@ let extSettings = {
   min: 1,
   badge: true,
   sites: ['docs.google.com', 'mail.google.com', 'github.com'],
-  types: ['zip', 'rar', '7z', 'iso', 'exe', 'dmg', 'pdf', 'mp4', 'mp3'],
+  types: [...DEFAULT_CAPTURE_TYPES],
 };
 
 let settingsLoadPromise = null;
@@ -257,6 +283,9 @@ function ensureSettingsLoaded() {
       chrome.storage.local.get(['tori_settings'], (res) => {
         if (res.tori_settings) {
           extSettings = { ...extSettings, ...res.tori_settings };
+          extSettings.types = normalizeCaptureTypes(extSettings.types);
+        } else {
+          extSettings.types = [...DEFAULT_CAPTURE_TYPES];
         }
         resolve(extSettings);
       });
@@ -271,6 +300,9 @@ ensureSettingsLoaded();
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.tori_settings?.newValue) {
     extSettings = { ...extSettings, ...changes.tori_settings.newValue };
+    if (extSettings.types) {
+      extSettings.types = normalizeCaptureTypes(extSettings.types);
+    }
   }
 });
 
@@ -1311,47 +1343,162 @@ chrome.webRequest.onHeadersReceived.addListener(
 );
 
 // -------------------------------------------------------------------------
-// Browser Download Interception (ISO, RAR, EXE, 7Z, ZIP, PDF, etc.)
+// Browser Download Interception (ISO, RAR, EXE, 7Z, ZIP, PDF, MKV, MP4, etc.)
 // -------------------------------------------------------------------------
 const recentlyInterceptedDownloadIds = new Set();
 const recentlyInterceptedUrls = new Map(); // url -> timestamp
+const inFlightDownloadIds = new Set(); // Prevent duplicate concurrent handoffs
 
-// Mapping of MIME types to file extensions
+// Comprehensive mapping of MIME types to file extensions
 const DOWNLOAD_MIME_MAP = {
+  // Archives & Compressed
   'application/zip': 'zip',
   'application/x-zip-compressed': 'zip',
   'application/x-rar-compressed': 'rar',
   'application/vnd.rar': 'rar',
   'application/x-7z-compressed': '7z',
   'application/x-iso9660-image': 'iso',
-  'application/x-msdownload': 'exe',
-  'application/vnd.microsoft.portable-executable': 'exe',
-  'application/pdf': 'pdf',
-  'application/x-apple-diskimage': 'dmg',
   'application/x-tar': 'tar',
   'application/gzip': 'gz',
+  'application/x-gzip': 'gz',
   'application/x-bzip2': 'bz2',
   'application/x-xz': 'xz',
-  'video/mp4': 'mp4',
+  // Executables & Installers
+  'application/x-msdownload': 'exe',
+  'application/vnd.microsoft.portable-executable': 'exe',
+  'application/x-msi': 'msi',
+  'application/x-apple-diskimage': 'dmg',
+  'application/octet-stream': '',
+  // Documents
+  'application/pdf': 'pdf',
+  'application/epub+zip': 'epub',
+  // Video
   'video/x-matroska': 'mkv',
+  'video/matroska': 'mkv',
+  'application/x-matroska': 'mkv',
+  'application/mkv': 'mkv',
+  'video/mkv': 'mkv',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/x-msvideo': 'avi',
+  'video/avi': 'avi',
+  'video/msvideo': 'avi',
+  'video/quicktime': 'mov',
+  'video/x-flv': 'flv',
+  'video/x-ms-wmv': 'wmv',
+  'video/x-m4v': 'm4v',
+  // Audio
   'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/x-matroska': 'mka',
+  'audio/webm': 'weba',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/flac': 'flac',
+  'audio/x-flac': 'flac',
+  'audio/aac': 'aac',
+  'audio/ogg': 'ogg',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/opus': 'opus',
 };
 
-function extractExtensionFromDownloadItem(item) {
-  let name = item.filename ? item.filename.replace(/^.*[\\\/]/, '') : '';
-  if (!name && item.url) {
-    try {
-      const p = new URL(item.url).pathname;
-      name = p.substring(p.lastIndexOf('/') + 1);
-    } catch (_) {}
-  }
-  if (name) {
-    name = name.split('?')[0].split('#')[0];
-    const dot = name.lastIndexOf('.');
-    if (dot !== -1) {
-      return name.substring(dot + 1).toLowerCase();
+function parseExt(str) {
+  if (!str || typeof str !== 'string') return '';
+  let clean = str.trim();
+  try { clean = decodeURIComponent(clean); } catch (_) {}
+  clean = clean.split('?')[0].split('#')[0].replace(/^.*[\\\/]/, '').trim();
+  const dot = clean.lastIndexOf('.');
+  if (dot !== -1 && dot < clean.length - 1) {
+    const candidate = clean.substring(dot + 1).toLowerCase().trim();
+    if (/^[a-z0-9]{1,10}$/i.test(candidate)) {
+      return candidate;
     }
   }
+  return '';
+}
+
+function extractExtensionFromDownloadItem(item) {
+  if (!item) return '';
+
+  if (item.filename) {
+    const ext = parseExt(item.filename);
+    if (ext) return ext;
+  }
+
+  const checkUrl = (urlStr) => {
+    if (!urlStr) return '';
+    try {
+      const u = new URL(urlStr);
+      const fromPath = parseExt(u.pathname);
+      if (fromPath) return fromPath;
+
+      const qParams = ['filename', 'file', 'name', 'fn', 'download', 'title', 'attachment', 'response-content-disposition'];
+      for (const p of qParams) {
+        const val = u.searchParams.get(p);
+        if (val) {
+          const fromQuery = parseExt(val);
+          if (fromQuery) return fromQuery;
+        }
+      }
+    } catch (_) {}
+    return '';
+  };
+
+  if (item.finalUrl && item.finalUrl !== item.url) {
+    const ext = checkUrl(item.finalUrl);
+    if (ext) return ext;
+  }
+
+  if (item.url) {
+    const ext = checkUrl(item.url);
+    if (ext) return ext;
+  }
+
+  return '';
+}
+
+function extractFilenameFromDownloadItem(item) {
+  if (!item) return '';
+
+  if (item.filename) {
+    let name = item.filename.replace(/^.*[\\\/]/, '').trim();
+    if (name) return name;
+  }
+
+  const checkUrl = (urlStr) => {
+    if (!urlStr) return '';
+    try {
+      const u = new URL(urlStr);
+      const qParams = ['filename', 'file', 'name', 'fn', 'download', 'title', 'attachment'];
+      for (const p of qParams) {
+        const val = u.searchParams.get(p);
+        if (val) {
+          let clean = val.trim();
+          try { clean = decodeURIComponent(clean); } catch (_) {}
+          clean = clean.split('?')[0].split('#')[0].replace(/^.*[\\\/]/, '').trim();
+          if (clean && clean.includes('.')) return clean;
+        }
+      }
+      const p = u.pathname;
+      let leaf = p.substring(p.lastIndexOf('/') + 1);
+      try { leaf = decodeURIComponent(leaf); } catch (_) {}
+      leaf = leaf.split('?')[0].split('#')[0].trim();
+      if (leaf && leaf.includes('.')) return leaf;
+    } catch (_) {}
+    return '';
+  };
+
+  if (item.finalUrl && item.finalUrl !== item.url) {
+    const fn = checkUrl(item.finalUrl);
+    if (fn) return fn;
+  }
+
+  if (item.url) {
+    const fn = checkUrl(item.url);
+    if (fn) return fn;
+  }
+
   return '';
 }
 
@@ -1376,6 +1523,7 @@ function isDomainExcluded(urlStr, referrerStr) {
 async function handleBrowserDownload(item) {
   if (!item || !item.id) return;
   if (recentlyInterceptedDownloadIds.has(item.id)) return;
+  if (inFlightDownloadIds.has(item.id)) return;
 
   await ensureSettingsLoaded();
 
@@ -1390,7 +1538,7 @@ async function handleBrowserDownload(item) {
     return;
   }
 
-  const rawUrl = item.url || item.finalUrl || '';
+  const rawUrl = item.finalUrl || item.url || '';
   if (!rawUrl) return;
   const lowerUrl = rawUrl.toLowerCase();
 
@@ -1422,43 +1570,48 @@ async function handleBrowserDownload(item) {
   }
 
   // 5. Match file extension or MIME type against user configured types
-  const userTypes = (Array.isArray(extSettings.types) ? extSettings.types : [
-    'zip', 'rar', '7z', 'iso', 'exe', 'dmg', 'pdf', 'mp4', 'mp3'
-  ]).map((t) => t.toLowerCase().replace(/^\./, ''));
+  const userTypes = (Array.isArray(extSettings.types) ? extSettings.types : DEFAULT_CAPTURE_TYPES)
+    .map((t) => (t || '').toLowerCase().replace(/^\./, '').trim())
+    .filter(Boolean);
 
   const ext = extractExtensionFromDownloadItem(item);
   const baseMime = (item.mime || '').toLowerCase().split(';')[0].trim();
   const mimeExt = DOWNLOAD_MIME_MAP[baseMime] || '';
 
-  const matched = (ext && userTypes.includes(ext)) || (mimeExt && userTypes.includes(mimeExt));
+  const matched = (ext && userTypes.includes(ext)) || (mimeExt && mimeExt !== 'bin' && userTypes.includes(mimeExt));
   if (!matched) {
     return;
   }
 
-  // 6. Check minimum file size threshold (extSettings.min in MB)
-  const minBytes = (parseFloat(extSettings.min) || 0) * 1024 * 1024;
-  const totalBytes = item.totalBytes > 0 ? item.totalBytes : (item.fileSize > 0 ? item.fileSize : 0);
-  if (minBytes > 0 && totalBytes > 0 && totalBytes < minBytes) {
-    // Smaller than user threshold, leave in browser
-    return;
-  }
-
-  // 7. Dispatch download to TORI Desktop Engine
-  let rawFilename = item.filename ? item.filename.replace(/^.*[\\\/]/, '') : '';
-  if (!rawFilename) {
-    rawFilename = extractFilenameFromUrl(rawUrl) || `download.${ext || mimeExt || 'bin'}`;
-  }
-
-  const payload = {
-    url: rawUrl,
-    filename: rawFilename,
-    referer: item.referrer || '',
-    user_agent: navigator.userAgent,
-    priority: 'normal',
-  };
+  // Prevent duplicate concurrent handoffs for this download item (e.g. onCreated + onDeterminingFilename race)
+  if (inFlightDownloadIds.has(item.id)) return;
+  inFlightDownloadIds.add(item.id);
 
   try {
-    const httpRes = await callDesktopApi('/api/v1/downloads', 'POST', payload, 3500);
+    // 6. Check minimum file size threshold (extSettings.min in MB)
+    const minBytes = (parseFloat(extSettings.min) || 0) * 1024 * 1024;
+    const totalBytes = item.totalBytes > 0 ? item.totalBytes : (item.fileSize > 0 ? item.fileSize : 0);
+    if (minBytes > 0 && totalBytes > 0 && totalBytes < minBytes) {
+      // Smaller than user threshold, leave in browser
+      return;
+    }
+
+    // 7. Dispatch download to TORI Desktop Engine
+    let rawFilename = extractFilenameFromDownloadItem(item);
+    if (!rawFilename) {
+      rawFilename = `download.${ext || mimeExt || 'bin'}`;
+    }
+
+    const payload = {
+      url: rawUrl,
+      filename: rawFilename,
+      referer: item.referrer || '',
+      user_agent: navigator.userAgent,
+      priority: 'normal',
+      handoff_id: 'browser_dl_' + item.id,
+    };
+
+    const httpRes = await callDesktopApi('/api/v1/downloads', 'POST', payload);
     let handoffSuccess = false;
 
     if (httpRes && httpRes.ok && httpRes.data) {
@@ -1516,6 +1669,8 @@ async function handleBrowserDownload(item) {
   } catch (err) {
     // Desktop engine offline or error: ALWAYS leave browser download active!
     console.debug('[TORI] Failed to intercept download to TORI desktop, preserving browser download:', err);
+  } finally {
+    inFlightDownloadIds.delete(item.id);
   }
 }
 
