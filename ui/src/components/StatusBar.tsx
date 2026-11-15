@@ -1,38 +1,40 @@
 import React from 'react';
-import type { DownloadJob } from '../types';
 import { fmtSp } from '../utils';
 
 interface StatusBarProps {
-  downloads: DownloadJob[];
+  activeCount: number;
+  totalSpeedBps: number;
+  visibleCount: number;
+  totalCount: number;
   isExtensionConnected: boolean;
   statusMessage?: string | null;
 }
 
-export const StatusBar: React.FC<StatusBarProps> = ({
-  downloads,
-  isExtensionConnected,
-  statusMessage,
-}) => {
-  const activeDownloads = downloads.filter(
-    (d) => d.state === 'downloading' || d.state === 'probing'
-  );
-  const totalSpeedBps = activeDownloads.reduce((sum, d) => sum + (d.speed_bps || 0), 0);
+export const StatusBar: React.FC<StatusBarProps> = React.memo(
+  ({
+    activeCount,
+    totalSpeedBps,
+    visibleCount,
+    totalCount,
+    isExtensionConnected,
+    statusMessage,
+  }) => {
+    const countLabel =
+      visibleCount === totalCount
+        ? `${totalCount} items`
+        : `${visibleCount} of ${totalCount} items`;
 
-  return (
-    <div id="stat">
-      <span>
-        {statusMessage ? statusMessage : `${activeDownloads.length} active`}
-      </span>
-      <span>
-        Speed {totalSpeedBps > 0 ? fmtSp(totalSpeedBps) : '0 KB/sec'}
-      </span>
-      <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
-        <i className={`gd ${isExtensionConnected ? '' : 'off'}`} />
-        <span>
-          {isExtensionConnected ? 'Extension connected' : 'Native Host ready'}
+    return (
+      <footer id="stat">
+        <span>{statusMessage || `${activeCount} active`}</span>
+        <span>Speed {totalSpeedBps > 0 ? fmtSp(totalSpeedBps) : '0 KB/s'}</span>
+        <span>{countLabel}</span>
+        <span className="stat-conn">
+          <i className={`gd ${isExtensionConnected ? '' : 'off'}`} />
+          <span>{isExtensionConnected ? 'Extension connected' : 'Native Host ready'}</span>
         </span>
-      </span>
-    </div>
-  );
-};
-
+      </footer>
+    );
+  }
+);
+StatusBar.displayName = 'StatusBar';

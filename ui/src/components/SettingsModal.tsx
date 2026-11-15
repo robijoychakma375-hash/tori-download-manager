@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { TitleBar } from './TitleBar';
 import { ToggleSwitch } from './ToggleSwitch';
+import { SettingsTabIcon, ToriLogoIcon } from './Icons';
 import type { AppSettings } from '../types';
 import {
   fetchAppVersion,
@@ -39,74 +40,6 @@ const TABS: NavTab[] = [
 // Official website URL (hidden until public website is launched and verified)
 const OFFICIAL_WEBSITE_URL: string | null = null;
 
-const renderTabIcon = (key: TabKey) => {
-  switch (key) {
-    case 'appearance':
-      return (
-        <svg
-          viewBox="0 0 24 24"
-          width="26"
-          height="26"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 3v18" />
-          <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" />
-        </svg>
-      );
-    case 'engine':
-      return (
-        <svg
-          viewBox="0 0 24 24"
-          width="26"
-          height="26"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M13 3L5 14h6l-1 7 8-11h-6z" />
-        </svg>
-      );
-    case 'integration':
-      return (
-        <svg
-          viewBox="0 0 24 24"
-          width="26"
-          height="26"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" />
-        </svg>
-      );
-    case 'about':
-      return (
-        <svg
-          viewBox="0 0 24 24"
-          width="26"
-          height="26"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 11v6M12 7.5v.01" />
-        </svg>
-      );
-  }
-};
-
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
   onUpdateSettings,
@@ -139,12 +72,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [showApiKey, setShowApiKey] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
+  const settingsRef = React.useRef(settings);
+  const onUpdateRef = React.useRef(onUpdateSettings);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+    onUpdateRef.current = onUpdateSettings;
+  }, [settings, onUpdateSettings]);
+
   useEffect(() => {
     fetchAppVersion().then((ver) => {
       setAppVersion(ver);
       setUpdateStatus((prev) => ({ ...prev, currentVersion: ver }));
     });
   }, []);
+
+  const flash = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2400);
+  };
+
+  const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    const updated = { ...settingsRef.current, [key]: value };
+    settingsRef.current = updated;
+    onUpdateRef.current(updated);
+  };
 
   const handleCheckForUpdates = async () => {
     setUpdateStatus((prev) => ({ ...prev, state: 'checking', errorMessage: undefined }));
@@ -233,16 +185,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowLicensesModal(true);
   };
 
-  const flash = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 2400);
-  };
-
-  const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-    const updated = { ...settings, [key]: value };
-    onUpdateSettings(updated);
-  };
-
   const handleOpenDataFolder = async () => {
     try {
       await invoke('open_data_folder');
@@ -276,18 +218,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   useEffect(() => {
-    if (currentTab === 'integration') {
-      invoke<{ port: number; active_port: number; token: string }>('get_browser_integration_info')
-        .then((info) => {
-          if (info && info.token) {
-            update('key', info.token);
-          }
-          if (info && info.active_port) {
-            update('port', info.active_port);
-          }
-        })
-        .catch((err) => console.warn('Failed to load integration info:', err));
-    }
+    if (currentTab !== 'integration') return;
+    let active = true;
+    invoke<{ port: number; active_port: number; token: string }>('get_browser_integration_info')
+      .then((info) => {
+        if (!active || !info) return;
+        const cur = settingsRef.current;
+        const nextKey = info.token || cur.key;
+        const nextPort = info.active_port || cur.port;
+        if (nextKey !== cur.key || nextPort !== cur.port) {
+          onUpdateRef.current({
+            ...cur,
+            key: nextKey,
+            port: nextPort,
+          });
+        }
+      })
+      .catch((err) => console.warn('Failed to load integration info:', err));
+    return () => {
+      active = false;
+    };
   }, [currentTab]);
 
   const handleCopyKey = () => {
@@ -318,7 +268,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   return (
     <>
       <div id="dim" onClick={onClose} />
-      <div className="win pop" id="setw" style={{ width: 820, height: 650 }}>
+      <div
+        className="win pop"
+        id="setw"
+        style={{
+          width: 820,
+          height: 650,
+          maxWidth: 'calc(100vw - 24px)',
+          maxHeight: 'calc(100vh - 24px)',
+        }}
+      >
         <TitleBar title="Settings" onClose={onClose} isModal />
 
         <div className="ptabs" id="ptabsrow">
@@ -326,12 +285,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             const isSelected = currentTab === key;
             return (
               <button
+                type="button"
                 key={key}
+                data-tab={key}
                 className={`pt ${isSelected ? 'on' : ''}`}
                 onClick={() => setCurrentTab(key)}
               >
-                {renderTabIcon(key)}
-                {label}
+                <SettingsTabIcon tab={key} />
+                <span>{label}</span>
               </button>
             );
           })}
@@ -868,10 +829,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="sr">
                   <div>
                     <b>Native Messaging Host</b>
-                    <span className="sub">Registered in Chrome & Edge HKCU Registry</span>
+                    <span className="sub">Registered for Chrome, Edge &amp; Firefox HKCU Registry</span>
                   </div>
                   <div className="sc">
-                    <button className="btn" onClick={handleRegisterHost}>
+                    <button type="button" className="btn" onClick={handleRegisterHost}>
                       Re-register Host
                     </button>
                   </div>
@@ -879,13 +840,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 <div className="sr">
                   <div>
-                    <b>Pinned Extension ID</b>
+                    <b>Chromium Extension ID</b>
                     <span className="sub" style={{ fontFamily: 'monospace' }}>
                       jfnfgmcbgapcpieaonbaolgebjaejcdm
                     </span>
                   </div>
                   <div className="sc">
-                    <span className="green" style={{ fontWeight: 600 }}>Active</span>
+                    <span className="green" style={{ fontWeight: 600 }}>Pinned</span>
+                  </div>
+                </div>
+
+                <div className="sr">
+                  <div>
+                    <b>Firefox Add-on ID</b>
+                    <span className="sub" style={{ fontFamily: 'monospace' }}>
+                      tori-download-manager@toridm.org
+                    </span>
+                  </div>
+                  <div className="sc">
+                    <span className="green" style={{ fontWeight: 600 }}>Pinned</span>
                   </div>
                 </div>
               </div>
@@ -900,29 +873,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* ================= ABOUT ================= */}
           {currentTab === 'about' && (
-            <div style={{ textAlign: 'center', paddingTop: 16 }}>
-              {/* Official Torii Gate Logo */}
-              <svg width="84" height="84" viewBox="0 0 1024 1024" style={{ margin: '0 auto' }}>
-                <defs>
-                  <linearGradient id="ag" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0" stopColor="#696cf6" />
-                    <stop offset="1" stopColor="#3e34be" />
-                  </linearGradient>
-                </defs>
-                <rect width="1024" height="1024" rx="232" fill="url(#ag)" />
-                <g fill="none" stroke="#fff" strokeWidth="100" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M176 199C344 281 680 281 848 199" strokeWidth="96" />
-                  <path d="M512 285V649" />
-                  <path d="M340 569L512 741L684 569" />
-                  <path d="M330 847H694" strokeWidth="52" />
-                </g>
-              </svg>
+            <div style={{ textAlign: 'center', paddingTop: 18 }}>
+              <ToriLogoIcon size={96} />
 
-              <h2 style={{ margin: '12px 0 2px', fontSize: 20, color: 'var(--txt)', fontWeight: 600 }}>
+              <h2 style={{ margin: '14px 0 3px', fontSize: 21, color: 'var(--txt)', fontWeight: 600 }}>
                 TORI Download Manager
               </h2>
               <div className="mut" style={{ fontSize: 13 }}>
-                Version {appVersion} {appVersion === '1.0.0' ? '(Production Release)' : '(Development Build)'}
+                Version {appVersion}
               </div>
               <div style={{ fontSize: 12, color: 'var(--mut)', marginTop: 2 }}>
                 Developed by TORI Download Manager Team
@@ -1021,7 +979,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {updateStatus.state === 'available' && (
                   <div
                     style={{
-                      background: 'var(--bg2)',
+                      background: 'var(--panel)',
                       border: '1px solid var(--blue)',
                       borderRadius: 8,
                       padding: 12,
@@ -1043,8 +1001,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {updateStatus.releaseNotes && (
                       <div
                         style={{
-                          background: 'var(--bg)',
-                          border: '1px solid var(--bdr)',
+                          background: 'var(--win)',
+                          border: '1px solid var(--pline)',
                           borderRadius: 4,
                           padding: 8,
                           margin: '8px 0',
@@ -1090,7 +1048,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       style={{
                         width: '100%',
                         height: 6,
-                        background: 'var(--bdr)',
+                        background: 'var(--pline)',
                         borderRadius: 3,
                         overflow: 'hidden',
                       }}
@@ -1100,7 +1058,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           height: '100%',
                           background: 'var(--blue)',
                           width: `${updateStatus.totalBytes > 0 ? Math.min(100, (updateStatus.downloadedBytes / updateStatus.totalBytes) * 100) : 100}%`,
-                          transition: 'width 0.2s',
                         }}
                       />
                     </div>
@@ -1131,7 +1088,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div
                     style={{
                       background: 'rgba(239, 68, 68, 0.1)',
-                      border: '1px solid var(--red)',
+                      border: '1px solid var(--bad)',
                       borderRadius: 8,
                       padding: 12,
                       margin: '12px auto 0',
@@ -1139,7 +1096,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       textAlign: 'left',
                     }}
                   >
-                    <b style={{ color: 'var(--red)', fontSize: 13 }}>
+                    <b style={{ color: 'var(--bad)', fontSize: 13 }}>
                       ⚠️ Active Downloads In Progress
                     </b>
                     <p style={{ fontSize: 12, color: 'var(--txt)', margin: '6px 0 10px' }}>
@@ -1159,7 +1116,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {updateStatus.state === 'error' && (
                   <div style={{ maxWidth: 420, margin: '12px auto 0' }}>
-                    <p style={{ fontSize: 12, color: 'var(--red)', margin: '0 0 6px' }}>
+                    <p style={{ fontSize: 12, color: 'var(--bad)', margin: '0 0 6px' }}>
                       {updateStatus.errorMessage}
                     </p>
                     <button className="btn" style={{ fontSize: 11 }} onClick={handleCheckForUpdates}>
@@ -1178,7 +1135,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             style={{
               position: 'absolute',
               inset: 0,
-              background: 'rgba(0,0,0,0.7)',
+              background: 'rgba(0,0,0,0.65)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -1187,8 +1144,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           >
             <div
               style={{
-                background: 'var(--bg)',
-                border: '1px solid var(--bdr)',
+                background: 'var(--panel)',
+                border: '1px solid var(--pline)',
                 borderRadius: 8,
                 width: '85%',
                 maxWidth: 620,
@@ -1201,7 +1158,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <b style={{ color: 'var(--txt)', fontSize: 14 }}>Open-Source & Third-Party Licenses</b>
-                <button className="btn" onClick={() => setShowLicensesModal(false)} style={{ padding: '2px 8px' }}>
+                <button className="btn" onClick={() => setShowLicensesModal(false)} style={{ minWidth: 0, padding: '0 8px' }}>
                   ✕
                 </button>
               </div>
@@ -1209,8 +1166,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 style={{
                   flex: 1,
                   overflowY: 'auto',
-                  background: 'var(--bg2)',
-                  border: '1px solid var(--bdr)',
+                  background: 'var(--win)',
+                  border: '1px solid var(--pline)',
                   borderRadius: 4,
                   padding: 12,
                   fontFamily: 'monospace',
@@ -1237,7 +1194,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             style={{
               position: 'absolute',
               inset: 0,
-              background: 'rgba(0,0,0,0.7)',
+              background: 'rgba(0,0,0,0.65)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -1246,8 +1203,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           >
             <div
               style={{
-                background: 'var(--bg)',
-                border: '1px solid var(--bdr)',
+                background: 'var(--panel)',
+                border: '1px solid var(--pline)',
                 borderRadius: 8,
                 width: '85%',
                 maxWidth: 620,
@@ -1260,7 +1217,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <b style={{ color: 'var(--txt)', fontSize: 14 }}>TORI Download Manager — Release Notes v{appVersion}</b>
-                <button className="btn" onClick={() => setShowNotesModal(false)} style={{ padding: '2px 8px' }}>
+                <button className="btn" onClick={() => setShowNotesModal(false)} style={{ minWidth: 0, padding: '0 8px' }}>
                   ✕
                 </button>
               </div>
@@ -1268,8 +1225,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 style={{
                   flex: 1,
                   overflowY: 'auto',
-                  background: 'var(--bg2)',
-                  border: '1px solid var(--bdr)',
+                  background: 'var(--win)',
+                  border: '1px solid var(--pline)',
                   borderRadius: 4,
                   padding: 12,
                   fontSize: 12,

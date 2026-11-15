@@ -1,0 +1,92 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tori Download Popup</title>
+<style>
+:root{--win:#f5f5f8;--panel:#fff;--pline:rgba(0,0,0,.08);--tb1:rgba(252,252,254,.98);--txt:#1d1d1f;--mut:#86868b;--green:#1faa59;--bad:#e5484d;--amber:#f59e0b;--field:#fff;--fline:rgba(0,0,0,.16);--b1:#fff;--b2:#f7f7f9;--bline:rgba(0,0,0,.14);color-scheme:light}
+[data-theme="dark"]{--win:#232326;--panel:#2b2b30;--pline:rgba(255,255,255,.08);--tb1:rgba(54,54,60,.98);--txt:#f2f2f4;--mut:#98989f;--green:#32d74b;--bad:#ff6b6b;--amber:#fbbf24;--field:#1c1c1f;--fline:rgba(255,255,255,.15);--b1:#4a4a50;--b2:#3e3e43;--bline:rgba(255,255,255,.13);color-scheme:dark}
+:root{--a1:#7679ff;--a2:#4f46e5;--a3:#6366f1;--a5:#a78bfa;--a7:#4338ca;--ar:99 102 241;--w1:#8b8cff;--wb:#6d6ee8;--w1d:#2c2a72;--wbd:#0b0b12}
+[data-accent="ocean"]{--a1:#4fb3ff;--a2:#0a6fd8;--a3:#0a84ff;--a5:#67e8f9;--a7:#075bb5;--ar:10 132 255;--w1:#6fc3ff;--wb:#3a7bd5;--w1d:#0f3b6e;--wbd:#050d1a}
+[data-accent="emerald"]{--a1:#34d399;--a2:#059669;--a3:#10b981;--a5:#86efac;--a7:#047857;--ar:16 185 129;--w1:#6ee7b7;--wb:#2fa37a;--w1d:#0c4a3a;--wbd:#04120d}
+[data-accent="rose"]{--a1:#ff7ab0;--a2:#e11d63;--a3:#f43f78;--a5:#fdba74;--a7:#be123c;--ar:244 63 120;--w1:#ff9ac0;--wb:#e8618c;--w1d:#5a1233;--wbd:#14050b}
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden}
+body{font:13px "Segoe UI Variable Text","Segoe UI","Inter",system-ui,sans-serif;color:var(--txt);-webkit-font-smoothing:antialiased;display:grid;place-items:center;background:var(--wb)}
+[data-theme="dark"] body{background:var(--wbd)}
+button{all:unset;cursor:default;box-sizing:border-box}svg{display:block}
+#stage{width:1060px;height:660px;position:relative}
+.win{position:absolute;left:300px;top:40px;width:460px;border-radius:8px;overflow:hidden;background:var(--win);box-shadow:0 0 0 1px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.35)}
+.win.off{display:none}
+.wbar{height:32px;background:var(--tb1);position:relative;line-height:32px;padding-left:40px;font-size:12px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:100px}
+.wbar::after{content:"";position:absolute;left:13px;top:8px;width:16px;height:16px;border-radius:5px;background:linear-gradient(var(--a1),var(--a2))}
+.wc{position:absolute;right:0;top:0;display:flex}.wc b{width:46px;height:32px;display:grid;place-items:center;font-weight:400}.wc b:hover{background:var(--pline)}.wc b:last-child:hover{background:#c42b1c;color:#fff}.wc svg{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:1.1}
+.mini{display:none;height:5px;background:var(--pline)}.mini i{display:block;height:100%;background:var(--a3)}
+.win.m .mini{display:block}.win.m .main,.win.m .foot{display:none}
+.main{padding:14px 18px 0}
+.tabs{display:inline-flex;gap:2px;padding:2px;border-radius:7px;background:var(--pline)}.tabs button{padding:0 12px;line-height:24px;border-radius:5px;font-weight:500;font-size:12px;color:var(--mut)}.tabs button.on{background:var(--b1);color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.18)}
+.pane{display:none;margin-top:12px;height:auto;min-height:272px}.pane.on{display:block}
+.url{color:var(--a3);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-bottom:8px;border-bottom:1px solid var(--pline);margin-bottom:4px}
+.r{display:grid;grid-template-columns:140px 1fr;height:28px;align-items:center}.r span{color:var(--mut)}.r b{font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ac{color:var(--a3)}.ok{color:var(--green)}.er{color:var(--bad)}.am{color:#f59e0b}
+.bw{display:flex;align-items:center;gap:10px;margin-top:10px}.bar{flex:1;height:14px;border-radius:7px;background:var(--pline);overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--a3);border-radius:7px}.bw b{width:40px;text-align:right;font-variant-numeric:tabular-nums}
+.win[data-s=done] .bar i,.win[data-s=done] .mini i{background:#22b45a}.win[data-s=paused] .bar i{background:#a1a1aa}.win[data-s=failed] .bar i{background:#e5484d}
+.sl{text-align:center;color:var(--mut);font-size:12px;margin:12px 0 5px}
+.seg{display:flex;gap:3px;height:9px}.sg{flex:1;border-radius:3px;background:var(--pline);overflow:hidden}.sg i{display:block;height:100%;width:0;background:var(--a3)}
+.ck{display:flex;align-items:center;gap:12px;height:40px;border-bottom:1px solid var(--pline)}
+.swl{position:relative;display:block;width:34px;height:20px;flex:none}.swl input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;z-index:1}.sw-track{position:absolute;inset:0;border-radius:10px;background:var(--fline)}.sw-knob{position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35)}.swl input:checked+.sw-track{background:linear-gradient(var(--a1),var(--a2))}.swl input:checked+.sw-track .sw-knob{transform:translateX(14px)}
+.fi{height:26px;border-radius:5px;padding:0 9px;border:1px solid var(--fline);background:var(--field);color:var(--txt);font:inherit;width:90px}
+.foot{display:flex;gap:10px;padding:14px 18px 18px;justify-content:flex-end}
+.btn{width:110px;height:32px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:500;background:linear-gradient(var(--b1),var(--b2));border:1px solid var(--bline);box-shadow:0 1px 2px rgba(0,0,0,.08)}.btn:active{transform:scale(.97)}
+.btn.def{background:linear-gradient(var(--a1),var(--a2));border-color:var(--a7);color:#fff}
+#demo{position:absolute;left:0;right:0;bottom:6px;display:flex;gap:6px;justify-content:center;align-items:center}
+#demo .btn{width:auto;height:26px;padding:0 12px;border-radius:13px;font-size:12px;background:rgba(255,255,255,.85);color:#1d1d1f;border-color:rgba(255,255,255,.6)}[data-theme="dark"] #demo .btn{background:rgba(40,40,48,.85);color:#f2f2f4;border-color:rgba(255,255,255,.15)}
+#demo .btn.on{background:linear-gradient(var(--a1),var(--a2));color:#fff;border-color:var(--a7)}#demo i{width:8px}
+.acs{width:20px;height:20px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.2),0 0 0 2px rgba(255,255,255,.5)}.acs.on{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--a3)}
+*,*::before,*::after{backdrop-filter:none!important;animation:none!important;transition:none!important}
+
+.foot{display:grid;grid-template-columns:1fr 110px 110px;gap:10px;align-items:center;padding:14px 18px 18px}
+.hint{min-width:0;color:var(--mut);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.foot .btn{box-sizing:border-box;width:110px;padding:0;margin:0}
+.psegl,.sl{margin:12px 0 5px}
+
+.bw{display:block}
+.win[data-s=done] .sg i{background:#22b45a}.win[data-s=paused] .sg i{background:#a1a1aa}.win[data-s=failed] .sg i{background:#e5484d}
+</style></head><body><div id="stage"><div class="win" id="w" data-s="down">
+<div class="wbar"><span id="tt"></span><span class="wc"><b id="mn" title="Minimize"><svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg></b><b id="cl" title="Close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></b></span></div>
+<div class="mini"><i id="mf"></i></div>
+<div class="main"><div class="tabs" id="tabs"><button class="on" data-p="p1">Download status</button><button data-p="p2">Speed limiter</button><button data-p="p3">Options on completion</button></div>
+<div class="pane on" id="p1"><div class="url">https://download-installer.cdn.mozilla.net/pub/firefox/releases/61.0.2/mac/en-US/Firefox%2061.0.2.dmg</div>
+<div class="r"><span>Status</span><b id="st"></b></div><div class="r"><span>File size</span><b id="fs"></b></div><div class="r"><span>Downloaded</span><b id="dl"></b></div><div class="r"><span>Transfer rate</span><b id="bw"></b></div><div class="r"><span>Time left</span><b id="tr"></b></div><div class="r"><span>Resume capability</span><b class="ok">Yes</b></div>
+<div class="bw"><div class="bar"><i id="fl"></i></div></div><div class="sl">Connections : 11</div><div class="seg" id="sg"></div></div>
+<div class="pane" id="p2"><label class="ck"><span class="swl"><input type="checkbox"><span class="sw-track"><span class="sw-knob"></span></span></span>Use speed limiter</label><div class="r"><span>Maximum speed</span><b><input class="fi" type="number" value="256"> KB/s</b></div></div>
+<div class="pane" id="p3"><label class="ck"><span class="swl"><input type="checkbox"><span class="sw-track"><span class="sw-knob"></span></span></span>Close this window when the download completes</label><label class="ck"><span class="swl"><input type="checkbox" checked><span class="sw-track"><span class="sw-knob"></span></span></span>Show a notification when complete</label><label class="ck"><span class="swl"><input type="checkbox"><span class="sw-track"><span class="sw-knob"></span></span></span>Open the file when complete</label></div></div>
+<div class="foot" id="ft"></div></div>
+<div id="demo"><button class="btn on" data-st="down">Downloading</button><button class="btn" data-st="paused">Paused</button><button class="btn" data-st="done">Complete</button><button class="btn" data-st="failed">Failed</button><i></i><button class="btn" id="op">Reopen popup</button><button class="btn" id="th">Light / Dark</button>
+<button class="acs on" data-ac="indigo" style="background:linear-gradient(#7679ff,#4f46e5)"></button><button class="acs" data-ac="ocean" style="background:linear-gradient(#4fb3ff,#0a6fd8)"></button><button class="acs" data-ac="emerald" style="background:linear-gradient(#34d399,#059669)"></button><button class="acs" data-ac="rose" style="background:linear-gradient(#ff7ab0,#e11d63)"></button></div></div>
+<script>
+const $=(s)=>document.querySelector(s),MB=1048576,N=11,T=55.283*MB,SZ=T/N,NAME='Firefox 61.0.2.dmg',F0=[1,1,.78,1,.9,1,.62,1,.96,.7,1];
+let st='down',spd=.5*MB,tm=0,f=F0.slice();
+const done=()=>f.reduce((a,v)=>a+v*SZ,0),fm=(b)=>(b/MB).toFixed(3),ft=(s)=>s>=60?Math.floor(s/60)+' min '+Math.round(s%60)+' sec':Math.round(s)+' sec';
+const setT=(id,v)=>{const e=document.getElementById(id);if(e.textContent!==v)e.textContent=v};
+$('#sg').innerHTML=f.map(()=>'<div class="sg"><i></i></div>').join('');
+const SL={down:['Downloading…','ac'],paused:['Paused','am'],done:['Complete','ok'],failed:['Failed – connection lost','er']};
+function btns(){$('#ft').innerHTML='<span class="hint" id="hint"></span>'+{down:'<button class="btn" data-a="cancel">Cancel</button><button class="btn" data-a="pause">Pause</button>',paused:'<button class="btn" data-a="cancel">Cancel</button><button class="btn def" data-a="resume">Resume</button>',done:'<button class="btn" data-a="x">Close</button><button class="btn def" data-a="open">Open</button>',failed:'<button class="btn" data-a="x">Close</button><button class="btn def" data-a="retry">Retry</button>'}[st]}
+const HT={down:'11 connections active',paused:'Paused',done:'Saved in Programs',failed:'Connection lost'};
+function upd(){const d=st==='done'?T:done(),p=d/T*100,run=st==='down';$('#w').dataset.s=st;
+ setT('hint',HT[st]);setT('tt',st==='done'?'Download complete':st==='failed'?'Download failed':Math.floor(p)+'%  '+NAME);
+ const s=$('#st');setT('st',SL[st][0]);s.className=SL[st][1];setT('fs',fm(T)+' MB');setT('dl',fm(d)+' MB  ( '+p.toFixed(2)+' % )');
+ setT('bw',run?(spd/1024).toFixed(3)+' KB/sec':'—');setT('tr',run?ft((T-d)/spd):st==='done'?'Finished':'—');
+ $('#fl').style.width=p+'%';$('#mf').style.width=p+'%';document.querySelectorAll('#sg i').forEach((b,k)=>b.style.width=(st==='done'?1:f[k])*100+'%')}
+function tick(){spd=Math.min(.9*MB,Math.max(.3*MB,spd+(Math.random()-.5)*.12*MB));f=f.map(v=>v>=1?1:Math.min(1,v+spd/N*(.4+Math.random()*1.2)/SZ));if(f.every(v=>v>=1)){st='done';mark();btns();run()}upd()}
+function run(){clearInterval(tm);tm=0;if(st==='down'&&!document.hidden&&!$('#w').classList.contains('off'))tm=setInterval(tick,1000)}
+const mark=()=>document.querySelectorAll('[data-st]').forEach(b=>b.classList.toggle('on',b.dataset.st===st));
+function set(x){st=x;if(st==='done')f=f.map(()=>1);if(st==='down'&&f.every(v=>v>=1))f=F0.slice();mark();btns();upd();run()}
+document.addEventListener('visibilitychange',run);
+document.addEventListener('click',e=>{const x=e.target,a=x.closest('[data-a]'),s=x.closest('[data-st]'),c=x.closest('[data-ac]'),p=x.closest('[data-p]');
+ if(p){document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b===p));document.querySelectorAll('.pane').forEach(q=>q.classList.toggle('on',q.id===p.dataset.p));return}
+ if(s)return set(s.dataset.st);
+ if(c){document.documentElement.dataset.accent=c.dataset.ac;document.querySelectorAll('[data-ac]').forEach(b=>b.classList.toggle('on',b===c));return}
+ if(x.closest('#th')){const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark';return}
+ if(x.closest('#mn')){const m=$('#w').classList.toggle('m');$('#mn').innerHTML=m?'<svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" rx="1"/></svg>':'<svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg>';$('#mn').title=m?'Restore':'Minimize';return}
+ if(x.closest('#cl')){$('#w').classList.add('off');run();return}
+ if(x.closest('#op')){$('#w').classList.remove('off');run();return}
+ if(a){const k=a.dataset.a;if(k==='pause')set('paused');else if(k==='resume')set('down');else if(k==='retry'){f=f.map(()=>.05);set('down')}else if(k==='cancel')set('failed');else if(k==='x')$('#w').classList.add('off')}});
+function fit(){const k=Math.min(1,(innerWidth-20)/1060,(innerHeight-20)/660);$('#stage').style.transform=`scale(${k})`}
+addEventListener('resize',fit);fit();btns();upd();run();
+</script></body></html>

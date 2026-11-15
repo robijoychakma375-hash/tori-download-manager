@@ -56,9 +56,9 @@
 }
 
 :root {
-  --accent: #6366f1;
-  --accent-2: #4f46e5;
-  --accent-grad: linear-gradient(#7679ff, #4f46e5);
+  --accent: var(--a3);
+  --accent-2: var(--a2);
+  --accent-grad: linear-gradient(var(--a1), var(--a2));
   --radius-window: 8px;
   --radius-ctl: 5px;
   --radius-row: 5px;

@@ -4,12 +4,17 @@ import { listen } from '@tauri-apps/api/event';
 import './App.css';
 import type {
   AppSettings,
+  CategoryCounts,
   CategoryKey,
   DownloadEvent,
   DownloadJob,
+  DownloadProgress,
   PendingPlaylistRequest,
+  SortDirection,
+  SortField,
 } from './types';
 import { TitleBar } from './components/TitleBar';
+import { MenuBar } from './components/MenuBar';
 import { ToolBar } from './components/ToolBar';
 import { SideBar } from './components/SideBar';
 import { DownloadTable } from './components/DownloadTable';
@@ -240,6 +245,18 @@ const DEMO_DOWNLOADS: DownloadJob[] = [
   },
 ];
 
+function computeJobPercent(job: DownloadJob): number {
+  if (job.state === 'completed') return 100;
+  const total = job.total_bytes || 0;
+  if (total <= 0) return 0;
+  return Math.min(100, Math.max(0, (job.downloaded_bytes / total) * 100));
+}
+
+function parseJobDate(job: DownloadJob): number {
+  const ts = Date.parse(job.updated_at || job.created_at || '');
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
 export function App() {
   const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const windowMode = urlParams.get('window');
@@ -250,12 +267,33 @@ export function App() {
     return <DownloadToast initialId={windowJobId || undefined} />;
   }
 
-  const [downloads, setDownloads] = useState<DownloadJob[]>([]);
-  const lastProgressRenderRef = useRef<number>(0);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  return <MainWindow urlParams={urlParams} />;
+}
+
+function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
+  const isDemoMode = urlParams.get('demo') === '1';
+  const [downloads, setDownloads] = useState<DownloadJob[]>(() =>
+    isDemoMode ? DEMO_DOWNLOADS : []
+  );
+  const knownIdsRef = useRef<Set<string>>(new Set());
+  const pendingProgressRef = useRef<Map<string, DownloadProgress>>(new Map());
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFlushTimeRef = useRef<number>(0);
+  const lastUnknownReloadRef = useRef<number>(0);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
+    if (!isDemoMode) return new Set();
+    return urlParams.get('sel') === 'multi'
+      ? new Set(DEMO_DOWNLOADS.slice(0, 3).map((d) => d.id))
+      : new Set(DEMO_DOWNLOADS.length > 0 ? [DEMO_DOWNLOADS[0].id] : []);
+  });
   const [lastFocusedId, setLastFocusedId] = useState<string | null>(null);
   const [currentCategory, setCurrentCategory] = useState<CategoryKey>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortField, setSortField] = useState<SortField | null>(null);
+  const [sortDir, setSortDir] = useState<SortDirection>('desc');
+
   const [settings, setSettings] = useState<AppSettings>(() => {
     const s = loadStoredSettings();
     const urlAccent = urlParams.get('accent');
@@ -268,6 +306,11 @@ export function App() {
     }
     return s;
   });
+  const settingsRef = useRef(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
   const [isExtensionConnected, setIsExtensionConnected] = useState(false);
 
   // Modals & popups
@@ -293,11 +336,15 @@ export function App() {
           nonce: 1,
         };
       }
-    } catch { }
+    } catch {
+      // ignore
+    }
     return null;
   });
   const [progressJobId, setProgressJobId] = useState<string | null>(null);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'appearance' | 'engine' | 'integration' | 'about'>('engine');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<
+    'appearance' | 'engine' | 'integration' | 'about'
+  >('engine');
   const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(() => {
     try {
@@ -325,12 +372,15 @@ export function App() {
       }
     }
   }, [settings.autoCheckUpdates, settings.lastUpdateCheck, settings.remindLaterUntil]);
+
   const [deleteConfirmJobs, setDeleteConfirmJobs] = useState<DownloadJob[] | null>(() => {
     try {
       if (new URLSearchParams(window.location.search).get('modal') === 'delete') {
         return DEMO_DOWNLOADS.slice(0, 3);
       }
-    } catch { }
+    } catch {
+      // ignore
+    }
     return null;
   });
   const [contextMenu, setContextMenu] = useState<{
@@ -347,7 +397,7 @@ export function App() {
     }, 2400);
   }, []);
 
-  // Sync theme and accent with document element
+  // Sync theme, accent & motion preference with document element
   useEffect(() => {
     const applyTheme = () => {
       const isDark =
@@ -356,6 +406,8 @@ export function App() {
           window.matchMedia('(prefers-color-scheme: dark)').matches);
       document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
       document.documentElement.dataset.accent = settings.accent || 'indigo';
+      document.documentElement.dataset.reduceMotion = settings.motion ? 'true' : 'false';
+      document.documentElement.style.backgroundColor = isDark ? '#232326' : '#f5f5f8';
     };
 
     applyTheme();
@@ -365,20 +417,23 @@ export function App() {
     };
     mql.addEventListener('change', listener);
     return () => mql.removeEventListener('change', listener);
-  }, [settings.theme, settings.accent]);
+  }, [settings.theme, settings.accent, settings.motion]);
 
-  // Persist settings to localStorage and push to Rust backend engine
-  const handleUpdateSettings = (newSettings: AppSettings) => {
+  const settingsWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const handleUpdateSettings = useCallback((newSettings: AppSettings) => {
+    settingsRef.current = newSettings;
     setSettings(newSettings);
     try {
       localStorage.setItem('tori_settings_v2', JSON.stringify(newSettings));
     } catch (err) {
       console.error('Failed to store settings:', err);
     }
-    invoke('update_engine_settings', { settings: newSettings }).catch((err) => {
-      console.error('Failed to push settings to Rust engine:', err);
-    });
-  };
+    settingsWriteQueueRef.current = settingsWriteQueueRef.current
+      .then(() => invoke<void>('update_engine_settings', { settings: newSettings }))
+      .catch((err) => {
+        console.error('Failed to push settings to Rust engine:', err);
+      });
+  }, []);
 
   // Synchronize settings with Rust backend on startup (SQLite app_settings is authoritative)
   useEffect(() => {
@@ -405,20 +460,27 @@ export function App() {
               ...backendSettings,
               closeToTray: closeToTrayVal,
             };
+            // Allow URL params to override theme/accent cleanly when capturing screenshots
+            const urlAccent = urlParams.get('accent');
+            if (urlAccent && ['indigo', 'ocean', 'emerald', 'rose'].includes(urlAccent)) {
+              merged.accent = urlAccent as AppSettings['accent'];
+            }
+            const urlTheme = urlParams.get('theme');
+            if (urlTheme && ['light', 'dark', 'system'].includes(urlTheme)) {
+              merged.theme = urlTheme as AppSettings['theme'];
+            }
             try {
               localStorage.setItem('tori_settings_v2', JSON.stringify(merged));
             } catch {
               // ignore
             }
             if (!hasMigrated && backendSettings.closeToTray !== true) {
-              invoke('update_engine_settings', { settings: merged }).catch(() => {});
+              invoke('update_engine_settings', { settings: merged }).catch(() => { });
             }
             return merged;
           });
         } else {
-          // Fresh SQLite database: ensure closeToTray defaults to true on first initialization
-          // so stale WebView2 localStorage from prior sessions cannot silently disable tray mode.
-          const initial: AppSettings = { ...settings, closeToTray: true };
+          const initial: AppSettings = { ...settingsRef.current, closeToTray: true };
           localStorage.setItem(migratedKey, 'true');
           setSettings(initial);
           try {
@@ -433,29 +495,92 @@ export function App() {
       }
     };
     syncSettings();
-  }, []);
+  }, [urlParams]);
+
+  // Keep knownIdsRef aligned for fast lookup during high-frequency progress events
+  useEffect(() => {
+    knownIdsRef.current = new Set(downloads.map((d) => d.id));
+  }, [downloads]);
 
   // Load downloads from SQLite backend (strictly real data; demo items only if explicitly ?demo=1)
   const loadDownloads = useCallback(async () => {
-    if (urlParams.get('demo') === '1') {
+    if (isDemoMode) {
       setDownloads(DEMO_DOWNLOADS);
-      const sel = urlParams.get('sel') === 'multi'
-        ? new Set(DEMO_DOWNLOADS.slice(0, 3).map((d) => d.id))
-        : new Set(DEMO_DOWNLOADS.length > 0 ? [DEMO_DOWNLOADS[0].id] : []);
-      setSelectedIds(sel);
       return;
     }
     try {
       const list = await invoke<DownloadJob[]>('list_downloads');
-      setDownloads(list || []);
-      setSelectedIds((prev) => (prev.size > 0 ? prev : new Set(list && list.length > 0 ? [list[0].id] : [])));
+      const resolved = list || [];
+      knownIdsRef.current = new Set(resolved.map((d) => d.id));
+      setDownloads(resolved);
+      setSelectedIds((prev) =>
+        prev.size > 0 ? prev : new Set(resolved.length > 0 ? [resolved[0].id] : [])
+      );
     } catch (err) {
       console.error('Failed to load downloads from SQLite:', err);
       setDownloads([]);
     }
-  }, [urlParams]);
+  }, [isDemoMode]);
 
-  // Initial setup: downloads, default download folder, extension check, and ordered Tauri listeners
+  const flushPendingProgress = useCallback(() => {
+    if (flushTimerRef.current !== null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    if (pendingProgressRef.current.size === 0) return;
+
+    const batch = new Map(pendingProgressRef.current);
+    pendingProgressRef.current.clear();
+    lastFlushTimeRef.current = Date.now();
+
+    setDownloads((prev) => {
+      let anyChanged = false;
+      const next = prev.map((job) => {
+        const p = batch.get(job.id);
+        if (!p) return job;
+
+        const nextTotal = p.total_bytes ?? job.total_bytes;
+        const nextErr = p.error_message ?? job.error_message;
+        if (
+          job.downloaded_bytes === p.downloaded_bytes &&
+          job.total_bytes === nextTotal &&
+          job.speed_bps === p.speed_bps &&
+          job.eta_seconds === p.eta_seconds &&
+          job.state === p.state &&
+          job.error_message === nextErr
+        ) {
+          return job;
+        }
+        anyChanged = true;
+        return {
+          ...job,
+          downloaded_bytes: p.downloaded_bytes,
+          total_bytes: nextTotal,
+          speed_bps: p.speed_bps,
+          eta_seconds: p.eta_seconds,
+          state: p.state,
+          error_message: nextErr,
+        };
+      });
+      return anyChanged ? next : prev;
+    });
+  }, []);
+
+  const scheduleProgressFlush = useCallback(() => {
+    const intervalMs = document.hidden ? 1500 : 1000;
+    const elapsed = Date.now() - lastFlushTimeRef.current;
+    if (elapsed >= intervalMs) {
+      flushPendingProgress();
+      return;
+    }
+    if (flushTimerRef.current === null) {
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null;
+        flushPendingProgress();
+      }, Math.max(16, intervalMs - elapsed));
+    }
+  }, [flushPendingProgress]);
+
   const openPlaylistDialog = useCallback(
     (url: string, requestId?: string, supersededRequestIds?: string[]) => {
       const cleanUrl = (url || '').trim();
@@ -508,7 +633,13 @@ export function App() {
 
   useEffect(() => {
     let disposed = false;
-    loadDownloads();
+    if (!isDemoMode) {
+      void (async () => {
+        if (!disposed) {
+          await loadDownloads();
+        }
+      })();
+    }
 
     invoke<string>('get_default_download_dir')
       .then((dir) => {
@@ -526,82 +657,63 @@ export function App() {
     checkExt();
     const extInterval = setInterval(checkExt, 8000);
 
-    // Handle visibility changes to flush UI updates and pull missed playlist handoffs on tray restore
     const handleVisibilityChange = () => {
       if (!document.hidden) {
+        flushPendingProgress();
         loadDownloads();
         syncPendingPlaylistRequests();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Listen to real-time events from Rust engine EventBus
     const unlistenPromise = listen<DownloadEvent>('download-event', (event) => {
       const payload = event.payload;
 
       if (payload.type === 'Progress') {
         const p = payload.payload;
-        const now = Date.now();
-        // Throttle high-frequency table updates when hidden to preserve memory and CPU
-        if (document.hidden && now - lastProgressRenderRef.current < 1500) {
-          return;
-        }
-        lastProgressRenderRef.current = now;
-
-        setDownloads((prev) => {
-          const exists = prev.some((j) => j.id === p.id);
-          if (!exists) {
+        if (!knownIdsRef.current.has(p.id)) {
+          const now = Date.now();
+          if (now - lastUnknownReloadRef.current > 500) {
+            lastUnknownReloadRef.current = now;
             loadDownloads();
-            return prev;
           }
-          return prev.map((job) => {
-            if (job.id === p.id) {
-              return {
-                ...job,
-                downloaded_bytes: p.downloaded_bytes,
-                total_bytes: p.total_bytes ?? job.total_bytes,
-                speed_bps: p.speed_bps,
-                eta_seconds: p.eta_seconds,
-                state: p.state,
-                error_message: p.error_message ?? job.error_message,
-              };
-            }
-            return job;
-          });
-        });
+        }
+        pendingProgressRef.current.set(p.id, p);
+        scheduleProgressFlush();
       } else if (payload.type === 'StateChanged') {
         const sc = payload.payload;
-        setDownloads((prev) => {
-          const exists = prev.some((j) => j.id === sc.id);
-          if (!exists) {
-            loadDownloads();
-            return prev;
-          }
-          return prev.map((job) => {
-            if (job.id === sc.id) {
+        const buffered = pendingProgressRef.current.get(sc.id);
+        pendingProgressRef.current.delete(sc.id);
+
+        if (!knownIdsRef.current.has(sc.id)) {
+          loadDownloads();
+        } else {
+          setDownloads((prev) =>
+            prev.map((job) => {
+              if (job.id !== sc.id) return job;
               const isDone = sc.state === 'completed';
-              const isPaused = sc.state === 'paused';
+              const isPaused = sc.state === 'paused' || sc.state === 'cancelled';
+              const baseTotal = buffered?.total_bytes ?? job.total_bytes;
+              const baseDownloaded = buffered?.downloaded_bytes ?? job.downloaded_bytes;
               return {
                 ...job,
                 state: sc.state,
                 error_message: sc.error,
-                speed_bps: isDone || isPaused ? 0 : job.speed_bps,
-                eta_seconds: isDone || isPaused ? null : job.eta_seconds,
+                total_bytes: baseTotal,
+                speed_bps: isDone || isPaused ? 0 : (buffered?.speed_bps ?? job.speed_bps),
+                eta_seconds: isDone || isPaused ? null : (buffered?.eta_seconds ?? job.eta_seconds),
                 downloaded_bytes:
-                  isDone && job.total_bytes && job.total_bytes > 0
-                    ? job.total_bytes
-                    : job.downloaded_bytes,
+                  isDone && baseTotal && baseTotal > 0 ? baseTotal : baseDownloaded,
               };
-            }
-            return job;
-          });
-        });
-
-        if (sc.state === 'completed' || sc.state === 'failed' || sc.state === 'downloading') {
-          loadDownloads();
+            })
+          );
+          if (sc.state === 'completed' || sc.state === 'failed' || sc.state === 'downloading') {
+            loadDownloads();
+          }
         }
       } else if (payload.type === 'Deleted') {
         const { id } = payload.payload;
+        pendingProgressRef.current.delete(id);
         setDownloads((prev) => prev.filter((j) => j.id !== id));
         setSelectedIds((prev) => {
           if (!prev.has(id)) return prev;
@@ -610,7 +722,6 @@ export function App() {
           return next;
         });
       } else if (payload.type === 'OpenPlaylistModal') {
-        // Pull tracked pending queue cleanly rather than racing on un-keyed payload
         syncPendingPlaylistRequests();
       }
     });
@@ -618,6 +729,7 @@ export function App() {
     const unlistenDeletedPromise = listen<string>('download-deleted', (event) => {
       const id = event.payload;
       if (id) {
+        pendingProgressRef.current.delete(id);
         setDownloads((prev) => prev.filter((j) => j.id !== id));
         setSelectedIds((prev) => {
           if (!prev.has(id)) return prev;
@@ -645,7 +757,6 @@ export function App() {
       }
     });
 
-    // Signal readiness and pull any pre-mount playlist requests ONLY after Tauri listeners resolve
     const allListeners = Promise.all([
       unlistenPromise,
       unlistenDeletedPromise,
@@ -657,7 +768,7 @@ export function App() {
       .then(async () => {
         if (disposed) return;
         await invoke('frontend_ready').catch(() => {
-          invoke('show_main_window').catch(() => {});
+          invoke('show_main_window').catch(() => { });
         });
         if (!disposed) {
           await syncPendingPlaylistRequests();
@@ -670,18 +781,81 @@ export function App() {
     return () => {
       disposed = true;
       clearInterval(extInterval);
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       allListeners.then((unlisteners) => {
         for (const unlisten of unlisteners) {
           try {
             unlisten();
-          } catch { }
+          } catch {
+            // ignore
+          }
         }
       });
     };
-  }, [loadDownloads, openPlaylistDialog, syncPendingPlaylistRequests]);
+  }, [
+    flushPendingProgress,
+    isDemoMode,
+    loadDownloads,
+    openPlaylistDialog,
+    scheduleProgressFlush,
+    syncPendingPlaylistRequests,
+  ]);
 
-  // Selected downloads reference
+  const categoryCounts = useMemo<CategoryCounts>(() => {
+    let unf = 0;
+    let fin = 0;
+    let video = 0;
+    let music = 0;
+    let compressed = 0;
+    let programs = 0;
+    let documents = 0;
+
+    for (let i = 0; i < downloads.length; i++) {
+      const d = downloads[i];
+      if (d.state === 'completed') fin++;
+      else unf++;
+
+      const cat = typeOfJob(d);
+      if (cat === 'Video') video++;
+      else if (cat === 'Music') music++;
+      else if (cat === 'Compressed') compressed++;
+      else if (cat === 'Programs') programs++;
+      else if (cat === 'Documents') documents++;
+    }
+
+    return {
+      all: downloads.length,
+      unf,
+      fin,
+      Video: video,
+      Music: music,
+      Compressed: compressed,
+      Programs: programs,
+      Documents: documents,
+    };
+  }, [downloads]);
+
+  const { activeCount, totalSpeedBps, completedJobs } = useMemo(() => {
+    let active = 0;
+    let speed = 0;
+    const completed: DownloadJob[] = [];
+    for (let i = 0; i < downloads.length; i++) {
+      const d = downloads[i];
+      if (d.state === 'downloading' || d.state === 'probing') {
+        active++;
+        speed += d.speed_bps || 0;
+      }
+      if (d.state === 'completed') {
+        completed.push(d);
+      }
+    }
+    return { activeCount: active, totalSpeedBps: speed, completedJobs: completed };
+  }, [downloads]);
+
   const selectedJobs = useMemo(() => {
     return downloads.filter((d) => selectedIds.has(d.id));
   }, [downloads, selectedIds]);
@@ -696,11 +870,9 @@ export function App() {
     return selectedJobs.some((j) => j.state === 'downloading' || j.state === 'probing');
   }, [selectedJobs]);
 
-  // Filtered downloads for current category & search
   const filteredDownloads = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return downloads.filter((d) => {
-      // Category filter
+    const filtered = downloads.filter((d) => {
       let matchesCategory = false;
       if (currentCategory === 'all') {
         matchesCategory = true;
@@ -712,15 +884,62 @@ export function App() {
         matchesCategory = typeOfJob(d) === currentCategory;
       }
 
-      // Search filter
-      const matchesSearch =
-        !q ||
-        d.filename.toLowerCase().includes(q) ||
-        d.url.toLowerCase().includes(q);
-
-      return matchesCategory && matchesSearch;
+      if (!matchesCategory) return false;
+      if (!q) return true;
+      return d.filename.toLowerCase().includes(q) || d.url.toLowerCase().includes(q);
     });
-  }, [downloads, currentCategory, searchQuery]);
+
+    if (!sortField) return filtered;
+
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      switch (sortField) {
+        case 'filename':
+          return dir * a.filename.localeCompare(b.filename, undefined, { sensitivity: 'base' });
+        case 'size':
+          return (
+            dir *
+            ((a.total_bytes ?? a.downloaded_bytes ?? 0) -
+              (b.total_bytes ?? b.downloaded_bytes ?? 0))
+          );
+        case 'status':
+          return dir * (computeJobPercent(a) - computeJobPercent(b));
+        case 'eta': {
+          const ae = a.state === 'downloading' && a.eta_seconds != null ? a.eta_seconds : Number.MAX_SAFE_INTEGER;
+          const be = b.state === 'downloading' && b.eta_seconds != null ? b.eta_seconds : Number.MAX_SAFE_INTEGER;
+          return dir * (ae - be);
+        }
+        case 'speed':
+          return dir * ((a.speed_bps || 0) - (b.speed_bps || 0));
+        case 'date': {
+          const dt = parseJobDate(a) - parseJobDate(b);
+          if (dt !== 0) return dir * dt;
+          return dir * (a.updated_at || a.created_at).localeCompare(b.updated_at || b.created_at);
+        }
+      }
+    });
+  }, [downloads, currentCategory, searchQuery, sortField, sortDir]);
+
+  const handleSortHeaderClick = useCallback(
+    (field: SortField) => {
+      if (sortField === field) {
+        setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      } else {
+        setSortField(field);
+        setSortDir(field === 'filename' || field === 'eta' ? 'asc' : 'desc');
+      }
+    },
+    [sortField]
+  );
+
+  const handleSortMenuSelect = useCallback((field: SortField | null) => {
+    if (field === null) {
+      setSortField(null);
+      return;
+    }
+    setSortField(field);
+    setSortDir(field === 'filename' || field === 'eta' ? 'asc' : 'desc');
+  }, []);
 
   // Actions
   const handleAddMedia = async (args: {
@@ -755,8 +974,8 @@ export function App() {
         args.scheduledAt
           ? `Scheduled media download: ${job.filename}`
           : args.startImmediately
-          ? `Started media download: ${job.filename}`
-          : `Queued media download: ${job.filename}`
+            ? `Started media download: ${job.filename}`
+            : `Queued media download: ${job.filename}`
       );
     } catch (err: unknown) {
       showToast(`Error adding media download: ${String(err)}`);
@@ -817,46 +1036,59 @@ export function App() {
     );
   };
 
-  const handleTogglePause = async (job: DownloadJob) => {
-    try {
-      if (job.state === 'downloading' || job.state === 'probing') {
-        await invoke('pause_download', { id: job.id });
-        showToast(`Paused ${job.filename}`);
-      } else {
-        await invoke('resume_download', { id: job.id });
-        showToast(`Resumed ${job.filename}`);
-      }
-    } catch (err) {
-      showToast(`Action failed: ${String(err)}`);
-    }
-  };
-
-  const handleBulkTogglePause = async (jobsToToggle: DownloadJob[]) => {
-    if (jobsToToggle.length === 0) return;
-    const isAnyDownloading = jobsToToggle.some(
-      (j) => j.state === 'downloading' || j.state === 'probing'
-    );
-    for (const job of jobsToToggle) {
+  const handleTogglePause = useCallback(
+    async (job: DownloadJob) => {
       try {
-        if (isAnyDownloading) {
-          if (job.state === 'downloading' || job.state === 'probing') {
-            await invoke('pause_download', { id: job.id });
-          }
+        if (job.state === 'downloading' || job.state === 'probing') {
+          await invoke('pause_download', { id: job.id });
+          showToast(`Paused ${job.filename}`);
         } else {
-          if (['paused', 'queued', 'failed', 'cancelled'].includes(job.state)) {
-            await invoke('resume_download', { id: job.id });
-          }
+          await invoke('resume_download', { id: job.id });
+          showToast(`Resumed ${job.filename}`);
         }
       } catch (err) {
-        console.error(err);
+        showToast(`Action failed: ${String(err)}`);
       }
-    }
-    showToast(
-      isAnyDownloading
-        ? `Paused ${jobsToToggle.length} download(s)`
-        : `Resumed ${jobsToToggle.length} download(s)`
-    );
-  };
+    },
+    [showToast]
+  );
+
+  const handleBulkTogglePause = useCallback(
+    async (jobsToToggle: DownloadJob[], forceAction?: 'pause' | 'resume') => {
+      if (jobsToToggle.length === 0) return;
+      const shouldPause =
+        forceAction === 'pause'
+          ? true
+          : forceAction === 'resume'
+            ? false
+            : jobsToToggle.some((j) => j.state === 'downloading' || j.state === 'probing');
+
+      let affected = 0;
+      for (const job of jobsToToggle) {
+        try {
+          if (shouldPause) {
+            if (job.state === 'downloading' || job.state === 'probing') {
+              await invoke('pause_download', { id: job.id });
+              affected++;
+            }
+          } else if (['paused', 'queued', 'failed', 'cancelled'].includes(job.state)) {
+            await invoke('resume_download', { id: job.id });
+            affected++;
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      if (affected > 0) {
+        showToast(
+          shouldPause
+            ? `Paused ${affected} download(s)`
+            : `Resumed ${affected} download(s)`
+        );
+      }
+    },
+    [showToast]
+  );
 
   const handleCancel = async (job: DownloadJob) => {
     try {
@@ -876,7 +1108,7 @@ export function App() {
       'Enter new scheduled date and time (YYYY-MM-DDTHH:MM), or leave empty to clear schedule and queue for download:',
       defaultVal
     );
-    if (promptValue === null) return; // user cancelled
+    if (promptValue === null) return;
 
     let isoScheduled: string | null = null;
     if (promptValue.trim() !== '') {
@@ -905,15 +1137,15 @@ export function App() {
     }
   };
 
-  const handleOpenProgress = async (job: DownloadJob) => {
+  const handleOpenProgress = useCallback(async (job: DownloadJob) => {
     try {
       await invoke('open_progress_window', { id: job.id });
     } catch {
       setProgressJobId(job.id);
     }
-  };
+  }, []);
 
-  const handleStopAll = async () => {
+  const handleStopAll = useCallback(async () => {
     const active = downloads.filter(
       (d) => d.state === 'downloading' || d.state === 'probing'
     );
@@ -924,10 +1156,10 @@ export function App() {
         console.error(err);
       }
     }
-    showToast(`Stopped all active downloads`);
-  };
+    showToast('Stopped all active downloads');
+  }, [downloads, showToast]);
 
-  const handleStartQueue = async () => {
+  const handleStartQueue = useCallback(async () => {
     const paused = downloads.filter(
       (d) => d.state === 'paused' || d.state === 'queued'
     );
@@ -938,8 +1170,8 @@ export function App() {
         console.error(err);
       }
     }
-    showToast(`Started download queue`);
-  };
+    showToast('Started download queue');
+  }, [downloads, showToast]);
 
   const handleBulkDelete = async (jobsToDelete: DownloadJob[], deleteFiles: boolean) => {
     const ids = jobsToDelete.map((j) => j.id);
@@ -963,56 +1195,95 @@ export function App() {
     }
   };
 
-  const handleRetry = async (job: DownloadJob) => {
-    try {
-      await invoke('retry_download', { id: job.id });
-      showToast(`Restarted ${job.filename}`);
-    } catch (err) {
-      showToast(`Retry failed: ${String(err)}`);
-    }
-  };
+  const handleRetry = useCallback(
+    async (job: DownloadJob) => {
+      try {
+        await invoke('retry_download', { id: job.id });
+        showToast(`Restarted ${job.filename}`);
+      } catch (err) {
+        showToast(`Retry failed: ${String(err)}`);
+      }
+    },
+    [showToast]
+  );
 
-  const handleOpenFile = async (path: string) => {
-    try {
-      await invoke('open_file', { path });
-    } catch (err) {
-      showToast(`Could not open file: ${String(err)}`);
-    }
-  };
+  const handleOpenFile = useCallback(
+    async (path: string) => {
+      try {
+        await invoke('open_file', { path });
+      } catch (err) {
+        showToast(`Could not open file: ${String(err)}`);
+      }
+    },
+    [showToast]
+  );
 
-  const handleOpenFolder = async (path: string) => {
+  const handleOpenFolder = useCallback(
+    async (path: string) => {
+      try {
+        await invoke('open_folder', { path });
+      } catch (err) {
+        showToast(`Could not open folder: ${String(err)}`);
+      }
+    },
+    [showToast]
+  );
+
+  const handleVerifyChecksum = useCallback(
+    async (path: string) => {
+      showToast('Calculating SHA-256 checksum...');
+      try {
+        const hash = await invoke<string>('verify_checksum', { path });
+        showToast(`SHA-256: ${hash.substring(0, 16)}...`);
+      } catch (err) {
+        showToast(`Checksum error: ${String(err)}`);
+      }
+    },
+    [showToast]
+  );
+
+  const handleCopyUrl = useCallback(
+    (url: string) => {
+      try {
+        navigator.clipboard.writeText(url);
+        showToast('Address copied to clipboard');
+      } catch {
+        showToast('Could not copy to clipboard');
+      }
+    },
+    [showToast]
+  );
+
+  const handleOpenDataFolder = useCallback(async () => {
     try {
-      await invoke('open_folder', { path });
+      await invoke('open_data_folder');
     } catch (err) {
       showToast(`Could not open folder: ${String(err)}`);
     }
-  };
+  }, [showToast]);
 
-  const handleVerifyChecksum = async (path: string) => {
-    showToast('Calculating SHA-256 checksum...');
+  const handleExitApp = useCallback(async () => {
     try {
-      const hash = await invoke<string>('verify_checksum', { path });
-      showToast(`SHA-256: ${hash.substring(0, 16)}...`);
+      await invoke('exit_app', { force: false });
     } catch (err) {
-      showToast(`Checksum error: ${String(err)}`);
+      if (String(err).includes('active_downloads')) {
+        const confirmed = window.confirm(
+          'Active downloads are still in progress. Exit TORI Download Manager anyway?'
+        );
+        if (confirmed) {
+          await invoke('exit_app', { force: true }).catch(() => { });
+        }
+      } else {
+        showToast(`Exit failed: ${String(err)}`);
+      }
     }
-  };
-
-  const handleCopyUrl = (url: string) => {
-    try {
-      navigator.clipboard.writeText(url);
-      showToast('Address copied to clipboard');
-    } catch {
-      showToast('Could not copy to clipboard');
-    }
-  };
+  }, [showToast]);
 
   const handleRowSelect = useCallback(
     (e: React.MouseEvent, id: string) => {
       setSelectedIds((prev) => {
         const next = new Set(prev);
 
-        // 1. Shift + (Ctrl/Cmd) -> Range addition
         if (e.shiftKey && (e.ctrlKey || e.metaKey)) {
           if (!lastFocusedId || !filteredDownloads.some((d) => d.id === lastFocusedId)) {
             next.add(id);
@@ -1028,7 +1299,6 @@ export function App() {
           return next;
         }
 
-        // 2. Shift alone -> Continuous range selection (replacing selection)
         if (e.shiftKey) {
           const rangeSet = new Set<string>();
           if (!lastFocusedId || !filteredDownloads.some((d) => d.id === lastFocusedId)) {
@@ -1045,7 +1315,6 @@ export function App() {
           return rangeSet;
         }
 
-        // 3. Ctrl / Cmd alone -> Toggle individual selection
         if (e.ctrlKey || e.metaKey) {
           if (next.has(id)) {
             next.delete(id);
@@ -1055,7 +1324,6 @@ export function App() {
           return next;
         }
 
-        // 4. Normal click -> Select single item exclusively
         return new Set([id]);
       });
 
@@ -1084,7 +1352,7 @@ export function App() {
     setLastFocusedId(null);
   }, []);
 
-  // Keyboard navigation
+  // Keyboard shortcuts & table navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -1094,7 +1362,26 @@ export function App() {
         setIsSettingsModalOpen(false);
         setDeleteConfirmJobs(null);
         setContextMenu(null);
-        setSelectedIds(new Set());
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+        e.preventDefault();
+        setIsAddModalOpen(true);
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+        e.preventDefault();
+        setSettingsInitialTab('engine');
+        setIsSettingsModalOpen(true);
         return;
       }
 
@@ -1102,7 +1389,6 @@ export function App() {
         return;
       }
 
-      // Ctrl + A -> Select all visible downloads
       if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();
         const allIds = new Set(filteredDownloads.map((d) => d.id));
@@ -1128,8 +1414,8 @@ export function App() {
             });
           } else {
             setSelectedIds(new Set([nextId]));
-            setLastFocusedId(nextId);
           }
+          setLastFocusedId(nextId);
         }
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
@@ -1144,8 +1430,8 @@ export function App() {
             });
           } else {
             setSelectedIds(new Set([prevId]));
-            setLastFocusedId(prevId);
           }
+          setLastFocusedId(prevId);
         }
       } else if (e.key === ' ' && selectedJobs.length > 0) {
         e.preventDefault();
@@ -1158,20 +1444,70 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [filteredDownloads, lastFocusedId, selectedJobs]);
+  }, [filteredDownloads, handleBulkTogglePause, lastFocusedId, selectedJobs]);
 
   const progressJob = useMemo(() => {
     return downloads.find((d) => d.id === progressJobId) || null;
   }, [downloads, progressJobId]);
 
+  const singleSelected = selectedJobs.length === 1 ? selectedJobs[0] : null;
+
   return (
     <div className="win" id="main">
       <TitleBar title="Tori Download Manager" />
 
+      <MenuBar
+        selectedCount={selectedJobs.length}
+        singleSelectedComplete={!!singleSelected && singleSelected.state === 'completed'}
+        hasSingleSelection={!!singleSelected}
+        canResume={canResume}
+        canPause={canPause}
+        hasActiveDownloads={activeCount > 0}
+        hasCompletedDownloads={completedJobs.length > 0}
+        currentCategory={currentCategory}
+        sortField={sortField}
+        currentTheme={settings.theme}
+        isModalOpen={
+          isAddModalOpen ||
+          isSettingsModalOpen ||
+          !!playlistModalState ||
+          !!deleteConfirmJobs ||
+          !!progressJobId ||
+          !!availableUpdate
+        }
+        onAdd={() => setIsAddModalOpen(true)}
+        onResumeSelected={() => handleBulkTogglePause(selectedJobs, 'resume')}
+        onPauseSelected={() => handleBulkTogglePause(selectedJobs, 'pause')}
+        onStopAll={handleStopAll}
+        onStartQueue={handleStartQueue}
+        onOpenFile={() => singleSelected && handleOpenFile(singleSelected.target_path)}
+        onOpenFolder={() => singleSelected && handleOpenFolder(singleSelected.target_path)}
+        onOpenProgress={() => singleSelected && handleOpenProgress(singleSelected)}
+        onCopyUrl={() => singleSelected && handleCopyUrl(singleSelected.url)}
+        onRetrySelected={() => singleSelected && handleRetry(singleSelected)}
+        onVerifyChecksum={() => singleSelected && handleVerifyChecksum(singleSelected.target_path)}
+        onDeleteSelected={() => selectedJobs.length > 0 && setDeleteConfirmJobs(selectedJobs)}
+        onClearCompleted={() => completedJobs.length > 0 && setDeleteConfirmJobs(completedJobs)}
+        onSelectAll={() => setSelectedIds(new Set(filteredDownloads.map((d) => d.id)))}
+        onClearSelection={() => {
+          setSelectedIds(new Set());
+          setLastFocusedId(null);
+        }}
+        onSelectCategory={setCurrentCategory}
+        onSortBy={handleSortMenuSelect}
+        onChangeTheme={(theme) => handleUpdateSettings({ ...settingsRef.current, theme })}
+        onOpenSettings={(tab = 'engine') => {
+          setSettingsInitialTab(tab);
+          setIsSettingsModalOpen(true);
+        }}
+        onOpenDataFolder={handleOpenDataFolder}
+        onExit={handleExitApp}
+      />
+
       <ToolBar
         onAdd={() => setIsAddModalOpen(true)}
-        onResume={() => handleBulkTogglePause(selectedJobs)}
-        onPause={() => handleBulkTogglePause(selectedJobs)}
+        onResume={() => handleBulkTogglePause(selectedJobs, 'resume')}
+        onPause={() => handleBulkTogglePause(selectedJobs, 'pause')}
         onStopAll={handleStopAll}
         onDelete={() => selectedJobs.length > 0 && setDeleteConfirmJobs(selectedJobs)}
         onStartQueue={handleStartQueue}
@@ -1184,18 +1520,30 @@ export function App() {
         selectedCount={selectedJobs.length}
         canResume={canResume}
         canPause={canPause}
+        searchInputRef={searchInputRef}
       />
 
       <div id="body">
         <SideBar
           currentCategory={currentCategory}
           onSelectCategory={setCurrentCategory}
-          downloads={downloads}
+          allCount={categoryCounts.all}
+          unfCount={categoryCounts.unf}
+          finCount={categoryCounts.fin}
+          videoCount={categoryCounts.Video}
+          musicCount={categoryCounts.Music}
+          compressedCount={categoryCounts.Compressed}
+          programsCount={categoryCounts.Programs}
+          documentsCount={categoryCounts.Documents}
         />
 
         <DownloadTable
           downloads={filteredDownloads}
           selectedIds={selectedIds}
+          focusedId={lastFocusedId}
+          sortField={sortField}
+          sortDir={sortDir}
+          onSortChange={handleSortHeaderClick}
           onSelect={handleRowSelect}
           onOpenProgress={handleOpenProgress}
           onContextMenu={handleRowContextMenu}
@@ -1204,7 +1552,10 @@ export function App() {
       </div>
 
       <StatusBar
-        downloads={downloads}
+        activeCount={activeCount}
+        totalSpeedBps={totalSpeedBps}
+        visibleCount={filteredDownloads.length}
+        totalCount={downloads.length}
         isExtensionConnected={isExtensionConnected}
         statusMessage={toastMessage}
       />
@@ -1274,6 +1625,7 @@ export function App() {
         >
           <span>✨ New version available: v{availableUpdate.version}</span>
           <button
+            type="button"
             style={{
               background: 'rgba(255,255,255,0.25)',
               border: 'none',

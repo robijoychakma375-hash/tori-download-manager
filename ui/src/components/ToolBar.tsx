@@ -1,4 +1,5 @@
 import React from 'react';
+import { ToolbarIcon } from './Icons';
 
 interface ToolBarProps {
   onAdd: () => void;
@@ -13,6 +14,7 @@ interface ToolBarProps {
   selectedCount: number;
   canResume: boolean;
   canPause: boolean;
+  searchInputRef?: React.RefObject<HTMLInputElement | null>;
 }
 
 export const ToolBar: React.FC<ToolBarProps> = ({
@@ -28,75 +30,99 @@ export const ToolBar: React.FC<ToolBarProps> = ({
   selectedCount,
   canResume,
   canPause,
+  searchInputRef,
 }) => {
   return (
-    <div id="tool">
-      <button className="tb" data-a="add" onClick={onAdd} title="Add URL">
-        <img src="/icons/toolbar/add-url.svg" alt="Add" width={24} height={24} />
-        Add URL
+    <div id="tool" role="toolbar" aria-label="Download Actions">
+      <button type="button" className="tb" data-a="add" onClick={onAdd} title="Add URL (Ctrl+N)">
+        <ToolbarIcon kind="add" />
+        <span>Add URL</span>
       </button>
 
       <button
+        type="button"
         className="tb"
         data-a="resume"
         onClick={onResume}
         disabled={selectedCount === 0 || !canResume}
         title={selectedCount > 1 ? `Resume ${selectedCount} Downloads` : 'Resume'}
       >
-        <img src="/icons/toolbar/resume.svg" alt="Resume" width={24} height={24} />
-        Resume
+        <ToolbarIcon kind="resume" />
+        <span>Resume</span>
       </button>
 
       <button
+        type="button"
         className="tb"
         data-a="pause"
         onClick={onPause}
         disabled={selectedCount === 0 || !canPause}
         title={selectedCount > 1 ? `Pause ${selectedCount} Downloads` : 'Pause'}
       >
-        <img src="/icons/toolbar/pause.svg" alt="Pause" width={24} height={24} />
-        Pause
+        <ToolbarIcon kind="pause" />
+        <span>Pause</span>
       </button>
 
-      <button className="tb" data-a="stopall" onClick={onStopAll} title="Stop all">
-        <img src="/icons/toolbar/stop-all.svg" alt="Stop all" width={24} height={24} />
-        Stop all
+      <button type="button" className="tb" data-a="stopall" onClick={onStopAll} title="Stop all active downloads">
+        <ToolbarIcon kind="stopall" />
+        <span>Stop all</span>
       </button>
 
       <button
+        type="button"
         className="tb"
         data-a="del"
         onClick={onDelete}
         disabled={selectedCount === 0}
-        title={selectedCount > 1 ? `Delete ${selectedCount} Downloads` : 'Delete'}
+        title={selectedCount > 1 ? `Delete ${selectedCount} Downloads` : 'Delete (Del)'}
       >
-        <img src="/icons/toolbar/delete.svg" alt="Delete" width={24} height={24} />
-        {selectedCount > 1 ? `Delete (${selectedCount})` : 'Delete'}
+        <ToolbarIcon kind="del" />
+        <span>{selectedCount > 1 ? `Delete (${selectedCount})` : 'Delete'}</span>
       </button>
 
-      <span className="vs" />
+      <span className="vs" aria-hidden="true" />
 
-      <button className="tb" data-a="queue" onClick={onStartQueue} title="Start queue">
-        <img src="/icons/toolbar/start-queue.svg" alt="Queue" width={24} height={24} />
-        Start queue
+      <button type="button" className="tb" data-a="queue" onClick={onStartQueue} title="Start queued downloads">
+        <ToolbarIcon kind="queue" />
+        <span>Start queue</span>
       </button>
 
-      <span className="vs" />
+      <span className="vs" aria-hidden="true" />
 
-      <button className="tb" data-a="settings" onClick={onOpenSettings} title="Settings">
-        <img src="/icons/toolbar/settings.svg" alt="Settings" width={24} height={24} />
-        Settings
+      <button type="button" className="tb" data-a="settings" onClick={onOpenSettings} title="Settings (Ctrl+,)">
+        <ToolbarIcon kind="settings" />
+        <span>Settings</span>
       </button>
 
-      <input
-        className="in"
-        id="q"
-        type="text"
-        placeholder="Search"
-        value={searchQuery}
-        onChange={(e) => onSearchChange(e.target.value)}
-      />
+      <div className="qwrap">
+        <input
+          ref={searchInputRef}
+          className="in"
+          id="q"
+          type="text"
+          placeholder="Search downloads…"
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && searchQuery) {
+              e.stopPropagation();
+              onSearchChange('');
+            }
+          }}
+          aria-label="Search downloads"
+        />
+        {searchQuery && (
+          <button
+            type="button"
+            className="qclear"
+            onClick={() => onSearchChange('')}
+            title="Clear search"
+            aria-label="Clear search"
+          >
+            ×
+          </button>
+        )}
+      </div>
     </div>
   );
 };
-

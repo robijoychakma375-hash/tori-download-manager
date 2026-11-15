@@ -83,6 +83,20 @@ export type CategoryKey =
   | 'Programs'
   | 'Documents';
 
+export interface CategoryCounts {
+  all: number;
+  unf: number;
+  fin: number;
+  Video: number;
+  Music: number;
+  Compressed: number;
+  Programs: number;
+  Documents: number;
+}
+
+export type SortField = 'filename' | 'size' | 'status' | 'eta' | 'speed' | 'date';
+export type SortDirection = 'asc' | 'desc';
+
 export interface AppSettings {
   dir: string;
   sort: boolean;

@@ -1,127 +1,125 @@
-import React, { useMemo } from 'react';
-import type { CategoryKey, DownloadJob } from '../types';
-import { typeOfJob, getChipSrc } from '../utils';
+import React, { useState } from 'react';
+import type { CategoryKey } from '../types';
+import { CategoryChip } from './Icons';
 
 interface SideBarProps {
   currentCategory: CategoryKey;
   onSelectCategory: (cat: CategoryKey) => void;
-  downloads: DownloadJob[];
+  allCount: number;
+  unfCount: number;
+  finCount: number;
+  videoCount: number;
+  musicCount: number;
+  compressedCount: number;
+  programsCount: number;
+  documentsCount: number;
 }
 
-interface NavItem {
-  key: CategoryKey;
-  label: string;
-}
+export const SideBar: React.FC<SideBarProps> = React.memo(
+  ({
+    currentCategory,
+    onSelectCategory,
+    allCount,
+    unfCount,
+    finCount,
+    videoCount,
+    musicCount,
+    compressedCount,
+    programsCount,
+    documentsCount,
+  }) => {
+    const [allExpanded, setAllExpanded] = useState(true);
 
-const LIBRARY_ITEMS: NavItem[] = [
-  { key: 'all', label: 'All Downloads' },
-  { key: 'unf', label: 'Unfinished' },
-  { key: 'fin', label: 'Finished' },
-];
+    const subCategories: { key: CategoryKey; label: string; count: number }[] = [
+      { key: 'Video', label: 'Video', count: videoCount },
+      { key: 'Music', label: 'Music', count: musicCount },
+      { key: 'Compressed', label: 'Compressed', count: compressedCount },
+      { key: 'Programs', label: 'Programs', count: programsCount },
+      { key: 'Documents', label: 'Documents', count: documentsCount },
+    ];
 
-const CATEGORY_ITEMS: NavItem[] = [
-  { key: 'Video', label: 'Video' },
-  { key: 'Music', label: 'Music' },
-  { key: 'Compressed', label: 'Compressed' },
-  { key: 'Programs', label: 'Programs' },
-  { key: 'Documents', label: 'Documents' },
-];
+    const topStatusCategories: { key: CategoryKey; label: string; count: number }[] = [
+      { key: 'unf', label: 'Unfinished', count: unfCount },
+      { key: 'fin', label: 'Finished', count: finCount },
+    ];
 
-export const SideBar: React.FC<SideBarProps> = ({
-  currentCategory,
-  onSelectCategory,
-  downloads,
-}) => {
-  const counts = useMemo(() => {
-    let unf = 0;
-    let fin = 0;
-    let video = 0;
-    let music = 0;
-    let compressed = 0;
-    let programs = 0;
-    let documents = 0;
+    return (
+      <aside id="side" aria-label="Download Categories">
+        <div
+          className={`si ${currentCategory === 'all' ? 'on' : ''}`}
+          data-cat="all"
+          onClick={() => onSelectCategory('all')}
+          role="treeitem"
+          aria-expanded={allExpanded}
+          aria-selected={currentCategory === 'all'}
+        >
+          <span className="sn">
+            <button
+              type="button"
+              className={`tch ${allExpanded ? 'open' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setAllExpanded((v) => !v);
+              }}
+              title={allExpanded ? 'Collapse Categories' : 'Expand Categories'}
+              aria-label={allExpanded ? 'Collapse Categories' : 'Expand Categories'}
+            >
+              <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4.5 2.5L8 6 4.5 9.5" />
+              </svg>
+            </button>
+            <CategoryChip category="all" size={19} />
+            <span className="slbl">All Downloads</span>
+          </span>
+          <em>{allCount}</em>
+        </div>
 
-    for (let i = 0; i < downloads.length; i++) {
-      const d = downloads[i];
-      if (d.state === 'completed') {
-        fin++;
-      } else {
-        unf++;
-      }
-      const cat = typeOfJob(d);
-      if (cat === 'Video') video++;
-      else if (cat === 'Music') music++;
-      else if (cat === 'Compressed') compressed++;
-      else if (cat === 'Programs') programs++;
-      else if (cat === 'Documents') documents++;
-    }
-
-    return {
-      all: downloads.length,
-      unf,
-      fin,
-      Video: video,
-      Music: music,
-      Compressed: compressed,
-      Programs: programs,
-      Documents: documents,
-    };
-  }, [downloads]);
-
-  const getCount = (cat: CategoryKey): number => {
-    return counts[cat] ?? 0;
-  };
-
-  return (
-    <div id="side">
-      <h6>Library</h6>
-      {LIBRARY_ITEMS.map(({ key, label }) => {
-        const isSelected = currentCategory === key;
-        return (
-          <div
-            key={key}
-            className={`si ${isSelected ? 'on' : ''}`}
-            onClick={() => onSelectCategory(key)}
-          >
-            <span className="sn">
-              <img
-                src={getChipSrc(key)}
-                alt={label}
-                width={19}
-                height={19}
-                style={{ borderRadius: '5.5px' }}
-              />
-              {label}
-            </span>
-            <em>{getCount(key)}</em>
+        {allExpanded && (
+          <div className="kids" role="group" aria-label="File Type Categories">
+            {subCategories.map(({ key, label, count }) => {
+              const isSelected = currentCategory === key;
+              return (
+                <div
+                  key={key}
+                  className={`si ${isSelected ? 'on' : ''}`}
+                  data-cat={key}
+                  onClick={() => onSelectCategory(key)}
+                  role="treeitem"
+                  aria-selected={isSelected}
+                >
+                  <span className="sn">
+                    <CategoryChip category={key} size={19} />
+                    <span className="slbl">{label}</span>
+                  </span>
+                  <em>{count}</em>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        )}
 
-      <h6>Categories</h6>
-      {CATEGORY_ITEMS.map(({ key, label }) => {
-        const isSelected = currentCategory === key;
-        return (
-          <div
-            key={key}
-            className={`si ${isSelected ? 'on' : ''}`}
-            onClick={() => onSelectCategory(key)}
-          >
-            <span className="sn">
-              <img
-                src={getChipSrc(key)}
-                alt={label}
-                width={19}
-                height={19}
-                style={{ borderRadius: '5.5px' }}
-              />
-              {label}
-            </span>
-            <em>{getCount(key)}</em>
-          </div>
-        );
-      })}
-    </div>
-  );
-};
-
+        {topStatusCategories.map(({ key, label, count }) => {
+          const isSelected = currentCategory === key;
+          return (
+            <div
+              key={key}
+              className={`si ${isSelected ? 'on' : ''}`}
+              data-cat={key}
+              onClick={() => onSelectCategory(key)}
+              role="treeitem"
+              aria-selected={isSelected}
+            >
+              <span className="sn">
+                <span className="tch-spacer" aria-hidden="true" />
+                <CategoryChip category={key} size={19} />
+                <span className="slbl">{label}</span>
+              </span>
+              <em>{count}</em>
+            </div>
+          );
+        })}
+      </aside>
+    );
+  }
+);
+SideBar.displayName = 'SideBar';

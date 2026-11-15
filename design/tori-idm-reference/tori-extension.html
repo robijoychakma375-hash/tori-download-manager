@@ -1,0 +1,148 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tori Extension</title>
+<style>
+/* Tori design tokens. Light = :root, Dark = [data-theme="dark"] */
+:root{
+  --win:#f5f5f8;
+  --panel:#fff;
+  --pline:rgba(0,0,0,.08);
+  --tb1:rgba(252,252,254,.94);
+  --tb2:rgba(243,243,247,.94);
+  --tbl:rgba(0,0,0,.13);
+  --txt:#1d1d1f;
+  --mut:#86868b;
+  --ttl:#3a3a3c;
+  --blue:#4f46e5;
+  --link:#4f46e5;
+  --green:#1faa59;
+  --bar:#6366f1;
+  --seg:#6366f1;
+  --field:#fff;
+  --fline:rgba(0,0,0,.16);
+  --b1:#fff;
+  --b2:#f7f7f9;
+  --bline:rgba(0,0,0,.14);
+  --sel:#5b5ef0;
+  --alt:rgba(0,0,0,.022);
+  --row:#fff;
+  --side:rgba(236,236,243,.88);
+  --bad:#e5484d;
+  --desk:#c9c7f2
+}
+[data-theme="dark"]{
+  --win:#232326;
+  --panel:#2b2b30;
+  --pline:rgba(255,255,255,.08);
+  --tb1:rgba(54,54,60,.96);
+  --tb2:rgba(45,45,50,.96);
+  --tbl:rgba(0,0,0,.5);
+  --txt:#f2f2f4;
+  --mut:#98989f;
+  --ttl:#e5e5e7;
+  --blue:#a5a8ff;
+  --link:#a5a8ff;
+  --green:#32d74b;
+  --bar:#818cf8;
+  --seg:#818cf8;
+  --field:#1c1c1f;
+  --fline:rgba(255,255,255,.15);
+  --b1:#4a4a50;
+  --b2:#3e3e43;
+  --bline:rgba(255,255,255,.13);
+  --sel:#6366f1;
+  --alt:rgba(255,255,255,.03);
+  --row:#1e1e21;
+  --side:rgba(37,37,42,.92);
+  --bad:#ff6b6b;
+  --desk:#0d0d14
+}
+:root{--accent:#6366f1;--accent-2:#4f46e5;--accent-grad:linear-gradient(#7679ff,#4f46e5);--radius-window:13px;--radius-ctl:8px;--radius-row:7px;--font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Segoe UI",Roboto,sans-serif}
+
+/* Accent themes: set <html data-accent="ocean|emerald|rose">. Default = indigo. */
+:root{--a1:#7679ff;--a2:#4f46e5;--a3:#6366f1;--a4:#5b5ef0;--a5:#a78bfa;--a7:#4338ca;--ab:#818cf8;--at:#a5a8ff;--ar:99 102 241}
+[data-accent="ocean"]{--a1:#4fb3ff;--a2:#0a6fd8;--a3:#0a84ff;--a4:#2f8cf5;--a5:#67e8f9;--a7:#075bb5;--ab:#4fb3ff;--at:#8fcbff;--ar:10 132 255}
+[data-accent="emerald"]{--a1:#34d399;--a2:#059669;--a3:#10b981;--a4:#22b57e;--a5:#86efac;--a7:#047857;--ab:#34d399;--at:#6ee7b7;--ar:16 185 129}
+[data-accent="rose"]{--a1:#ff7ab0;--a2:#e11d63;--a3:#f43f78;--a4:#ee4f86;--a5:#fdba74;--a7:#be123c;--ab:#ff7ab0;--at:#ffa3c2;--ar:244 63 120}
+
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{background:var(--desk);color:var(--txt);font:13px/1.3 "Segoe UI Variable","Segoe UI",Inter,sans-serif;-webkit-font-smoothing:antialiased;padding:24px;display:flex;flex-direction:column;align-items:center;gap:16px}
+button{all:unset;cursor:default;box-sizing:border-box}svg{display:block}
+.demo{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.demo button{height:26px;padding:0 12px;border-radius:13px;background:var(--panel);border:1px solid var(--pline);font-size:12px;font-weight:600}
+.demo button:hover{background:var(--pline)}
+.wrap{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;justify-content:center}
+.cap{font-size:11px;color:var(--mut);text-align:center;margin-top:6px}
+/* popup */
+.xp{width:320px;background:var(--win);border-radius:10px;overflow:hidden;box-shadow:0 0 0 .5px var(--bline),0 4px 12px rgba(0,0,0,.25)}
+.xh{display:flex;align-items:center;gap:10px;height:56px;padding:0 14px}
+.logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(var(--a1),var(--a2));display:grid;place-items:center;flex:none}
+.logo svg{width:17px;height:17px;stroke:#fff;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.xh b{display:block;font-size:14px;font-weight:700;line-height:16px}
+.st{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut);line-height:14px}.st i{width:7px;height:7px;border-radius:50%;background:var(--green)}
+.hr{height:1px;background:var(--pline)}
+.cp{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel)}
+.cp .t{flex:1;min-width:0}.cp b{display:block;font-size:12.5px;font-weight:600}.cp span{display:block;font-size:11px;color:var(--mut);margin-top:1px}
+.sw{position:relative;display:block;width:40px;height:24px;flex:none}.sw input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;z-index:1}
+.tr{position:absolute;inset:0;border-radius:12px;background:var(--fline);transition:background-color .12s}
+.kn{position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .12s}
+.sw input:checked+.tr{background:var(--a3)}.sw input:checked+.tr+.kn{transform:translateX(16px)}
+.sec{padding:10px 14px 6px;font-size:11px;font-weight:600;color:var(--mut)}
+.empty{padding:6px 14px 12px;text-align:center}.empty b{display:block;font-size:12px;font-weight:600}.empty span{display:block;font-size:11px;color:var(--mut);margin:2px 0 10px}
+.btn{height:28px;padding:0 12px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12px;font-weight:600;background:linear-gradient(var(--b1),var(--b2));border:1px solid var(--bline);color:var(--txt)}
+.btn:hover{filter:brightness(1.06)}
+.btn.def{background:linear-gradient(var(--a1),var(--a2));border-color:var(--a7);color:#fff}
+.btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.list{padding:0 8px 4px}
+.row{display:flex;align-items:center;gap:9px;height:42px;padding:0 6px;border-radius:7px}.row:hover{background:var(--pline)}
+.ft{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;flex:none;background:var(--c)}.ft svg{width:14px;height:14px;fill:none;stroke:#fff;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round}
+.ft.n{background:var(--pline)}.ft.n svg{stroke:var(--a3)}
+.row .t{flex:1;min-width:0}.row b{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .s{display:block;font-size:10.5px;color:var(--mut);margin-top:1px}
+.bar{height:3px;border-radius:2px;background:var(--pline);margin-top:5px;overflow:hidden}.bar i{display:block;height:100%;background:var(--bar)}.bar i.dn{background:var(--green)}
+.pc{font-size:11px;font-weight:600;color:var(--mut);flex:none}.pc.dn{color:var(--green)}
+.mb{height:24px;padding:0 9px;font-size:11px;flex:none}
+.xf{display:flex;gap:8px;padding:10px;border-top:1px solid var(--pline);background:var(--panel)}
+.xf .btn{height:30px}.xf .f{flex:1}.xf .sq{width:30px;padding:0}.xf .sq svg{stroke:var(--mut)}
+/* format panel */
+.pn{width:300px;background:var(--win);border-radius:10px;overflow:hidden;box-shadow:0 0 0 .5px var(--bline),0 4px 12px rgba(0,0,0,.25)}
+.ph{display:flex;align-items:center;gap:9px;padding:10px 12px 8px}.ph .t{flex:1;min-width:0}.ph b{display:block;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ph span{font-size:11px;color:var(--mut)}
+.ph .x{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;color:var(--mut);font-size:16px}.ph .x:hover{background:var(--bad);color:#fff}
+.seg{margin:0 12px 6px;height:26px;border-radius:7px;padding:2px;background:var(--pline);display:flex;gap:2px}
+.seg button{flex:1;text-align:center;line-height:22px;border-radius:5px;font-weight:500;font-size:11.5px;color:var(--mut)}.seg button.on{background:var(--b1);color:var(--txt);box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.fl{padding:0 6px}
+.fr{display:flex;align-items:center;gap:8px;height:34px;padding:0 8px;border-radius:7px;font-size:12px}.fr:hover{background:var(--pline)}
+.fr.on{background:var(--sel);color:#fff}
+.rd{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--fline);flex:none;display:grid;place-items:center}.fr.on .rd{border-color:#fff}.fr.on .rd::after{content:"";width:7px;height:7px;border-radius:50%;background:#fff}
+.q{font-weight:600;width:44px}.tg{font-size:10px;font-weight:700;border-radius:5px;padding:1px 6px;background:var(--pline);color:var(--mut)}.fr.on .tg{background:rgba(255,255,255,.25);color:#fff}
+.sz{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:500}
+.pf{padding:8px 12px 12px;border-top:1px solid var(--pline);margin-top:6px;display:flex;flex-direction:column;gap:8px;background:var(--panel)}
+.sv{font-size:10.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sv b{color:var(--txt);font-weight:500}
+.pf .ac{display:flex;gap:8px}.pf .btn{height:30px}.pf .f{flex:1}.pf .sq{width:30px;padding:0}
+</style></head><body>
+<div class="demo"><button data-s="theme">Light / Dark</button><button data-s="accent">Accent</button></div>
+<div class="wrap"><div><div class="xp" id="xp"></div><div class="cap">Toolbar popup</div></div><div><div class="pn" id="pn"></div><div class="cap">Format picker on video</div></div></div>
+<script>
+const $=s=>document.querySelector(s);
+const P={dl:'M12 4v10M8 10l4 4 4-4M5 19h14',op:'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',cp:'M9 9h10v11H9zM5 15V4h10',pl:'M9 6.5v11l9-5.5z'};
+const I=d=>`<svg viewBox="0 0 24 24"><path d="${d}"/></svg>`;
+const SET='<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>';
+let media=false,tab='Video',sel=0;
+const recent=[['MLFBD.NET - Ranabaali 2026 1080p.mkv',100],['Getintopc.com_Adobe_InDesign_2026.zip',100],['MicrosoftEdgeSetup (1).exe',100]];
+const mlist=[['Big Buck Bunny - Official Trailer','1080p / MP4 / 420 MB'],['Behind the scenes','720p / MP4 / 96 MB']];
+function xp(){$('#xp').innerHTML=`<div class="xh"><span class="logo">${I(P.dl)}</span><div><b>Tori</b><div class="st"><i></i>Connected</div></div></div>
+<div class="xf"><button class="btn def f">${I(P.op)}Open Tori</button><button class="btn sq" title="Settings">${SET}</button></div>`}
+const F={Video:[['1080p','MP4','420 MB','HD'],['720p','MP4','210 MB','HD'],['480p','MP4','118 MB'],['360p','MP4','64 MB']],Audio:[['320k','MP3','22.6 MB'],['128k','MP3','9.1 MB'],['256k','M4A','18.2 MB']]};
+function pn(){const L=F[tab];$('#pn').innerHTML=`<div class="ph"><i class="ft" style="--c:#ff453a">${I(P.pl)}</i><div class="t"><b>Big Buck Bunny - Official Trailer</b><span>9:56 &middot; video-site.example</span></div><button class="x">&times;</button></div>
+<div class="seg"><button class="${tab=='Video'?'on':''}" data-t="Video">Video</button><button class="${tab=='Audio'?'on':''}" data-t="Audio">Audio only</button></div>
+<div class="fl">${L.map((f,i)=>`<div class="fr ${i==sel?'on':''}" data-i="${i}"><span class="rd"></span><span class="q">${f[0]}</span><span class="tg">${f[1]}</span>${f[3]?'<span class="tg">'+f[3]+'</span>':''}<span class="sz">${f[2]}</span></div>`).join('')}</div>
+<div class="pf"><div class="sv">Save to <b>C:\\Users\\ritud\\Downloads\\Tori\\${tab}</b></div><div class="ac"><button class="btn sq">${I(P.cp)}</button><button class="btn def f">${I(P.dl)}Download &middot; ${L[sel][2]}</button></div></div>`}
+const AC=['indigo','ocean','emerald','rose'];let ai=0;
+document.addEventListener('click',e=>{const t=e.target,h=document.documentElement;
+ const b=t.closest('[data-s]');if(b){const k=b.dataset.s;
+  
+  if(k=='theme')h.dataset.theme=h.dataset.theme=='dark'?'light':'dark';
+  if(k=='accent'){ai=(ai+1)%4;ai?h.dataset.accent=AC[ai]:h.removeAttribute('data-accent')}return}
+ const s=t.closest('[data-t]');if(s){tab=s.dataset.t;sel=0;pn();return}
+ const r=t.closest('.fr');if(r){sel=+r.dataset.i;pn()}});
+document.documentElement.dataset.theme='dark';xp();pn();
+</script></body></html>

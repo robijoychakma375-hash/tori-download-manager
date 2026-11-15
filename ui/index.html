@@ -13,13 +13,13 @@
         height: 100%;
         overflow: hidden;
         background-color: #232326;
-        color: #e5e7eb;
+        color: #f2f2f4;
         user-select: none;
         -webkit-user-select: none;
       }
       html[data-theme="light"], html[data-theme="light"] body {
-        background-color: #f8fafc;
-        color: #0f172a;
+        background-color: #f5f5f8;
+        color: #1d1d1f;
       }
       #root {
         width: 100%;
@@ -30,7 +30,7 @@
       (function() {
         try {
           var raw = localStorage.getItem('tori_settings_v2');
-          var theme = 'dark';
+          var theme = 'system';
           var accent = 'indigo';
           if (raw) {
             var s = JSON.parse(raw);
@@ -41,7 +41,7 @@
           var effectiveTheme = isDark ? 'dark' : 'light';
           document.documentElement.dataset.theme = effectiveTheme;
           document.documentElement.dataset.accent = accent;
-          var bg = isDark ? '#232326' : '#f8fafc';
+          var bg = isDark ? '#232326' : '#f5f5f8';
           document.documentElement.style.backgroundColor = bg;
           if (document.body) document.body.style.backgroundColor = bg;
         } catch (e) {
