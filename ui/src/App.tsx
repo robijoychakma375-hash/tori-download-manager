@@ -2,7 +2,13 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import './App.css';
-import type { AppSettings, CategoryKey, DownloadEvent, DownloadJob } from './types';
+import type {
+  AppSettings,
+  CategoryKey,
+  DownloadEvent,
+  DownloadJob,
+  PendingPlaylistRequest,
+} from './types';
 import { TitleBar } from './components/TitleBar';
 import { ToolBar } from './components/ToolBar';
 import { SideBar } from './components/SideBar';
@@ -272,10 +278,20 @@ export function App() {
       return false;
     }
   });
-  const [playlistModalUrl, setPlaylistModalUrl] = useState<string | null>(() => {
+  const playlistNonceRef = useRef(1);
+  const handledPlaylistRequestIdsRef = useRef<Set<string>>(new Set());
+  const [playlistModalState, setPlaylistModalState] = useState<{
+    url: string;
+    requestId?: string;
+    supersededRequestIds?: string[];
+    nonce: number;
+  } | null>(() => {
     try {
       if (new URLSearchParams(window.location.search).get('modal') === 'playlist') {
-        return 'https://www.youtube.com/playlist?list=PL6B3937A5D230E335';
+        return {
+          url: 'https://www.youtube.com/playlist?list=PL6B3937A5D230E335',
+          nonce: 1,
+        };
       }
     } catch { }
     return null;
@@ -350,13 +366,6 @@ export function App() {
     mql.addEventListener('change', listener);
     return () => mql.removeEventListener('change', listener);
   }, [settings.theme, settings.accent]);
-
-  // Signal visual readiness to Rust backend to display the window without white flash
-  useEffect(() => {
-    invoke('frontend_ready').catch(() => {
-      invoke('show_main_window').catch(() => {});
-    });
-  }, []);
 
   // Persist settings to localStorage and push to Rust backend engine
   const handleUpdateSettings = (newSettings: AppSettings) => {
@@ -446,8 +455,59 @@ export function App() {
     }
   }, [urlParams]);
 
-  // Initial setup: downloads, default download folder, extension check
+  // Initial setup: downloads, default download folder, extension check, and ordered Tauri listeners
+  const openPlaylistDialog = useCallback(
+    (url: string, requestId?: string, supersededRequestIds?: string[]) => {
+      const cleanUrl = (url || '').trim();
+      if (!cleanUrl) return;
+      if (requestId) {
+        if (handledPlaylistRequestIdsRef.current.has(requestId)) {
+          return;
+        }
+        handledPlaylistRequestIdsRef.current.add(requestId);
+        if (handledPlaylistRequestIdsRef.current.size > 100) {
+          const oldest = handledPlaylistRequestIdsRef.current.values().next().value;
+          if (oldest) handledPlaylistRequestIdsRef.current.delete(oldest);
+        }
+      }
+      if (supersededRequestIds && supersededRequestIds.length > 0) {
+        for (const id of supersededRequestIds) {
+          handledPlaylistRequestIdsRef.current.add(id);
+        }
+      }
+      setIsAddModalOpen(false);
+      setIsSettingsModalOpen(false);
+      setDeleteConfirmJobs(null);
+      setContextMenu(null);
+      setProgressJobId(null);
+      setPlaylistModalState({
+        url: cleanUrl,
+        requestId,
+        supersededRequestIds,
+        nonce: ++playlistNonceRef.current,
+      });
+    },
+    []
+  );
+
+  const syncPendingPlaylistRequests = useCallback(async () => {
+    try {
+      const pending = await invoke<PendingPlaylistRequest[]>('take_pending_playlist_requests');
+      if (!Array.isArray(pending) || pending.length === 0) return;
+      const fresh = pending.filter(
+        (req) => req?.request_id && !handledPlaylistRequestIdsRef.current.has(req.request_id)
+      );
+      if (fresh.length === 0) return;
+      const latest = fresh[fresh.length - 1];
+      const superseded = fresh.slice(0, -1).map((r) => r.request_id);
+      openPlaylistDialog(latest.url, latest.request_id, superseded);
+    } catch (err) {
+      console.error('Failed to synchronize pending playlist requests:', err);
+    }
+  }, [openPlaylistDialog]);
+
   useEffect(() => {
+    let disposed = false;
     loadDownloads();
 
     invoke<string>('get_default_download_dir')
@@ -466,10 +526,11 @@ export function App() {
     checkExt();
     const extInterval = setInterval(checkExt, 8000);
 
-    // Handle visibility changes to flush UI updates when returning to foreground
+    // Handle visibility changes to flush UI updates and pull missed playlist handoffs on tray restore
     const handleVisibilityChange = () => {
       if (!document.hidden) {
         loadDownloads();
+        syncPendingPlaylistRequests();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -549,10 +610,8 @@ export function App() {
           return next;
         });
       } else if (payload.type === 'OpenPlaylistModal') {
-        const { url } = payload.payload;
-        if (url) {
-          setPlaylistModalUrl(url);
-        }
+        // Pull tracked pending queue cleanly rather than racing on un-keyed payload
+        syncPendingPlaylistRequests();
       }
     });
 
@@ -569,21 +628,58 @@ export function App() {
       }
     });
 
+    const unlistenPlaylistRequestPromise = listen<PendingPlaylistRequest>(
+      'open-playlist-modal-request',
+      (event) => {
+        const req = event.payload;
+        if (req?.url) {
+          openPlaylistDialog(req.url, req.request_id);
+        }
+      }
+    );
+
     const unlistenPlaylistModalPromise = listen<string>('open-playlist-modal', (event) => {
       const url = event.payload;
       if (url) {
-        setPlaylistModalUrl(url);
+        openPlaylistDialog(url);
       }
     });
 
+    // Signal readiness and pull any pre-mount playlist requests ONLY after Tauri listeners resolve
+    const allListeners = Promise.all([
+      unlistenPromise,
+      unlistenDeletedPromise,
+      unlistenPlaylistRequestPromise,
+      unlistenPlaylistModalPromise,
+    ]);
+
+    allListeners
+      .then(async () => {
+        if (disposed) return;
+        await invoke('frontend_ready').catch(() => {
+          invoke('show_main_window').catch(() => {});
+        });
+        if (!disposed) {
+          await syncPendingPlaylistRequests();
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to register Tauri listeners:', err);
+      });
+
     return () => {
+      disposed = true;
       clearInterval(extInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      unlistenPromise.then((unlisten) => unlisten());
-      unlistenDeletedPromise.then((unlisten) => unlisten());
-      unlistenPlaylistModalPromise.then((unlisten) => unlisten());
+      allListeners.then((unlisteners) => {
+        for (const unlisten of unlisteners) {
+          try {
+            unlisten();
+          } catch { }
+        }
+      });
     };
-  }, [loadDownloads]);
+  }, [loadDownloads, openPlaylistDialog, syncPendingPlaylistRequests]);
 
   // Selected downloads reference
   const selectedJobs = useMemo(() => {
@@ -993,7 +1089,7 @@ export function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsAddModalOpen(false);
-        setPlaylistModalUrl(null);
+        setPlaylistModalState(null);
         setProgressJobId(null);
         setIsSettingsModalOpen(false);
         setDeleteConfirmJobs(null);
@@ -1122,17 +1218,19 @@ export function App() {
           onSubmit={handleAddUrls}
           onSubmitMedia={handleAddMedia}
           onOpenPlaylist={(url) => {
-            setIsAddModalOpen(false);
-            setPlaylistModalUrl(url);
+            openPlaylistDialog(url);
           }}
         />
       )}
 
-      {playlistModalUrl !== null && (
+      {playlistModalState !== null && (
         <PlaylistModal
-          initialUrl={playlistModalUrl}
+          initialUrl={playlistModalState.url}
+          requestId={playlistModalState.requestId}
+          supersededRequestIds={playlistModalState.supersededRequestIds}
+          requestNonce={playlistModalState.nonce}
           defaultDir={settings.dir}
-          onClose={() => setPlaylistModalUrl(null)}
+          onClose={() => setPlaylistModalState(null)}
           onEnqueued={(count) => {
             loadDownloads();
             showToast(`Enqueued ${count} videos from playlist`);

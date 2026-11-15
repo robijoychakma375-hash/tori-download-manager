@@ -68,6 +68,11 @@ export type DownloadEvent =
   | { type: 'OpenProgressWindow'; payload: { id: string } }
   | { type: 'OpenPlaylistModal'; payload: { url: string } };
 
+export interface PendingPlaylistRequest {
+  request_id: string;
+  url: string;
+}
+
 export type CategoryKey =
   | 'all'
   | 'unf'

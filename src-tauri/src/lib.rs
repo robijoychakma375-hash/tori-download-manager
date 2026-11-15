@@ -141,6 +141,8 @@ pub fn run() {
     let srv_manager = manager.clone();
     let srv_db = db.clone();
     let event_manager = manager.clone();
+    let event_minimized_flag = is_minimized_launch.clone();
+    let setup_minimized_flag = is_minimized_launch.clone();
     let shutdown_token = CancellationToken::new();
     let ipc_shutdown = shutdown_token.clone();
     let srv_shutdown = shutdown_token.clone();
@@ -168,20 +170,19 @@ pub fn run() {
             is_minimized_launch: is_minimized_launch.clone(),
         })
         .setup(move |app| {
+            manager.set_desktop_gui_attached(true);
             let app_handle = app.handle().clone();
             let mut rx = event_bus.subscribe();
             let mgr = event_manager.clone();
+            let bus_minimized_flag = event_minimized_flag.clone();
 
             let bus_app_handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 while let Ok(event) = rx.recv().await {
                     match &event {
                         tdm_core::DownloadEvent::ShowWindow => {
-                            if let Some(window) = bus_app_handle.get_webview_window("main") {
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                            bus_minimized_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+                            tray::show_main_window(&bus_app_handle);
                         }
                         tdm_core::DownloadEvent::HideWindow => {
                             if let Some(window) = bus_app_handle.get_webview_window("main") {
@@ -203,7 +204,19 @@ pub fn run() {
                             let _ = bus_app_handle.emit("download-deleted", id);
                         }
                         tdm_core::DownloadEvent::OpenPlaylistModal { url } => {
-                            let _ = bus_app_handle.emit("open-playlist-modal", url);
+                            bus_minimized_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+                            tray::show_main_window(&bus_app_handle);
+                            if mgr.is_frontend_playlist_ready() {
+                                let pending = mgr.pending_playlist_requests_snapshot();
+                                if !pending.is_empty() {
+                                    for req in pending {
+                                        let _ =
+                                            bus_app_handle.emit("open-playlist-modal-request", &req);
+                                    }
+                                } else {
+                                    let _ = bus_app_handle.emit("open-playlist-modal", url);
+                                }
+                            }
                         }
                         _ => {}
                     }
@@ -225,7 +238,9 @@ pub fn run() {
                 }
             });
 
-            if is_minimized {
+            if setup_minimized_flag.load(std::sync::atomic::Ordering::SeqCst)
+                && manager.pending_playlist_requests_snapshot().is_empty()
+            {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.minimize();
                     lifecycle::trim_memory();
@@ -234,10 +249,15 @@ pub fn run() {
 
             // Fallback safety timeout: ensure main window is displayed even if frontend signal fails
             let safety_handle = app_handle.clone();
-            let safety_minimized = is_minimized;
+            let safety_minimized_flag = setup_minimized_flag.clone();
+            let safety_mgr = manager.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                if !safety_minimized {
+                let has_pending_playlist = !safety_mgr.pending_playlist_requests_snapshot().is_empty();
+                let should_show_fallback = (!safety_minimized_flag.load(std::sync::atomic::Ordering::SeqCst)
+                    && !safety_mgr.is_frontend_playlist_ready())
+                    || has_pending_playlist;
+                if should_show_fallback {
                     if let Some(w) = safety_handle.get_webview_window("main") {
                         if let Ok(false) = w.is_visible() {
                             lifecycle::log_event(
@@ -245,8 +265,7 @@ pub fn run() {
                                 "SAFETY_TIMEOUT_SHOW",
                                 "Safety fallback timer triggered; displaying main window",
                             );
-                            let _ = w.show();
-                            let _ = w.set_focus();
+                            tray::show_main_window(&safety_handle);
                         }
                     }
                 }
@@ -313,6 +332,8 @@ pub fn run() {
             window_maximize,
             window_close,
             frontend_ready,
+            take_pending_playlist_requests,
+            acknowledge_playlist_modal,
             show_main_window,
             hide_main_window,
             exit_app,

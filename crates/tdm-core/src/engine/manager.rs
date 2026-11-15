@@ -43,6 +43,71 @@ pub struct DownloadManager {
     in_flight_creations: Arc<Mutex<HashMap<String, Arc<tokio::sync::Notify>>>>,
     recent_handoffs: Arc<Mutex<HashMap<String, (String, Instant)>>>,
     path_alloc_lock: Arc<Mutex<()>>,
+    desktop_gui_attached: Arc<std::sync::atomic::AtomicBool>,
+    frontend_playlist_ready: Arc<std::sync::atomic::AtomicBool>,
+    pending_playlist_requests: Arc<Mutex<Vec<PendingPlaylistRequest>>>,
+    playlist_waiters: Arc<Mutex<HashMap<String, Vec<tokio::sync::oneshot::Sender<Result<()>>>>>>,
+    active_playlist_request_by_url: Arc<Mutex<HashMap<String, (String, Instant)>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingPlaylistRequest {
+    pub request_id: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistOpenConfirmation {
+    pub request_id: String,
+    pub url: String,
+    pub confirmed: bool,
+}
+
+pub fn validate_playlist_open_url(raw_url: &str) -> Result<String> {
+    let trimmed = raw_url.trim();
+    if trimmed.is_empty() {
+        return Err(EngineError::InvalidUrl("Missing playlist URL".to_string()));
+    }
+
+    let parsed = url::Url::parse(trimmed)
+        .map_err(|_| EngineError::InvalidUrl("Invalid playlist URL".to_string()))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(EngineError::InvalidUrl(format!(
+                "Unsupported playlist URL scheme: {}",
+                scheme
+            )));
+        }
+    }
+    if parsed.host_str().map(str::trim).unwrap_or("").is_empty() {
+        return Err(EngineError::InvalidUrl(
+            "Playlist URL must contain a valid host".to_string(),
+        ));
+    }
+
+    let lower = parsed.as_str().to_lowercase();
+    if (lower.contains("list=rd") || lower.contains("list=ul") || lower.contains("start_radio=1"))
+        && !lower.contains("list=pl")
+        && !lower.contains("list=olak")
+    {
+        return Err(EngineError::Other(
+            "YouTube Mix/Radio queues are auto-generated dynamic collections and cannot be downloaded as a fixed batch.".to_string(),
+        ));
+    }
+
+    Ok(parsed.to_string())
+}
+
+pub fn playlist_format_ext(format_id: Option<&str>) -> &'static str {
+    let fmt = format_id.unwrap_or("best").trim().to_ascii_lowercase();
+    if fmt == "audio_mp3" {
+        "mp3"
+    } else if fmt.contains("audio") {
+        "m4a"
+    } else {
+        "mp4"
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -136,6 +201,11 @@ impl DownloadManager {
         let in_flight_creations = Arc::new(Mutex::new(HashMap::new()));
         let recent_handoffs = Arc::new(Mutex::new(HashMap::new()));
         let path_alloc_lock = Arc::new(Mutex::new(()));
+        let desktop_gui_attached = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let frontend_playlist_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pending_playlist_requests = Arc::new(Mutex::new(Vec::new()));
+        let playlist_waiters = Arc::new(Mutex::new(HashMap::new()));
+        let active_playlist_request_by_url = Arc::new(Mutex::new(HashMap::new()));
 
         // Event-driven background download scheduler loop
         let db_sched = db.clone();
@@ -250,6 +320,11 @@ impl DownloadManager {
             in_flight_creations,
             recent_handoffs,
             path_alloc_lock,
+            desktop_gui_attached,
+            frontend_playlist_ready,
+            pending_playlist_requests,
+            playlist_waiters,
+            active_playlist_request_by_url,
         };
 
         // Automatically process queue on startup to start any queued or overdue downloads
@@ -620,6 +695,200 @@ impl DownloadManager {
 
     pub fn notify_scheduler(&self) {
         self.scheduler_notify.notify_one();
+    }
+
+    pub fn set_desktop_gui_attached(&self, attached: bool) {
+        self.desktop_gui_attached.store(attached, Ordering::SeqCst);
+    }
+
+    pub fn is_desktop_gui_attached(&self) -> bool {
+        self.desktop_gui_attached.load(Ordering::SeqCst)
+    }
+
+    pub fn set_frontend_playlist_ready(&self, ready: bool) {
+        self.frontend_playlist_ready.store(ready, Ordering::SeqCst);
+    }
+
+    pub fn is_frontend_playlist_ready(&self) -> bool {
+        self.frontend_playlist_ready.load(Ordering::SeqCst)
+    }
+
+    pub fn pending_playlist_requests_snapshot(&self) -> Vec<PendingPlaylistRequest> {
+        self.pending_playlist_requests.lock().unwrap().clone()
+    }
+
+    pub fn take_pending_playlist_requests(&self) -> Vec<PendingPlaylistRequest> {
+        let mut pending = self.pending_playlist_requests.lock().unwrap();
+        std::mem::take(&mut *pending)
+    }
+
+    pub fn acknowledge_playlist_modal(&self, request_id: &str) -> bool {
+        let trimmed = request_id.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        {
+            let mut pending = self.pending_playlist_requests.lock().unwrap();
+            pending.retain(|req| req.request_id != trimmed);
+        }
+        {
+            let mut active = self.active_playlist_request_by_url.lock().unwrap();
+            active.retain(|_, (id, _)| id != trimmed);
+        }
+        let waiters = self.playlist_waiters.lock().unwrap().remove(trimmed);
+        if let Some(senders) = waiters {
+            let mut notified = false;
+            for tx in senders {
+                if tx.send(Ok(())).is_ok() {
+                    notified = true;
+                }
+            }
+            return notified;
+        }
+        false
+    }
+
+    fn cleanup_closed_playlist_waiters(&self, request_id: &str) {
+        let now_empty = {
+            let mut waiters = self.playlist_waiters.lock().unwrap();
+            if let Some(senders) = waiters.get_mut(request_id) {
+                senders.retain(|tx| !tx.is_closed());
+                if senders.is_empty() {
+                    waiters.remove(request_id);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                true
+            }
+        };
+
+        if now_empty {
+            let mut pending = self.pending_playlist_requests.lock().unwrap();
+            pending.retain(|req| req.request_id != request_id);
+            let mut active = self.active_playlist_request_by_url.lock().unwrap();
+            active.retain(|_, (id, _)| id != request_id);
+        }
+    }
+
+    /// Validates a playlist URL, wakes/focuses TORI Desktop, queues/emits a tracked playlist
+    /// dialog request, and waits for genuine frontend modal mount acknowledgement when GUI is attached.
+    pub async fn request_open_playlist_modal(
+        &self,
+        raw_url: &str,
+        timeout: Duration,
+    ) -> Result<PlaylistOpenConfirmation> {
+        let normalized_url = validate_playlist_open_url(raw_url)?;
+
+        if !self.is_desktop_gui_attached() {
+            let request_id = Uuid::new_v4().to_string();
+            self.event_bus.emit(DownloadEvent::ShowWindow);
+            self.event_bus.emit(DownloadEvent::OpenPlaylistModal {
+                url: normalized_url.clone(),
+            });
+            return Ok(PlaylistOpenConfirmation {
+                request_id,
+                url: normalized_url,
+                confirmed: false,
+            });
+        }
+
+        struct PlaylistWaitGuard<'a> {
+            manager: &'a DownloadManager,
+            request_id: String,
+            armed: bool,
+        }
+
+        impl Drop for PlaylistWaitGuard<'_> {
+            fn drop(&mut self) {
+                if self.armed {
+                    self.manager
+                        .cleanup_closed_playlist_waiters(&self.request_id);
+                }
+            }
+        }
+
+        let mut guard = PlaylistWaitGuard {
+            manager: self,
+            request_id: String::new(),
+            armed: false,
+        };
+
+        let (request_id, rx, coalesced) = {
+            let mut active = self.active_playlist_request_by_url.lock().unwrap();
+            active.retain(|_, (_, ts)| ts.elapsed() < Duration::from_secs(30));
+
+            let mut waiters = self.playlist_waiters.lock().unwrap();
+            let mut pending = self.pending_playlist_requests.lock().unwrap();
+
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            if let Some((existing_id, ts)) = active.get(&normalized_url).cloned() {
+                if ts.elapsed() < Duration::from_millis(5000) && waiters.contains_key(&existing_id) {
+                    waiters.entry(existing_id.clone()).or_default().push(tx);
+                    (existing_id, rx, true)
+                } else {
+                    let id = Uuid::new_v4().to_string();
+                    active.insert(normalized_url.clone(), (id.clone(), Instant::now()));
+                    pending.push(PendingPlaylistRequest {
+                        request_id: id.clone(),
+                        url: normalized_url.clone(),
+                    });
+                    waiters.insert(id.clone(), vec![tx]);
+                    (id, rx, false)
+                }
+            } else {
+                let id = Uuid::new_v4().to_string();
+                active.insert(normalized_url.clone(), (id.clone(), Instant::now()));
+                pending.push(PendingPlaylistRequest {
+                    request_id: id.clone(),
+                    url: normalized_url.clone(),
+                });
+                waiters.insert(id.clone(), vec![tx]);
+                (id, rx, false)
+            }
+        };
+
+        guard.request_id = request_id.clone();
+        guard.armed = true;
+
+        self.event_bus.emit(DownloadEvent::ShowWindow);
+        if !coalesced {
+            self.event_bus.emit(DownloadEvent::OpenPlaylistModal {
+                url: normalized_url.clone(),
+            });
+        }
+
+        let wait_result = tokio::time::timeout(timeout, rx).await;
+        match wait_result {
+            Ok(Ok(Ok(()))) => {
+                guard.armed = false;
+                Ok(PlaylistOpenConfirmation {
+                    request_id,
+                    url: normalized_url,
+                    confirmed: true,
+                })
+            }
+            Ok(Ok(Err(e))) => {
+                guard.armed = false;
+                Err(e)
+            }
+            Ok(Err(_closed)) => {
+                guard.armed = false;
+                self.cleanup_closed_playlist_waiters(&request_id);
+                Err(EngineError::Other(
+                    "Playlist modal request was closed before TORI Desktop confirmed opening it."
+                        .to_string(),
+                ))
+            }
+            Err(_elapsed) => {
+                guard.armed = false;
+                self.cleanup_closed_playlist_waiters(&request_id);
+                Err(EngineError::Other(
+                    "TORI Desktop did not confirm opening the playlist selection dialog within the timeout. Please bring TORI Desktop to the foreground and retry.".to_string(),
+                ))
+            }
+        }
     }
 
     pub fn check_scheduled_jobs(&self) -> Result<Vec<String>> {
@@ -2522,4 +2791,96 @@ pub fn extract_thumbnail_from_url(url: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod playlist_handoff_tests {
+    use super::*;
+
+    #[test]
+    fn validate_playlist_open_url_preserves_pl_and_rejects_mix() {
+        let pl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL6B3937A5D230E335&index=2";
+        let valid = validate_playlist_open_url(pl).expect("PL playlist must validate");
+        assert!(valid.contains("list=PL6B3937A5D230E335"));
+
+        let mix = "https://www.youtube.com/watch?v=mVeAD3nbXGs&list=RDmVeAD3nbXGs&start_radio=1";
+        let err = validate_playlist_open_url(mix).expect_err("Mix URL must be rejected");
+        assert!(err.to_string().contains("Mix/Radio"));
+
+        let invalid = validate_playlist_open_url("ftp://example.com/list").unwrap_err();
+        assert!(invalid.to_string().contains("scheme"));
+    }
+
+    #[tokio::test]
+    async fn playlist_request_queues_for_cold_start_and_resolves_after_ack() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("pl_cold.sqlite")).unwrap();
+        let manager = Arc::new(DownloadManager::new(db, EventBus::default()).unwrap());
+        manager.set_desktop_gui_attached(true);
+
+        let pl_url = "https://www.youtube.com/playlist?list=PL6B3937A5D230E335";
+        let mgr_req = Arc::clone(&manager);
+        let req_task = tokio::spawn(async move {
+            mgr_req
+                .request_open_playlist_modal(pl_url, Duration::from_secs(3))
+                .await
+        });
+
+        // Simulate slow cold UI mount (wait until queued pending request is visible)
+        let pending = loop {
+            let items = manager.take_pending_playlist_requests();
+            if !items.is_empty() {
+                break items;
+            }
+            tokio::time::sleep(Duration::from_millis(15)).await;
+        };
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].url, pl_url);
+        // Second take returns empty because already drained
+        assert!(manager.take_pending_playlist_requests().is_empty());
+
+        let acked = manager.acknowledge_playlist_modal(&pending[0].request_id);
+        assert!(acked);
+
+        let confirmation = req_task.await.unwrap().expect("Handoff must succeed after ack");
+        assert!(confirmation.confirmed);
+        assert_eq!(confirmation.request_id, pending[0].request_id);
+        assert_eq!(confirmation.url, pl_url);
+    }
+
+    #[tokio::test]
+    async fn playlist_request_coalesces_concurrent_duplicates_and_cleans_up_on_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("pl_timeout.sqlite")).unwrap();
+        let manager = Arc::new(DownloadManager::new(db, EventBus::default()).unwrap());
+        manager.set_desktop_gui_attached(true);
+
+        let pl_url = "https://www.youtube.com/playlist?list=PL1234567890ABCDEF";
+        let mgr_a = Arc::clone(&manager);
+        let mgr_b = Arc::clone(&manager);
+
+        let task_a = tokio::spawn(async move {
+            mgr_a
+                .request_open_playlist_modal(pl_url, Duration::from_millis(250))
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let task_b = tokio::spawn(async move {
+            mgr_b
+                .request_open_playlist_modal(pl_url, Duration::from_millis(250))
+                .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        // Duplicate concurrent requests must coalesce to a single queued entry
+        let snapshot = manager.pending_playlist_requests_snapshot();
+        assert_eq!(snapshot.len(), 1);
+
+        let res_a = task_a.await.unwrap();
+        let res_b = task_b.await.unwrap();
+        assert!(res_a.is_err());
+        assert!(res_b.is_err());
+        // After all waiters time out, pending request must be cleaned up cleanly
+        assert!(manager.pending_playlist_requests_snapshot().is_empty());
+    }
 }

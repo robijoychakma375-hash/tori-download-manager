@@ -1023,26 +1023,51 @@ async fn handle_open_playlist(
             })),
         ));
     }
+    drop(config);
 
-    let raw_url = payload.url.trim().to_string();
-    if raw_url.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "status": "error",
-                "message": "Missing playlist URL"
-            })),
-        ));
+    let timeout = std::time::Duration::from_secs(12);
+    match state
+        .manager
+        .request_open_playlist_modal(&payload.url, timeout)
+        .await
+    {
+        Ok(conf) => {
+            let msg = if conf.confirmed {
+                "Playlist selection dialog opened in TORI Desktop"
+            } else {
+                "Playlist modal request queued (headless engine mode)"
+            };
+            Ok(Json(serde_json::json!({
+                "status": "ok",
+                "confirmed": conf.confirmed,
+                "gui_attached": state.manager.is_desktop_gui_attached(),
+                "request_id": conf.request_id,
+                "url": conf.url,
+                "message": msg
+            })))
+        }
+        Err(e) => {
+            let (status, msg) = match e {
+                tdm_core::EngineError::InvalidUrl(msg) => (StatusCode::BAD_REQUEST, msg),
+                tdm_core::EngineError::Other(msg) => {
+                    if msg.contains("Mix/Radio") {
+                        (StatusCode::UNPROCESSABLE_ENTITY, msg)
+                    } else {
+                        (StatusCode::GATEWAY_TIMEOUT, msg)
+                    }
+                }
+                err => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            };
+            Err((
+                status,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "confirmed": false,
+                    "message": msg
+                })),
+            ))
+        }
     }
-
-    // Bring desktop window to front and open playlist modal
-    state.manager.event_bus().emit(tdm_core::DownloadEvent::ShowWindow);
-    state.manager.event_bus().emit(tdm_core::DownloadEvent::OpenPlaylistModal { url: raw_url });
-
-    Ok(Json(serde_json::json!({
-        "status": "ok",
-        "message": "Playlist opened in TORI Desktop"
-    })))
 }
 
 async fn handle_playlist_enqueue(
@@ -1074,12 +1099,12 @@ async fn handle_playlist_enqueue(
         }
     }
 
+    let format = payload.format_id.as_deref().unwrap_or("best");
+    let ext = tdm_core::playlist_format_ext(Some(format));
+    let sample_name = format!("playlist.{}", ext);
     let dest_path = state
         .manager
-        .resolve_destination_folder("playlist_video.mp4", payload.destination.as_deref());
-
-    let format = payload.format_id.as_deref().unwrap_or("best");
-    let ext = if format.contains("audio") { "m4a" } else { "mp4" };
+        .resolve_destination_folder(&sample_name, payload.destination.as_deref());
     let mut job_ids = Vec::new();
 
     let existing_jobs = state.db.list_jobs().unwrap_or_default();

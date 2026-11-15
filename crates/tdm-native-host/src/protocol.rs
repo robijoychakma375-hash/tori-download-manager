@@ -50,6 +50,10 @@ pub struct NativeResponse {
     pub token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 /// Reads a length-prefixed JSON message from the given reader (typically stdin)

@@ -596,6 +596,10 @@ function getEndpointTimeout(endpoint, customTimeout = null) {
     // Media resolution: coordinated with backend 30s timeout, giving 35s total deadline
     return 35000;
   }
+  if (endpoint.startsWith('/api/v1/media/playlist/open')) {
+    // Coordinated with Desktop UI mount confirmation timeout (12s) + startup margin
+    return 15000;
+  }
   if (endpoint.startsWith('/api/v1/media/download') || endpoint.startsWith('/api/v1/downloads')) {
     // Download enqueue operations or listings: bounded 12s timeout
     return 12000;
@@ -813,14 +817,95 @@ async function callDesktopApi(
   }
 }
 
-// Proactive pairing on startup if unconfigured
-chrome.runtime.onInstalled.addListener(() => {
+const inFlightPlaylistOpens = new Map();
+
+/**
+ * Coordinates opening the Desktop Playlist modal with explicit pairing retry,
+ * cold-launch Native Messaging fallback, and deduplication of concurrent clicks.
+ */
+async function openPlaylistInDesktopWithDedup(rawUrl) {
+  const existing = inFlightPlaylistOpens.get(rawUrl);
+  if (existing) {
+    return existing;
+  }
+
+  const run = (async () => {
+    let httpRes = await callDesktopApi('/api/v1/media/playlist/open', 'POST', { url: rawUrl }, 15000);
+
+    if (httpRes && httpRes.status === 401) {
+      const pairRes = await autoPairWithDesktop(true);
+      if (pairRes && pairRes.ok && pairRes.token) {
+        httpRes = await callDesktopApi(
+          '/api/v1/media/playlist/open',
+          'POST',
+          { url: rawUrl },
+          15000,
+          pairRes.port || null,
+          pairRes.token,
+          true
+        );
+      }
+    }
+
+    if (httpRes && httpRes.ok && httpRes.data) {
+      return httpRes.data;
+    }
+
+    if (httpRes && httpRes.status && httpRes.status > 0 && httpRes.status !== 404) {
+      return {
+        status: 'error',
+        confirmed: false,
+        httpStatus: httpRes.status,
+        message:
+          httpRes.data?.message ||
+          httpRes.error ||
+          `TORI Desktop rejected playlist request (HTTP ${httpRes.status}).`,
+      };
+    }
+
+    const nativeRes = await sendNativeMessage({ action: 'open_playlist', url: rawUrl });
+    if (nativeRes && nativeRes.status === 'ok') {
+      autoPairWithDesktop(true).catch(() => {});
+      return nativeRes;
+    }
+
+    const nativeMsg = nativeRes?.message || '';
+    if (httpRes?.status === 404 || /unknown action/i.test(nativeMsg)) {
+      return {
+        status: 'error',
+        confirmed: false,
+        code: 'UNSUPPORTED_DESKTOP_VERSION',
+        message:
+          'Installed TORI Desktop version does not support Playlist Download. Please update or reinstall TORI Desktop.',
+      };
+    }
+
+    return {
+      status: 'error',
+      confirmed: false,
+      message:
+        nativeMsg ||
+        httpRes?.error ||
+        'Could not launch or reach TORI Desktop. Please open TORI Download Manager and try again.',
+    };
+  })().finally(() => {
+    inFlightPlaylistOpens.delete(rawUrl);
+  });
+
+  inFlightPlaylistOpens.set(rawUrl, run);
+  return run;
+}
+
+// Proactive pairing on startup if unconfigured (wait for stored settings first!)
+chrome.runtime.onInstalled.addListener(async () => {
+  await ensureSettingsLoaded();
   if (!extSettings.key) {
     autoPairWithDesktop(false);
   }
 });
 
-chrome.runtime.onStartup.addListener(() => {
+chrome.runtime.onStartup.addListener(async () => {
+  await ensureSettingsLoaded();
   if (!extSettings.key) {
     autoPairWithDesktop(false);
   }
@@ -2197,18 +2282,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'OPEN_PLAYLIST') {
     const rawUrl = (message.url || '').trim();
     if (!rawUrl) {
-      sendResponse({ status: 'error', message: 'Missing playlist URL' });
+      sendResponse({ status: 'error', confirmed: false, message: 'Missing playlist URL' });
       return false;
     }
-    callDesktopApi('/api/v1/media/playlist/open', 'POST', { url: rawUrl }).then(async (httpRes) => {
-      if (httpRes.ok && httpRes.data) {
-        sendResponse(httpRes.data);
-      } else {
-        sendResponse(await sendNativeMessage({ action: 'open_playlist', url: rawUrl }));
-      }
-    }).catch(async (err) => {
-      sendResponse(await sendNativeMessage({ action: 'open_playlist', url: rawUrl }));
-    });
+
+    openPlaylistInDesktopWithDedup(rawUrl)
+      .then((res) => sendResponse(res))
+      .catch((err) => {
+        sendResponse({
+          status: 'error',
+          confirmed: false,
+          message: err?.message || 'Failed to open playlist in TORI Desktop.',
+        });
+      });
     return true;
   }
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { TitleBar } from './TitleBar';
 import type { PlaylistMetadata } from '../types';
 import { invoke } from '@tauri-apps/api/core';
@@ -6,6 +6,9 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 interface PlaylistModalProps {
   initialUrl?: string;
+  requestId?: string;
+  supersededRequestIds?: string[];
+  requestNonce?: number;
   defaultDir: string;
   onClose: () => void;
   onEnqueued?: (count: number) => void;
@@ -77,6 +80,9 @@ function formatDuration(sec: number | null): string {
 
 export const PlaylistModal: React.FC<PlaylistModalProps> = ({
   initialUrl = '',
+  requestId,
+  supersededRequestIds,
+  requestNonce,
   defaultDir,
   onClose,
   onEnqueued,
@@ -90,8 +96,22 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
   const [formatId, setFormatId] = useState('best');
   const [saveDir, setSaveDir] = useState(defaultDir);
   const [submitting, setSubmitting] = useState(false);
+  const resolveTokenRef = useRef(0);
 
-  // Check URL query parameters for demo mode
+  // Acknowledge backend playlist handoff requests only once the dialog component is mounted
+  useEffect(() => {
+    const ids = [requestId, ...(supersededRequestIds || [])].filter(
+      (id): id is string => typeof id === 'string' && id.trim().length > 0
+    );
+    if (ids.length === 0) return;
+    for (const id of ids) {
+      invoke('acknowledge_playlist_modal', { requestId: id }).catch((err) => {
+        console.error('Failed to acknowledge playlist modal mount:', err);
+      });
+    }
+  }, [requestId, supersededRequestIds]);
+
+  // Check URL query parameters for demo mode or resolve target URL cleanly on new requests
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
@@ -102,13 +122,21 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
       }
     } catch {}
 
+    setUrlInput(initialUrl);
+    setPlaylist(null);
+    setSelectedIds(new Set());
+    setSearchFilter('');
+    setSubmitting(false);
+    setError(null);
+
     if (initialUrl.trim()) {
       handleResolve(initialUrl.trim());
     }
-  }, [initialUrl]);
+  }, [initialUrl, requestNonce]);
 
   const handleResolve = async (targetUrl: string) => {
     if (!targetUrl.trim()) return;
+    const token = ++resolveTokenRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -116,6 +144,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
         url: targetUrl.trim(),
         limit: 100,
       });
+      if (token !== resolveTokenRef.current) return;
       setPlaylist(res);
       // Select only available, non-deleted items by default
       const availableIds = res.items
@@ -129,10 +158,13 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
         .map((i) => i.id);
       setSelectedIds(new Set(availableIds));
     } catch (err: unknown) {
+      if (token !== resolveTokenRef.current) return;
       console.error('Failed to resolve playlist:', err);
       setError(String(err));
     } finally {
-      setLoading(false);
+      if (token === resolveTokenRef.current) {
+        setLoading(false);
+      }
     }
   };
 

@@ -10,9 +10,10 @@ pub mod types;
 
 pub use db::Database;
 pub use engine::{
-    apply_referer, apply_user_agent, sanitize_and_validate_referer,
-    sanitize_and_validate_user_agent, sanitize_filename, AdaptiveConfig, AdaptiveScheduler,
-    ConcurrencyGovernor, DownloadEvent, DownloadManager, EventBus, GovernorConfig, PartFileWriter,
+    apply_referer, apply_user_agent, playlist_format_ext, sanitize_and_validate_referer,
+    sanitize_and_validate_user_agent, sanitize_filename, validate_playlist_open_url,
+    AdaptiveConfig, AdaptiveScheduler, ConcurrencyGovernor, DownloadEvent, DownloadManager,
+    EventBus, GovernorConfig, PartFileWriter, PendingPlaylistRequest, PlaylistOpenConfirmation,
     SplitPlan, DEFAULT_USER_AGENT,
 };
 pub use error::{EngineError, Result};

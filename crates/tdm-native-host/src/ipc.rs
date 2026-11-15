@@ -272,9 +272,9 @@ pub async fn ensure_engine_running() -> bool {
             let _ = build_cmd(fallback_flags).spawn();
         }
 
-        // Wait up to 6000ms for Named Pipe to become ready
+        // Wait up to 10000ms for Named Pipe to become ready on cold launch
         let start = std::time::Instant::now();
-        while start.elapsed() < Duration::from_millis(6000) {
+        while start.elapsed() < Duration::from_millis(10000) {
             tokio::time::sleep(Duration::from_millis(50)).await;
             if try_connect_engine().is_ok() {
                 return true;

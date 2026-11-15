@@ -659,7 +659,7 @@ function normalizePlatformUrl(rawUrl) {
   }
 
   // Transient in-page toast feedback
-  function showToast(text, isError = false) {
+  function showToast(text, isError = false, durationMs = 2200) {
     let toast = document.getElementById('tori-page-toast');
     if (!toast) {
       toast = document.createElement('div');
@@ -674,7 +674,7 @@ function normalizePlatformUrl(rawUrl) {
     `;
     toast.classList.add('on');
     clearTimeout(showToast.timer);
-    showToast.timer = setTimeout(() => toast.classList.remove('on'), 2200);
+    showToast.timer = setTimeout(() => toast.classList.remove('on'), durationMs);
   }
 
   // Remove all overlays
@@ -1114,9 +1114,15 @@ function normalizePlatformUrl(rawUrl) {
 
     function handleVideoNavigation(reason) {
       const newIdentity = extractMediaIdentity(null, videoEl);
-      // If videoId is identical, this is just buffering, seek, or URL parameter jitter. IGNORE IT!
+      // If videoId is identical, only ignore when playlist/URL query parameters have not changed
       if (currentMediaIdentity && currentMediaIdentity.videoId && newIdentity.videoId) {
         if (currentMediaIdentity.videoId === newIdentity.videoId) {
+          if (currentMediaIdentity.rawUrl !== newIdentity.rawUrl) {
+            currentMediaIdentity = newIdentity;
+            if (pn.classList.contains('on')) {
+              renderPanel();
+            }
+          }
           return;
         }
       }
@@ -1727,14 +1733,89 @@ function normalizePlatformUrl(rawUrl) {
       if (playlistBtn) {
         playlistBtn.addEventListener('click', (e) => {
           e.stopPropagation();
+          if (playlistBtn.disabled || playlistBtn.dataset.toriBusy === '1') {
+            return;
+          }
           const targetUrl = playlistBtn.getAttribute('data-canonical-url') || window.location.href;
-          chrome.runtime.sendMessage({
-            action: 'OPEN_PLAYLIST',
-            url: targetUrl,
-          });
-          pn.classList.remove('on');
-          pill.setAttribute('aria-expanded', 'false');
-          showToast('Opening Playlist in TORI...');
+          playlistBtn.dataset.toriBusy = '1';
+          playlistBtn.disabled = true;
+          playlistBtn.textContent = 'Opening...';
+          showToast('Opening Playlist in TORI...', false, 18000);
+
+          let settled = false;
+          const finishUi = () => {
+            playlistBtn.dataset.toriBusy = '0';
+            playlistBtn.disabled = false;
+            playlistBtn.textContent = 'Download Playlist';
+          };
+
+          const hardTimeout = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            finishUi();
+            showToast('Timed out waiting for TORI Desktop to open Playlist dialog.', true, 5000);
+          }, 18000);
+
+          try {
+            chrome.runtime.sendMessage(
+              {
+                action: 'OPEN_PLAYLIST',
+                url: targetUrl,
+              },
+              (res) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(hardTimeout);
+                finishUi();
+
+                const lastErr = chrome.runtime.lastError;
+                if (lastErr) {
+                  showToast(
+                    lastErr.message || 'Could not reach TORI extension service worker.',
+                    true,
+                    5000
+                  );
+                  return;
+                }
+                if (!res || res.status !== 'ok') {
+                  showToast(
+                    res?.message ||
+                      res?.error ||
+                      'Failed to open Playlist in TORI Desktop. Is TORI running?',
+                    true,
+                    5000
+                  );
+                  return;
+                }
+                if (res.gui_attached === false || res.confirmed === false) {
+                  showToast(
+                    res?.message ||
+                      'TORI Desktop window did not confirm opening the Playlist dialog.',
+                    true,
+                    5000
+                  );
+                  return;
+                }
+
+                pn.classList.remove('on');
+                pill.setAttribute('aria-expanded', 'false');
+                showToast(
+                  res.confirmed
+                    ? 'Playlist opened in TORI Desktop'
+                    : 'Playlist sent to TORI Desktop',
+                  false,
+                  2800
+                );
+              }
+            );
+          } catch (err) {
+            if (!settled) {
+              settled = true;
+              clearTimeout(hardTimeout);
+              finishUi();
+              showToast(err?.message || 'Failed to send playlist request.', true, 5000);
+            }
+          }
         });
       }
 

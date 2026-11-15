@@ -16,7 +16,10 @@ pub use adaptive::{AdaptiveConfig, AdaptiveScheduler, SplitPlan};
 pub use events::{DownloadEvent, EventBus};
 pub use governor::{ConcurrencyGovernor, ConnectionPermit, GovernorConfig};
 pub use limiter::BandwidthLimiter;
-pub use manager::DownloadManager;
+pub use manager::{
+    playlist_format_ext, validate_playlist_open_url, DownloadManager, PendingPlaylistRequest,
+    PlaylistOpenConfirmation,
+};
 pub use probe::{
     extract_safe_header_filename_candidate, parse_content_disposition_filename, probe_url,
     sanitize_filename, ProbeResult,

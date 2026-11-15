@@ -396,13 +396,37 @@ pub async fn frontend_ready(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     crate::lifecycle::log_event("FRONTEND", "READY", "Frontend reported visual readiness");
-    if !state
-        .is_minimized_launch
-        .load(std::sync::atomic::Ordering::SeqCst)
+    state.manager.set_frontend_playlist_ready(true);
+    let has_pending_playlist = !state.manager.pending_playlist_requests_snapshot().is_empty();
+    if has_pending_playlist
+        || !state
+            .is_minimized_launch
+            .load(std::sync::atomic::Ordering::SeqCst)
     {
+        if has_pending_playlist {
+            state
+                .is_minimized_launch
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
         crate::tray::show_main_window(&app);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn take_pending_playlist_requests(
+    state: State<'_, AppState>,
+) -> Result<Vec<tdm_core::PendingPlaylistRequest>, String> {
+    state.manager.set_frontend_playlist_ready(true);
+    Ok(state.manager.take_pending_playlist_requests())
+}
+
+#[tauri::command]
+pub async fn acknowledge_playlist_modal(
+    request_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    Ok(state.manager.acknowledge_playlist_modal(&request_id))
 }
 
 #[tauri::command]
@@ -1079,12 +1103,12 @@ pub async fn enqueue_playlist_items(
     format_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
+    let format = format_id.as_deref().unwrap_or("best");
+    let ext = tdm_core::playlist_format_ext(Some(format));
+    let sample_name = format!("playlist.{}", ext);
     let dest_path = state
         .manager
-        .resolve_destination_folder("playlist.mp4", destination.as_deref());
-
-    let format = format_id.as_deref().unwrap_or("best");
-    let ext = if format.contains("audio") { "m4a" } else { "mp4" };
+        .resolve_destination_folder(&sample_name, destination.as_deref());
     let mut created_ids = Vec::new();
 
     let existing_jobs = state.manager.list_downloads().unwrap_or_default();

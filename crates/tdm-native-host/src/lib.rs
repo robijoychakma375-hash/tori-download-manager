@@ -117,19 +117,62 @@ pub async fn run() -> io::Result<()> {
     let mut writer = BufWriter::new(stdout.lock());
 
     // Single Persistent Engine Check: ensure the primary desktop engine is active
-    let has_ipc = ipc::ensure_engine_running().await;
+    let mut has_ipc = ipc::ensure_engine_running().await;
 
     while let Ok(Some(msg)) = read_message(&mut reader) {
+        let is_open_playlist = msg.action.eq_ignore_ascii_case("open_playlist");
         let resp = if has_ipc {
             match ipc::forward_to_persistent_engine(&msg).await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!(
-                        "[TORI Native Host] IPC forward error: {}, falling back to local engine",
+                        "[TORI Native Host] IPC forward error: {}",
                         e
                     );
-                    handle_message(msg, &manager, &db).await
+                    if is_open_playlist {
+                        has_ipc = ipc::ensure_engine_running().await;
+                        if has_ipc {
+                            match ipc::forward_to_persistent_engine(&msg).await {
+                                Ok(r) => r,
+                                Err(retry_err) => NativeResponse {
+                                    status: "error".to_string(),
+                                    action: "open_playlist".to_string(),
+                                    confirmed: Some(false),
+                                    message: Some(format!(
+                                        "Failed to deliver playlist request to TORI Desktop: {}",
+                                        retry_err
+                                    )),
+                                    ..Default::default()
+                                },
+                            }
+                        } else {
+                            NativeResponse {
+                                status: "error".to_string(),
+                                action: "open_playlist".to_string(),
+                                confirmed: Some(false),
+                                message: Some(
+                                    "Could not launch or reach TORI Desktop. Please open TORI Download Manager and try again."
+                                        .to_string(),
+                                ),
+                                ..Default::default()
+                            }
+                        }
+                    } else {
+                        eprintln!("[TORI Native Host] Falling back to local engine");
+                        handle_message(msg, &manager, &db).await
+                    }
                 }
+            }
+        } else if is_open_playlist {
+            NativeResponse {
+                status: "error".to_string(),
+                action: "open_playlist".to_string(),
+                confirmed: Some(false),
+                message: Some(
+                    "Could not launch or reach TORI Desktop. Please open TORI Download Manager and try again."
+                        .to_string(),
+                ),
+                ..Default::default()
             }
         } else {
             handle_message(msg, &manager, &db).await
@@ -210,19 +253,47 @@ pub async fn handle_message(
 
         "open_playlist" => {
             if let Some(url) = msg.url {
-                manager.event_bus().emit(tdm_core::DownloadEvent::ShowWindow);
-                manager.event_bus().emit(tdm_core::DownloadEvent::OpenPlaylistModal { url: url.clone() });
-                NativeResponse {
-                    status: "ok".to_string(),
-                    action: "open_playlist".to_string(),
-                    version: Some("2.0.0".to_string()),
-                    message: Some("Playlist modal opened in TORI Desktop".to_string()),
-                    ..Default::default()
+                if !manager.is_desktop_gui_attached() {
+                    NativeResponse {
+                        status: "error".to_string(),
+                        action: "open_playlist".to_string(),
+                        confirmed: Some(false),
+                        message: Some(
+                            "TORI Desktop UI is not attached. Please open TORI Download Manager and try again."
+                                .to_string(),
+                        ),
+                        ..Default::default()
+                    }
+                } else {
+                    match manager
+                        .request_open_playlist_modal(&url, std::time::Duration::from_secs(15))
+                        .await
+                    {
+                        Ok(conf) => NativeResponse {
+                            status: "ok".to_string(),
+                            action: "open_playlist".to_string(),
+                            version: Some("2.0.0".to_string()),
+                            confirmed: Some(conf.confirmed),
+                            request_id: Some(conf.request_id),
+                            message: Some(
+                                "Playlist selection dialog opened in TORI Desktop".to_string(),
+                            ),
+                            ..Default::default()
+                        },
+                        Err(e) => NativeResponse {
+                            status: "error".to_string(),
+                            action: "open_playlist".to_string(),
+                            confirmed: Some(false),
+                            message: Some(e.to_string()),
+                            ..Default::default()
+                        },
+                    }
                 }
             } else {
                 NativeResponse {
                     status: "error".to_string(),
                     action: "open_playlist".to_string(),
+                    confirmed: Some(false),
                     message: Some("Missing 'url'".to_string()),
                     ..Default::default()
                 }
