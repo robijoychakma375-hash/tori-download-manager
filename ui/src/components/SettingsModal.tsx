@@ -309,10 +309,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {settings.accent === 'ocean'
                       ? 'Ocean'
                       : settings.accent === 'emerald'
-                      ? 'Emerald'
-                      : settings.accent === 'rose'
-                      ? 'Rose'
-                      : 'Indigo'}
+                        ? 'Emerald'
+                        : settings.accent === 'rose'
+                          ? 'Rose'
+                          : 'Indigo'}
                   </span>
                 </div>
                 <div className="sc">
@@ -442,8 +442,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       {settings.showDownloadPopup === 'never'
                         ? 'Never show popup window'
                         : settings.showDownloadPopup === 'on_start'
-                        ? 'Show on start only'
-                        : 'Always show floating toast during download'}
+                          ? 'Show on start only'
+                          : 'Always show floating toast during download'}
                     </span>
                   </div>
                   <div className="sc">
@@ -459,6 +459,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <option value="on_start">On start only</option>
                       <option value="never">Never</option>
                     </select>
+                  </div>
+                </div>
+
+                <div
+                  className="sr"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => {
+                    const nextVal = settings.alwaysOnTop === false;
+                    update('alwaysOnTop', nextVal);
+                    flash(nextVal ? 'Progress Window Always on Top enabled' : 'Progress Window Always on Top disabled');
+                  }}
+                >
+                  <div>
+                    <b>Progress Window Always on Top</b>
+                    <span className="sub">
+                      {settings.alwaysOnTop !== false
+                        ? 'Keep download progress windows above other windows'
+                        : 'Allow download progress windows behind other windows'}
+                    </span>
+                  </div>
+                  <div className="sc" onClick={(e) => e.stopPropagation()}>
+                    <ToggleSwitch
+                      id="setting-always-on-top"
+                      checked={settings.alwaysOnTop !== false}
+                      onChange={(checked) => {
+                        update('alwaysOnTop', checked);
+                        flash(checked ? 'Progress Window Always on Top enabled' : 'Progress Window Always on Top disabled');
+                      }}
+                      ariaLabel="Progress Window Always on Top"
+                    />
                   </div>
                 </div>
 

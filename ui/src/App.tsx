@@ -56,6 +56,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   motion: false,
   details: false,
   showDownloadPopup: 'always',
+  alwaysOnTop: true,
   closeToTray: true,
 };
 
@@ -67,6 +68,7 @@ function loadStoredSettings(): AppSettings {
       return {
         ...DEFAULT_SETTINGS,
         ...parsed,
+        alwaysOnTop: parsed.alwaysOnTop !== undefined ? parsed.alwaysOnTop : true,
         closeToTray: parsed.closeToTray !== undefined ? parsed.closeToTray : true,
       };
     }
@@ -458,6 +460,12 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
             const merged: AppSettings = {
               ...prev,
               ...backendSettings,
+              alwaysOnTop:
+                typeof backendSettings.alwaysOnTop === 'boolean'
+                  ? backendSettings.alwaysOnTop
+                  : prev.alwaysOnTop !== undefined
+                  ? prev.alwaysOnTop
+                  : true,
               closeToTray: closeToTrayVal,
             };
             // Allow URL params to override theme/accent cleanly when capturing screenshots
@@ -757,11 +765,21 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
       }
     });
 
+    const unlistenNotifyPromise = listen<{ id: string; filename: string }>(
+      'download-complete-notification',
+      (event) => {
+        if (event.payload?.filename) {
+          showToast(`Download complete: ${event.payload.filename}`);
+        }
+      }
+    );
+
     const allListeners = Promise.all([
       unlistenPromise,
       unlistenDeletedPromise,
       unlistenPlaylistRequestPromise,
       unlistenPlaylistModalPromise,
+      unlistenNotifyPromise,
     ]);
 
     allListeners
@@ -802,6 +820,7 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
     loadDownloads,
     openPlaylistDialog,
     scheduleProgressFlush,
+    showToast,
     syncPendingPlaylistRequests,
   ]);
 
@@ -1017,6 +1036,8 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
           });
           if (!startImmediately && !scheduledAt) {
             await invoke('pause_download', { id: job.id });
+          } else if (startImmediately && !scheduledAt) {
+            invoke('open_progress_window', { id: job.id, force: false }).catch(() => {});
           }
         }
         createdCount++;

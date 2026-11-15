@@ -132,6 +132,49 @@ pub async fn download_chunk_with_options<F>(
     max_retries: Option<u32>,
     referer: Option<&str>,
     user_agent: Option<&str>,
+    on_bytes_written: F,
+) -> Result<()>
+where
+    F: FnMut(u64),
+{
+    download_chunk_with_limiters(
+        client,
+        url,
+        etag,
+        last_modified,
+        chunk,
+        writer,
+        db,
+        cancel_token,
+        end_bound,
+        progress_atomic,
+        limiter,
+        None,
+        max_retries,
+        referer,
+        user_agent,
+        on_bytes_written,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn download_chunk_with_limiters<F>(
+    client: &Client,
+    url: &str,
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+    chunk: &mut ChunkRecord,
+    writer: &PartFileWriter,
+    db: &Database,
+    cancel_token: &CancellationToken,
+    end_bound: Option<Arc<AtomicU64>>,
+    progress_atomic: Option<Arc<AtomicU64>>,
+    limiter: Option<&Arc<crate::engine::limiter::BandwidthLimiter>>,
+    job_limiter: Option<&Arc<crate::engine::limiter::BandwidthLimiter>>,
+    max_retries: Option<u32>,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
     mut on_bytes_written: F,
 ) -> Result<()>
 where
@@ -361,6 +404,9 @@ where
                 if let Some(l) = limiter {
                     l.acquire(actual_bytes.len() as u64).await;
                 }
+                if let Some(jl) = job_limiter {
+                    jl.acquire(actual_bytes.len() as u64).await;
+                }
                 write_buf.extend_from_slice(actual_bytes);
                 if let Some(p) = progress_atomic.as_ref() {
                     p.store(
@@ -555,6 +601,41 @@ pub async fn download_stream_with_options<F>(
     max_retries: Option<u32>,
     referer: Option<&str>,
     user_agent: Option<&str>,
+    on_bytes_written: F,
+) -> Result<u64>
+where
+    F: FnMut(u64),
+{
+    download_stream_with_limiters(
+        client,
+        url,
+        writer,
+        db,
+        download_id,
+        cancel_token,
+        limiter,
+        None,
+        max_retries,
+        referer,
+        user_agent,
+        on_bytes_written,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn download_stream_with_limiters<F>(
+    client: &Client,
+    url: &str,
+    writer: &PartFileWriter,
+    db: &Database,
+    download_id: &str,
+    cancel_token: &CancellationToken,
+    limiter: Option<&Arc<crate::engine::limiter::BandwidthLimiter>>,
+    job_limiter: Option<&Arc<crate::engine::limiter::BandwidthLimiter>>,
+    max_retries: Option<u32>,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
     mut on_bytes_written: F,
 ) -> Result<u64>
 where
@@ -712,6 +793,9 @@ where
             let len = bytes.len() as u64;
             if let Some(l) = limiter {
                 l.acquire(len).await;
+            }
+            if let Some(jl) = job_limiter {
+                jl.acquire(len).await;
             }
 
             write_buf.extend_from_slice(&bytes);

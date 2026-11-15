@@ -638,6 +638,12 @@ impl Database {
         Ok(map)
     }
 
+    pub fn delete_setting(&self, key: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM engine_settings WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
     // ---------------------------------------------------------------------------
     // Format Metadata Cache
     // ---------------------------------------------------------------------------

@@ -1,1282 +1,1121 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import type { DownloadEvent, DownloadJob, ChunkRecord } from '../types';
-import { typeOfJob, fmtB, fmtSp } from '../utils';
+import type {
+  AppSettings,
+  ChunkRecord,
+  DownloadCompletionOptions,
+  DownloadEvent,
+  DownloadJob,
+  DownloadProgress,
+  DownloadStatusDetails,
+  JobState,
+} from '../types';
+import { fmtB, fmtSp, fmtT } from '../utils';
 import './DownloadToast.css';
 
-const CIRCUMFERENCE = 2 * Math.PI * 21; // ~131.95
+type PopupTab = 'status' | 'limiter' | 'completion';
 
 interface DownloadToastProps {
   initialId?: string;
 }
 
-// Category chip definitions matching design/tori-final/icons/chips/
-const CATEGORY_CHIPS: Record<
-  string,
-  { grad: [string, string]; path: string }
-> = {
-  Programs: {
-    grad: ['#0a84ff', '#075aad'],
-    path: 'M8 8l-4 4 4 4M16 8l4 4-4 4',
-  },
-  Video: {
-    grad: ['#ff453a', '#ad2f27'],
-    path: 'M9 6.5v11l9-5.5z',
-  },
-  Music: {
-    grad: ['#ff375f', '#ad2541'],
-    path: 'M9 18V6l10-2v12M7 20a2 2 0 100-4 2 2 0 000 4zM17 18a2 2 0 100-4 2 2 0 000 4z',
-  },
-  Compressed: {
-    grad: ['#bf5af2', '#823da5'],
-    path: 'M12 3v10M10 6h4M10 9h4M8 13h8v6H8z',
-  },
-  Documents: {
-    grad: ['#32ade6', '#22769c'],
-    path: 'M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6',
-  },
-  Other: {
-    grad: ['#8e8e93', '#616164'],
-    path: 'M7 3h7l5 5v13H7z',
-  },
-};
+const DEFAULT_SPEED_KBPS = 512;
 
-function formatEta(seconds: number | null | undefined): string {
-  if (seconds == null || !isFinite(seconds) || seconds < 0) return '--';
-  if (seconds >= 3600) {
-    const hours = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    return `${hours}h ${mins}m`;
+function applyDocumentAppearance(theme?: string, accent?: string, motion?: boolean) {
+  const effectiveThemePref = theme && ['light', 'dark', 'system'].includes(theme) ? theme : 'system';
+  const isDark =
+    effectiveThemePref === 'dark' ||
+    (effectiveThemePref === 'system' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+  document.documentElement.dataset.accent =
+    accent && ['indigo', 'ocean', 'emerald', 'rose'].includes(accent) ? accent : 'indigo';
+  document.documentElement.dataset.reduceMotion = motion ? 'true' : 'false';
+  const bg = isDark ? '#232326' : '#f5f5f8';
+  document.documentElement.style.backgroundColor = bg;
+  if (document.body) {
+    document.body.style.backgroundColor = bg;
   }
-  if (seconds >= 60) {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.round(seconds % 60);
-    return `${mins}m ${secs}s`;
-  }
-  return `${Math.round(seconds)}s`;
 }
 
-function fmtProgressBytes(downloaded: number, total: number): string {
-  if (total <= 0) return fmtB(downloaded);
-  if (total >= 1e9 && downloaded >= 1e8) {
-    return `${(downloaded / 1e9).toFixed(2)} of ${(total / 1e9).toFixed(2)} GB`;
-  }
-  if (total >= 1e6 && downloaded >= 1e5) {
-    return `${(downloaded / 1e6).toFixed(1)} of ${(total / 1e6).toFixed(1)} MB`;
-  }
-  return `${fmtB(downloaded)} of ${fmtB(total)}`;
-}
-
-export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId: propId }) => {
-  const queryId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('id') : null;
-  const initialId = propId || queryId || undefined;
-  const [activeIds, setActiveIds] = useState<string[]>(() => (initialId ? [initialId] : []));
-  const [jobs, setJobs] = useState<Record<string, DownloadJob>>({});
-  const [chunks, setChunks] = useState<Record<string, ChunkRecord[]>>({});
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const hoveredRef = useRef<Record<string, boolean>>({});
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dismissedIdsRef = useRef<Set<string>>(new Set());
-  const deletedIdsRef = useRef<Set<string>>(new Set());
-  const isUserDraggingRef = useRef<boolean>(false);
-  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
-  const isTextMovedRef = useRef<boolean>(false);
-  const lastBoundsRef = useRef<{ w: number; h: number }>({ w: 494, h: 100 });
-
-  // User preferred width (default: 494 = 470px card + 24px padding)
-  const [toastWidth, setToastWidth] = useState<number>(() => {
-    const params = new URLSearchParams(window.location.search);
-    const w = parseFloat(params.get('width') || '');
-    if (w && isFinite(w) && w >= 384 && w <= 744) return w;
-    const preset = params.get('preset');
-    if (preset === 'compact') return 404; // 380px card
-    if (preset === 'large') return 604; // 580px card
-    return 494; // 470px card (normal)
-  });
-  const toastWidthRef = useRef<number>(toastWidth);
-  toastWidthRef.current = toastWidth;
-  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
-
-  // Apply theme & accent from stored settings
-  useEffect(() => {
-    document.documentElement.classList.add('toast-mode');
-    try {
-      const stored = localStorage.getItem('tori_settings_v2') || localStorage.getItem('tori_settings');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.theme) {
-          if (parsed.theme === 'system') {
-            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-            document.documentElement.dataset.theme = prefersDark ? 'dark' : 'light';
-          } else {
-            document.documentElement.dataset.theme = parsed.theme;
-          }
-        }
-        if (parsed.accent) {
-          document.documentElement.dataset.accent = parsed.accent;
-        }
-      }
-    } catch {
-      // fallback default
+function readStoredAppearance(): { theme?: string; accent?: string; motion?: boolean } {
+  try {
+    const raw = localStorage.getItem('tori_settings_v2');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        theme: parsed?.theme,
+        accent: parsed?.accent,
+        motion: Boolean(parsed?.motion),
+      };
     }
-  }, []);
+  } catch {
+    // ignore storage parse failure
+  }
+  return {};
+}
 
-  // Centralized deletion / removal handler ensuring ghost tasks cannot persist
-  const handleTaskDeleted = useCallback((id: string) => {
-    deletedIdsRef.current.add(id);
-    dismissedIdsRef.current.add(id);
-    setActiveIds((prev) => {
-      const next = prev.filter((x) => x !== id);
-      if (next.length === 0) {
-        invoke('hide_toast_window').catch(() => {});
-      }
-      return next;
-    });
-    setJobs((prev) => {
-      if (!prev[id]) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    setChunks((prev) => {
-      if (!prev[id]) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    setExpanded((prev) => {
-      if (!prev[id]) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  }, []);
+function isTransferActive(state: JobState): boolean {
+  return state === 'downloading' || state === 'probing' || state === 'verifying';
+}
 
-  // Fetch job helper
-  const fetchJob = useCallback(
-    async (id: string) => {
-      if (deletedIdsRef.current.has(id)) return;
-      try {
-        const job = await invoke<DownloadJob | null>('get_download', { id });
-        if (job) {
-          setJobs((prev) => ({ ...prev, [id]: job }));
-          const c = await invoke<ChunkRecord[]>('get_download_chunks', { id }).catch(() => []);
-          if (c && c.length > 0) {
-            setChunks((prev) => ({ ...prev, [id]: c }));
-          }
-        } else {
-          // Job does not exist in SQLite database (was deleted)
-          handleTaskDeleted(id);
-        }
-      } catch (err) {
-        console.warn(`Failed to fetch job ${id}:`, err);
-        handleTaskDeleted(id);
-      }
-    },
-    [handleTaskDeleted]
+function parentFolderLabel(targetPath: string): string {
+  if (!targetPath) return '';
+  const idx = Math.max(targetPath.lastIndexOf('\\'), targetPath.lastIndexOf('/'));
+  if (idx <= 0) return targetPath;
+  return targetPath.slice(0, idx);
+}
+
+function formatStatusLabel(job: DownloadJob): { text: string; cls: string } {
+  switch (job.state) {
+    case 'downloading':
+      return { text: 'Downloading', cls: 'v b' };
+    case 'probing':
+      return { text: 'Connecting…', cls: 'v b' };
+    case 'created':
+    case 'queued':
+      return { text: 'Queued', cls: 'v' };
+    case 'scheduled':
+      return {
+        text: job.scheduled_at ? `Scheduled (${job.scheduled_at})` : 'Scheduled',
+        cls: 'v',
+      };
+    case 'pausing':
+      return { text: 'Pausing…', cls: 'v' };
+    case 'paused':
+      return { text: 'Paused', cls: 'v' };
+    case 'verifying':
+      return { text: 'Verifying & finalizing…', cls: 'v b' };
+    case 'completed':
+      return { text: 'Complete', cls: 'v g' };
+    case 'failed':
+      return { text: 'Failed', cls: 'v e' };
+    case 'cancelled':
+      return { text: 'Cancelled', cls: 'v' };
+    default:
+      return { text: String(job.state), cls: 'v' };
+  }
+}
+
+function formatWindowTitle(job: DownloadJob | null, pctKnown: number | null): string {
+  if (!job) return 'TORI Download';
+  const pctStr = pctKnown !== null ? `${Math.floor(pctKnown)}% ` : '';
+  switch (job.state) {
+    case 'completed':
+      return 'Download complete';
+    case 'failed':
+      return 'Download failed';
+    case 'cancelled':
+      return 'Download cancelled';
+    case 'paused':
+      return `${pctStr}Paused - ${job.filename}`.trim();
+    case 'pausing':
+      return `${pctStr}${job.filename} (Pausing)`.trim();
+    case 'verifying':
+      return `100% ${job.filename}`;
+    case 'queued':
+      return `Queued - ${job.filename}`;
+    case 'scheduled':
+      return `Scheduled - ${job.filename}`;
+    case 'probing':
+      return `Connecting - ${job.filename}`;
+    default:
+      return pctKnown !== null ? `${Math.floor(pctKnown)}% ${job.filename}` : job.filename;
+  }
+}
+
+function computeBarClass(state: JobState, totalKnown: boolean): string {
+  if (state === 'completed') return 'done';
+  if (state === 'paused' || state === 'pausing') return 'paused';
+  if (state === 'failed' || state === 'cancelled') return 'failed';
+  if (!totalKnown && (state === 'downloading' || state === 'probing')) return 'unknown';
+  return '';
+}
+
+export const DownloadToast: React.FC<DownloadToastProps> = ({ initialId }) => {
+  const [targetId, setTargetId] = useState<string | null>(() => {
+    if (initialId) return initialId;
+    try {
+      return new URLSearchParams(window.location.search).get('id');
+    } catch {
+      return null;
+    }
+  });
+
+  const [job, setJob] = useState<DownloadJob | null>(null);
+  const [details, setDetails] = useState<DownloadStatusDetails | null>(null);
+  const [activeTab, setActiveTab] = useState<PopupTab>('status');
+  const [compact, setCompact] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [isVisible, setIsVisible] = useState(() =>
+    typeof document !== 'undefined' ? document.visibilityState === 'visible' : true
   );
 
-  // Initial load
+  // Speed limiter tab controlled UI state
+  const [limiterEnabled, setLimiterEnabled] = useState(false);
+  const [limiterKbpsInput, setLimiterKbpsInput] = useState<string>(String(DEFAULT_SPEED_KBPS));
+  const limiterInitializedRef = useRef(false);
+  const limiterEditingRef = useRef(false);
+  const limiterDebounceRef = useRef<number | null>(null);
+
+  // Completion options tab state
+  const [completionOpts, setCompletionOpts] = useState<DownloadCompletionOptions>({
+    close_on_complete: false,
+    notify_on_complete: false,
+    open_on_complete: false,
+  });
+
+  const winRef = useRef<HTMLDivElement>(null);
+  const lastMeasuredHeightRef = useRef<number>(0);
+  const pendingProgressRef = useRef<DownloadProgress | null>(null);
+  const actionLockRef = useRef(false);
+  const themePrefRef = useRef<string>('system');
+  const targetIdRef = useRef<string | null>(targetId);
+  const compactRef = useRef(compact);
+  const activeTabRef = useRef(activeTab);
+
+  useEffect(() => {
+    targetIdRef.current = targetId;
+  }, [targetId]);
+  useEffect(() => {
+    compactRef.current = compact;
+  }, [compact]);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  // Apply reactive theme, accent & motion across MainWindow -> ProgressWindow
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('demo') === '1') {
-      const st = params.get('state') || 'down';
-      const isOpen = params.get('open') === '1' || st === 'expanded';
-      const demoState = st === 'expanded' ? 'down' : st;
-      const jobState =
-        demoState === 'paused'
-          ? 'paused'
-          : demoState === 'done'
-          ? 'completed'
-          : demoState === 'failed'
-          ? 'failed'
-          : 'downloading';
+    const paramTheme = params.get('theme') || undefined;
+    const paramAccent = params.get('accent') || undefined;
+    const stored = readStoredAppearance();
 
-      const F0 = [1, 1, 0.78, 1, 0.9, 1, 0.62, 1, 0.96, 0.7, 1];
-      const demoChunks: ChunkRecord[] = F0.map((ratio, i) => ({
-        id: i,
-        download_id: 'demo-toast',
-        chunk_index: i,
-        start_byte: i * 5025727,
-        end_byte: (i + 1) * 5025727 - 1,
-        written_bytes: Math.round(5025727 * (jobState === 'completed' ? 1 : ratio)),
-        is_complete: jobState === 'completed' || ratio >= 1,
-      }));
+    const initTheme = paramTheme || stored.theme || 'system';
+    const initAccent = paramAccent || stored.accent || 'indigo';
+    themePrefRef.current = initTheme;
+    applyDocumentAppearance(initTheme, initAccent, stored.motion);
 
-      const isUnknownDemo = params.get('unknown') === '1';
-      const demoJob: DownloadJob = {
-        id: 'demo-toast',
-        url: isUnknownDemo
-          ? 'https://live.example.com/hls/stream.m3u8'
-          : 'https://download-installer.cdn.mozilla.net/pub/firefox/releases/61.0.2/mac/en-US/Firefox%2061.0.2.dmg',
-        resolved_url: null,
-        filename: isUnknownDemo ? 'live_event_stream.mp4' : 'Firefox 61.0.2.dmg',
-        target_path: isUnknownDemo
-          ? 'C:\\Downloads\\Tori\\Video'
-          : 'C:\\Downloads\\Tori\\Programs',
-        temp_path: isUnknownDemo
-          ? 'C:\\Downloads\\Tori\\Video\\live_event_stream.mp4.tdm-part'
-          : 'C:\\Downloads\\Tori\\Programs\\Firefox 61.0.2.dmg.tdm-part',
-        total_bytes: isUnknownDemo ? null : 57968590,
-        downloaded_bytes: isUnknownDemo
-          ? 48900000
-          : jobState === 'completed'
-          ? 57968590
-          : 51227000,
-        state: jobState,
-        job_type: isUnknownDemo ? 'live_stream' : 'http_file',
-        etag: null,
-        last_modified: null,
-        is_resumable: !isUnknownDemo,
-        chunk_count: isUnknownDemo ? 1 : 11,
-        priority: 'normal',
-        error_message: jobState === 'failed' ? 'Connection lost · 3 retries failed' : null,
-        created_at: 'Today 10:42',
-        updated_at: 'Today 10:42',
-        speed_bps: 512000,
-        eta_seconds: isUnknownDemo ? null : 3,
-      };
+    invoke<AppSettings | null>('get_engine_settings')
+      .then((s) => {
+        if (s) {
+          const nextTheme = paramTheme || s.theme || initTheme;
+          const nextAccent = paramAccent || s.accent || initAccent;
+          themePrefRef.current = nextTheme;
+          applyDocumentAppearance(nextTheme, nextAccent, Boolean(s.motion));
+        }
+      })
+      .catch(() => {});
 
-      const countParam = parseInt(params.get('count') || '1', 10);
-      const activeList: string[] = ['demo-toast'];
-      const jobMap: Record<string, DownloadJob> = { 'demo-toast': demoJob };
-      const chunkMap: Record<string, ChunkRecord[]> = { 'demo-toast': demoChunks };
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSystemChange = () => {
+      if (themePrefRef.current === 'system') {
+        applyDocumentAppearance('system', document.documentElement.dataset.accent, document.documentElement.dataset.reduceMotion === 'true');
+      }
+    };
+    mql.addEventListener('change', onSystemChange);
 
-      if (countParam >= 2) {
-        activeList.push('demo-toast-2');
-        jobMap['demo-toast-2'] = {
-          ...demoJob,
-          id: 'demo-toast-2',
-          filename: 'Node-v20.11.0-x64.msi',
-          total_bytes: 32000000,
-          downloaded_bytes: 18000000,
-          speed_bps: 1200000,
-          eta_seconds: 11,
-          state: 'downloading',
-        };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'tori_settings_v2' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          themePrefRef.current = parsed.theme || 'system';
+          applyDocumentAppearance(parsed.theme, parsed.accent, Boolean(parsed.motion));
+        } catch {
+          // ignore
+        }
       }
-      if (countParam >= 3) {
-        activeList.push('demo-toast-3');
-        jobMap['demo-toast-3'] = {
-          ...demoJob,
-          id: 'demo-toast-3',
-          filename: 'ambient-soundtrack.flac',
-          total_bytes: 45000000,
-          downloaded_bytes: 45000000,
-          speed_bps: 0,
-          eta_seconds: null,
-          state: 'completed',
-        };
-      }
-      if (countParam >= 4) {
-        activeList.push('demo-toast-4');
-        jobMap['demo-toast-4'] = {
-          ...demoJob,
-          id: 'demo-toast-4',
-          filename: 'design-assets.zip',
-          total_bytes: 120000000,
-          downloaded_bytes: 60000000,
-          speed_bps: 2400000,
-          eta_seconds: 25,
-          state: 'downloading',
-        };
-      }
+    };
+    window.addEventListener('storage', onStorage);
 
-      setActiveIds(activeList);
-      setJobs(jobMap);
-      setChunks(chunkMap);
-      if (isOpen) {
-        setExpanded({ 'demo-toast': true });
+    const unlistenSettings = listen<AppSettings>('settings-updated', (ev) => {
+      const s = ev.payload;
+      if (s) {
+        themePrefRef.current = s.theme || 'system';
+        applyDocumentAppearance(s.theme, s.accent, Boolean(s.motion));
       }
-    } else {
-      if (initialId) {
-        dismissedIdsRef.current.delete(initialId);
-        setActiveIds((prev) => (prev.includes(initialId) ? prev : [initialId, ...prev]));
-        fetchJob(initialId);
+    });
+
+    return () => {
+      mql.removeEventListener('change', onSystemChange);
+      window.removeEventListener('storage', onStorage);
+      unlistenSettings.then((fn) => fn()).catch(() => {});
+    };
+  }, []);
+
+  const syncDetailsFromBackend = useCallback((d: DownloadStatusDetails) => {
+    setDetails(d);
+    if (!limiterEditingRef.current) {
+      if (d.job_speed_limit_bps > 0) {
+        setLimiterEnabled(true);
+        setLimiterKbpsInput(String(Math.max(1, Math.round(d.job_speed_limit_bps / 1000))));
+      } else if (!limiterInitializedRef.current) {
+        setLimiterEnabled(false);
+        setLimiterKbpsInput(String(DEFAULT_SPEED_KBPS));
+      } else {
+        setLimiterEnabled(false);
       }
-      invoke<DownloadJob[]>('list_downloads')
-        .then((allJobs) => {
-          if (allJobs && allJobs.length > 0) {
-            const active = allJobs.filter((j) =>
-              ['downloading', 'probing', 'pausing', 'paused', 'verifying', 'queued'].includes(j.state)
-            );
-            if (active.length > 0) {
-              const jobMap: Record<string, DownloadJob> = {};
-              const ids: string[] = [];
-              for (const j of active) {
-                jobMap[j.id] = j;
-                ids.push(j.id);
-              }
-              setJobs((prev) => ({ ...jobMap, ...prev }));
-              setActiveIds((prev) => {
-                const combined = [...prev];
-                for (const id of ids) {
-                  if (!combined.includes(id)) combined.push(id);
-                }
-                return combined;
-              });
-            }
-          }
-        })
-        .catch(() => {});
+      limiterInitializedRef.current = true;
     }
-  }, [initialId, fetchJob]);
+  }, []);
 
-  // Listen to Tauri events
-  useEffect(() => {
-    const unlistenProgress = listen<DownloadEvent>('download-event', (event) => {
-      const payload = event.payload;
-      if (payload.type === 'Progress') {
-        const prog = payload.payload;
-        if (deletedIdsRef.current.has(prog.id) || dismissedIdsRef.current.has(prog.id)) {
+  const refreshFullState = useCallback(
+    async (id: string) => {
+      try {
+        const [fetchedJob, fetchedDetails, fetchedOpts] = await Promise.all([
+          invoke<DownloadJob | null>('get_download', { id }),
+          invoke<DownloadStatusDetails>('get_download_status_details', { id }).catch(() => null),
+          invoke<DownloadCompletionOptions>('get_download_completion_options', { id }).catch(
+            () => null
+          ),
+        ]);
+
+        if (!fetchedJob) {
           return;
         }
-        setActiveIds((prev) => (prev.includes(prog.id) ? prev : [...prev, prog.id]));
-        setJobs((prev) => {
-          const existing = prev[prog.id];
-          if (!existing) {
-            fetchJob(prog.id);
-            return prev;
+        setJob(fetchedJob);
+        if (fetchedDetails) {
+          syncDetailsFromBackend(fetchedDetails);
+        }
+        if (fetchedOpts) {
+          setCompletionOpts(fetchedOpts);
+        }
+      } catch (err) {
+        console.error('Failed to refresh progress window state:', err);
+      }
+    },
+    [syncDetailsFromBackend]
+  );
+
+  const closePopupWindow = useCallback(async () => {
+    try {
+      await getCurrentWebviewWindow().close();
+    } catch {
+      invoke('hide_toast_window').catch(() => {});
+    }
+  }, []);
+
+  // Resolve target download ID if none passed via URL, and load initial state
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let id = targetIdRef.current;
+      if (!id) {
+        try {
+          const all = await invoke<DownloadJob[]>('list_downloads');
+          const preferred = all.find((j) => isTransferActive(j.state)) || all[0];
+          if (preferred && !cancelled) {
+            id = preferred.id;
+            setTargetId(id);
           }
-          return {
-            ...prev,
-            [prog.id]: {
-              ...existing,
-              downloaded_bytes: prog.downloaded_bytes,
-              total_bytes: prog.total_bytes ?? existing.total_bytes,
-              speed_bps: prog.speed_bps,
-              eta_seconds: prog.eta_seconds,
-              state: prog.state,
-            },
-          };
-        });
-      } else if (payload.type === 'StateChanged') {
-        const { id, state, error } = payload.payload;
-        if (deletedIdsRef.current.has(id)) return;
-        setJobs((prev) => {
-          const existing = prev[id];
-          if (!existing) return prev;
-          const isDone = state === 'completed';
-          const isPaused = state === 'paused';
-          return {
-            ...prev,
-            [id]: {
-              ...existing,
-              state,
-              speed_bps: isDone || isPaused ? 0 : existing.speed_bps,
-              eta_seconds: isDone || isPaused ? null : existing.eta_seconds,
-              downloaded_bytes:
-                isDone && existing.total_bytes && existing.total_bytes > 0
-                  ? existing.total_bytes
-                  : existing.downloaded_bytes,
-              error_message: error !== undefined && error !== null ? error : existing.error_message,
-            },
-          };
-        });
-      } else if (payload.type === 'Deleted') {
-        const { id } = payload.payload;
-        handleTaskDeleted(id);
-      } else if (payload.type === 'OpenProgressWindow') {
-        const { id } = payload.payload;
-        if (deletedIdsRef.current.has(id)) return;
-        dismissedIdsRef.current.delete(id);
-        setActiveIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-        fetchJob(id);
+        } catch {
+          // ignore
+        }
+      }
+      if (id && !cancelled) {
+        await refreshFullState(id);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshFullState]);
+
+  // Listen to backend download events & restore/delete notifications
+  useEffect(() => {
+    let disposed = false;
+
+    const unlistenDownload = listen<DownloadEvent>('download-event', (event) => {
+      if (disposed) return;
+      const ev = event.payload;
+      const curId = targetIdRef.current;
+      if (!curId) return;
+
+      if (ev.type === 'Progress' && ev.payload.id === curId) {
+        // Buffer progress updates; interval commits strictly at <= 1 Hz
+        pendingProgressRef.current = ev.payload;
+      } else if (ev.type === 'StateChanged' && ev.payload.id === curId) {
+        pendingProgressRef.current = null;
+        const { state, error } = ev.payload;
+        setJob((prev) =>
+          prev
+            ? {
+                ...prev,
+                state,
+                error_message: error,
+                speed_bps: state === 'downloading' ? prev.speed_bps : 0,
+              }
+            : prev
+        );
+        refreshFullState(curId);
+      } else if (ev.type === 'Deleted' && ev.payload.id === curId) {
+        closePopupWindow();
       }
     });
 
     const unlistenDeleted = listen<string>('download-deleted', (event) => {
-      const id = event.payload;
-      if (id) {
-        handleTaskDeleted(id);
+      if (!disposed && event.payload === targetIdRef.current) {
+        closePopupWindow();
       }
     });
 
-    const unlistenAdd = listen<string>('toast-add-download', (event) => {
-      const id = event.payload;
-      if (id && !deletedIdsRef.current.has(id)) {
-        dismissedIdsRef.current.delete(id);
-        setActiveIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-        fetchJob(id);
+    const unlistenRestore = listen<string>('progress-restore-full', (event) => {
+      if (!disposed && event.payload === targetIdRef.current) {
+        setCompact(false);
       }
     });
+
+    const onVisibility = () => {
+      const visible = document.visibilityState === 'visible';
+      setIsVisible(visible);
+      if (visible && targetIdRef.current) {
+        pendingProgressRef.current = null;
+        refreshFullState(targetIdRef.current);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
-      unlistenProgress.then((u) => u());
-      unlistenDeleted.then((u) => u());
-      unlistenAdd.then((u) => u());
+      disposed = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      unlistenDownload.then((fn) => fn()).catch(() => {});
+      unlistenDeleted.then((fn) => fn()).catch(() => {});
+      unlistenRestore.then((fn) => fn()).catch(() => {});
     };
-  }, [fetchJob, handleTaskDeleted]);
+  }, [closePopupWindow, refreshFullState]);
 
-  const jobsRef = useRef<Record<string, DownloadJob>>(jobs);
-  jobsRef.current = jobs;
-
-  // Active reconciliation polling while active downloads exist (stable 2.5s cadence)
+  // Strict <= 1 Hz UI progress/telemetry commit loop (active ONLY while downloading & visible)
+  const jobState = job?.state;
   useEffect(() => {
-    if (activeIds.length === 0) return;
+    if (!targetId || !isVisible || !jobState || !isTransferActive(jobState)) {
+      return;
+    }
 
-    const interval = setInterval(async () => {
-      try {
-        const all = await invoke<DownloadJob[]>('list_downloads');
-        if (all) {
-          const existingIds = new Set(all.map((j) => j.id));
-          // Identify any active IDs that have been deleted or missing from backend
-          const missingIds = activeIds.filter((id) => !existingIds.has(id));
-          if (missingIds.length > 0) {
-            for (const mid of missingIds) {
-              handleTaskDeleted(mid);
-            }
-          }
-
-          setJobs((prev) => {
-            let changed = false;
-            const updated = { ...prev };
-            for (const j of all) {
-              if (prev[j.id]) {
-                updated[j.id] = { ...prev[j.id], ...j };
-                changed = true;
+    const flushTick = async () => {
+      const p = pendingProgressRef.current;
+      if (p && p.id === targetId) {
+        pendingProgressRef.current = null;
+        setJob((prev) =>
+          prev
+            ? {
+                ...prev,
+                downloaded_bytes: p.downloaded_bytes,
+                total_bytes: p.total_bytes,
+                speed_bps: p.speed_bps,
+                eta_seconds: p.eta_seconds,
+                state: p.state,
+                error_message: p.error_message,
               }
-            }
-            return changed ? updated : prev;
-          });
-        }
-      } catch {
-        // ignore
-      }
-    }, 2500);
-
-    return () => clearInterval(interval);
-  }, [activeIds, handleTaskDeleted]);
-
-  const handleToggleExpand = useCallback(async (id: string) => {
-    setExpanded((prev) => {
-      const willOpen = !prev[id];
-      if (willOpen && (!chunks[id] || chunks[id].length === 0)) {
-        invoke<ChunkRecord[]>('get_download_chunks', { id })
-          .then((c) => {
-            if (c && c.length > 0) {
-              setChunks((ch) => ({ ...ch, [id]: c }));
-            }
-          })
-          .catch(() => {});
-      }
-      return { ...prev, [id]: willOpen };
-    });
-  }, [chunks]);
-
-  // Handle native window dragging on safe neutral areas
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (
-      target.closest('button') ||
-      target.closest('a') ||
-      target.closest('input') ||
-      target.closest('.action-btn') ||
-      target.closest('.ib') ||
-      target.closest('.cx') ||
-      target.closest('.chip') ||
-      target.closest('.rg') ||
-      target.closest('.dr') ||
-      target.closest('.toast-thumb-img') ||
-      target.closest('.tx') ||
-      target.closest('.eta')
-    ) {
-      return;
-    }
-    try {
-      isUserDraggingRef.current = true;
-      getCurrentWebviewWindow().startDragging();
-    } catch {
-      // ignore if not running in Tauri window
-    }
-  }, []);
-
-  const handleTextMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    dragStartPosRef.current = { x: e.clientX, y: e.clientY };
-    isTextMovedRef.current = false;
-  }, []);
-
-  const handleTextMouseMove = useCallback((e: React.MouseEvent) => {
-    if (e.buttons === 1 && dragStartPosRef.current && !isTextMovedRef.current) {
-      const dist = Math.hypot(
-        e.clientX - dragStartPosRef.current.x,
-        e.clientY - dragStartPosRef.current.y
-      );
-      if (dist > 5) {
-        isTextMovedRef.current = true;
-        isUserDraggingRef.current = true;
-        try {
-          getCurrentWebviewWindow().startDragging();
-        } catch {
-          // ignore if not running in Tauri window
-        }
-      }
-    }
-  }, []);
-
-  const handleTextClick = useCallback(
-    (id: string) => {
-      if (isTextMovedRef.current) {
-        isTextMovedRef.current = false;
-        dragStartPosRef.current = null;
-        return;
-      }
-      dragStartPosRef.current = null;
-      handleToggleExpand(id);
-    },
-    [handleToggleExpand]
-  );
-
-  // Listen to window moved event to persist position
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let timer: any = null;
-    try {
-      const win = getCurrentWebviewWindow();
-      win.onMoved(({ payload: pos }) => {
-        if (!isUserDraggingRef.current) return;
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(async () => {
-          isUserDraggingRef.current = false;
-          try {
-            const scale = await win.scaleFactor();
-            const x = pos.x / scale;
-            const y = pos.y / scale;
-            await invoke('save_toast_position', { x, y });
-          } catch {
-            await invoke('save_toast_position', { x: pos.x, y: pos.y }).catch(() => {});
-          }
-        }, 300);
-      }).then((u) => {
-        unlisten = u;
-      }).catch(() => {});
-    } catch {
-      // ignore
-    }
-    return () => {
-      if (timer) clearTimeout(timer);
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // Dismiss notification card (removes from toast view, hides toast window if no more items,
-  // NEVER cancels or stops active downloads)
-  const handleDismiss = useCallback((id: string) => {
-    dismissedIdsRef.current.add(id);
-    setActiveIds((prev) => {
-      const next = prev.filter((x) => x !== id);
-      if (next.length === 0) {
-        invoke('hide_toast_window').catch(() => {});
-      }
-      return next;
-    });
-  }, []);
-
-  // Explicit cancel action with user confirmation
-  const handleCancelDownload = useCallback(
-    async (job: DownloadJob) => {
-      const name = job.filename || (job as any).file_name || 'this download';
-      const confirmed = window.confirm(`Are you sure you want to cancel "${name}"?`);
-      if (!confirmed) return;
-      try {
-        await invoke('cancel_download', { id: job.id });
-        handleDismiss(job.id);
-      } catch (err) {
-        console.error('Failed to cancel download from toast:', err);
-      }
-    },
-    [handleDismiss]
-  );
-
-  const completedTimersRef = useRef<Record<string, number>>({});
-
-  // Auto-dismiss countdown timer for completed items
-  useEffect(() => {
-    const timer = setInterval(() => {
-      activeIds.forEach((id) => {
-        const job = jobs[id];
-        if (!job) return;
-
-        // Auto-dismiss completed jobs after 9 seconds of display if not hovered
-        if (job.state === 'completed' && !hoveredRef.current[id]) {
-          if (!completedTimersRef.current[id]) {
-            completedTimersRef.current[id] = Date.now();
-          }
-          const elapsed = (Date.now() - completedTimersRef.current[id]) / 1000;
-          if (elapsed >= 9) {
-            handleDismiss(id);
-          }
-        } else if (job.state !== 'completed') {
-          delete completedTimersRef.current[id];
-        }
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [activeIds, jobs, handleDismiss]);
-
-  // Listen to window resized event to persist size
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let timer: any = null;
-    try {
-      const win = getCurrentWebviewWindow();
-      win.onResized(({ payload: size }) => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(async () => {
-          try {
-            const scale = await win.scaleFactor();
-            const logicalW = Math.round(size.width / scale);
-            const clamped = Math.max(384, Math.min(744, logicalW));
-            if (Math.abs(toastWidthRef.current - clamped) >= 2) {
-              setToastWidth(clamped);
-              await invoke('save_toast_size', { width: clamped });
-            }
-          } catch {
-            const clamped = Math.max(384, Math.min(744, Math.round(size.width)));
-            if (Math.abs(toastWidthRef.current - clamped) >= 2) {
-              setToastWidth(clamped);
-              await invoke('save_toast_size', { width: clamped }).catch(() => {});
-            }
-          }
-        }, 200);
-      }).then((u) => {
-        unlisten = u;
-      }).catch(() => {});
-    } catch {
-      // ignore
-    }
-    return () => {
-      if (timer) clearTimeout(timer);
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // Fetch initial stored preferred width
-  useEffect(() => {
-    invoke<number | null>('get_toast_size')
-      .then((savedWidth) => {
-        if (savedWidth && savedWidth >= 384 && savedWidth <= 744) {
-          setToastWidth(savedWidth);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  // Preset selection handler
-  const handleSelectPreset = useCallback((preset: 'compact' | 'normal' | 'large') => {
-    const widthMap = {
-      compact: 404, // 380px card + 24px padding
-      normal: 494,  // 470px card + 24px padding (reference)
-      large: 604,   // 580px card + 24px padding
-    };
-    const targetW = widthMap[preset];
-    setToastWidth(targetW);
-    setContextMenuPos(null);
-    invoke('save_toast_size', { width: targetW }).catch(() => {});
-    if (containerRef.current) {
-      const h = Math.max(100, Math.ceil(containerRef.current.getBoundingClientRect().height));
-      invoke('update_toast_bounds', { width: targetW, height: h }).catch(() => {});
-    }
-  }, []);
-
-  const handleHandleDoubleClick = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Cycle: compact (404) -> normal (494) -> large (604) -> compact (404)
-    if (toastWidthRef.current < 450) {
-      handleSelectPreset('normal');
-    } else if (toastWidthRef.current < 550) {
-      handleSelectPreset('large');
-    } else {
-      handleSelectPreset('compact');
-    }
-  }, [handleSelectPreset]);
-
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (
-      target.closest('button') ||
-      target.closest('.ib') ||
-      target.closest('.cx') ||
-      target.closest('.dr')
-    ) {
-      return;
-    }
-    e.preventDefault();
-    setContextMenuPos({ x: e.clientX, y: e.clientY });
-  }, []);
-
-  const handleResetPosition = useCallback(async () => {
-    try {
-      await invoke('save_toast_position', { x: -1, y: -1 });
-      if (containerRef.current) {
-        const h = Math.max(100, Math.ceil(containerRef.current.getBoundingClientRect().height));
-        await invoke('update_toast_bounds', { width: toastWidthRef.current, height: h });
-      }
-    } catch {}
-    setContextMenuPos(null);
-  }, []);
-
-  useEffect(() => {
-    if (!contextMenuPos) return;
-    const handleOutsideClick = () => setContextMenuPos(null);
-    window.addEventListener('click', handleOutsideClick);
-    return () => window.removeEventListener('click', handleOutsideClick);
-  }, [contextMenuPos]);
-
-  // Adjust window bounds whenever container size or contents change
-  useEffect(() => {
-    if (!containerRef.current || activeIds.length === 0) return;
-
-    const updateBounds = () => {
-      if (!containerRef.current) return;
-      const containerRect = containerRef.current.getBoundingClientRect();
-      let minTop = containerRect.top;
-      let maxBottom = containerRect.bottom;
-      let minLeft = containerRect.left;
-      let maxRight = containerRect.right;
-
-      const children = containerRef.current.querySelectorAll(
-        '.toast, .toast-more, .row, .rg, .chip, .bd, .dr'
-      );
-      children.forEach((child) => {
-        const r = child.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0) {
-          if (r.top < minTop) minTop = r.top;
-          if (r.bottom > maxBottom) maxBottom = r.bottom;
-          if (r.left < minLeft) minLeft = r.left;
-          if (r.right > maxRight) maxRight = r.right;
-        }
-      });
-
-      const contentHeight = Math.ceil(maxBottom - minTop);
-      const w = Math.max(384, Math.min(744, toastWidthRef.current));
-      const h = Math.max(100, Math.max(Math.ceil(containerRect.height), contentHeight));
-
-      if (
-        Math.abs(lastBoundsRef.current.w - w) >= 1 ||
-        Math.abs(lastBoundsRef.current.h - h) >= 1
-      ) {
-        lastBoundsRef.current = { w, h };
-        invoke('update_toast_bounds', { width: w, height: h }).catch(() => {});
-      }
-    };
-
-    const observer = new ResizeObserver(() => {
-      updateBounds();
-    });
-
-    observer.observe(containerRef.current);
-    updateBounds();
-
-    const raf = requestAnimationFrame(updateBounds);
-
-    return () => {
-      cancelAnimationFrame(raf);
-      observer.disconnect();
-    };
-  }, [expanded, activeIds, toastWidth]);
-
-
-  const handleTogglePause = async (job: DownloadJob) => {
-    try {
-      if (job.state === 'downloading' || job.state === 'probing') {
-        await invoke('pause_download', { id: job.id });
-      } else {
-        await invoke('resume_download', { id: job.id });
-      }
-    } catch (err) {
-      console.error('Failed to toggle pause:', err);
-    }
-  };
-
-  const handleOpenFile = async (path: string) => {
-    try {
-      await invoke('open_file', { path });
-    } catch (err) {
-      console.error('Failed to open file:', err);
-    }
-  };
-
-  const handleOpenFolder = async (path: string) => {
-    try {
-      await invoke('open_folder', { path });
-    } catch (err) {
-      console.error('Failed to open folder:', err);
-    }
-  };
-
-  const visibleIds = activeIds.slice(0, 3);
-  const remainingCount = Math.max(0, activeIds.length - 3);
-  const cardWidth = Math.max(360, Math.min(720, toastWidth - 24));
-
-  return (
-    <div className="toast-host-container" ref={containerRef}>
-      {/* West edge resize handle */}
-      <div
-        className="toast-resize-handle toast-resize-handle-w"
-        title="Drag left/right to resize width, double-click to cycle presets"
-        onMouseDown={(e) => {
-          if (e.button !== 0) return;
-          e.preventDefault();
-          e.stopPropagation();
-          try {
-            getCurrentWebviewWindow().startResizeDragging('West');
-          } catch {}
-        }}
-        onDoubleClick={handleHandleDoubleClick}
-      />
-      {/* NorthWest corner resize handle */}
-      <div
-        className="toast-resize-handle toast-resize-handle-nw"
-        title="Drag to resize, double-click to cycle presets"
-        onMouseDown={(e) => {
-          if (e.button !== 0) return;
-          e.preventDefault();
-          e.stopPropagation();
-          try {
-            getCurrentWebviewWindow().startResizeDragging('NorthWest');
-          } catch {}
-        }}
-        onDoubleClick={handleHandleDoubleClick}
-      />
-      {visibleIds.map((id) => {
-        const job = jobs[id];
-        if (!job) return null;
-
-        const isComplete = job.state === 'completed';
-        const isFailed = job.state === 'failed';
-        const isPaused = job.state === 'paused';
-        const isDown = !isComplete && !isFailed && !isPaused;
-
-        // Ring color variable
-        const ringColor = isComplete
-          ? 'var(--green)'
-          : isFailed
-          ? 'var(--bad)'
-          : isPaused
-          ? 'var(--amber)'
-          : 'var(--a3)';
-
-        // Percent & bytes calculation
-        const total = job.total_bytes && job.total_bytes > 0 ? job.total_bytes : 0;
-        const downloaded = job.downloaded_bytes || 0;
-        const hasKnownTotal = total > 0;
-        const isFinishing = isDown && hasKnownTotal && downloaded >= total;
-        const pct = isComplete
-          ? 100
-          : hasKnownTotal
-          ? Math.min(100, Math.max(0, (downloaded / total) * 100))
-          : 0;
-
-        // Empty ring if total is unknown or starting, full ring if complete, else dashoffset
-        const offset = isComplete
-          ? 0
-          : hasKnownTotal
-          ? CIRCUMFERENCE * (1 - pct / 100)
-          : CIRCUMFERENCE;
-
-        // Speed string
-        const speedStr = fmtSp(job.speed_bps);
-        const speedPart = speedStr ? ` · ${speedStr}` : '';
-
-        // Subtext line
-        let subtext = '';
-        if (isComplete) {
-          const finalBytes = hasKnownTotal ? total : downloaded;
-          subtext = `${fmtB(finalBytes)} · Download complete`;
-        } else if (isFailed) {
-          subtext = job.error_message || 'Connection lost · 3 retries failed';
-        } else if (isPaused) {
-          subtext = hasKnownTotal
-            ? `${fmtProgressBytes(downloaded, total)} · Paused`
-            : `${fmtB(downloaded)} · Paused`;
-        } else if (isFinishing) {
-          subtext = `${fmtB(total)} · Finishing…`;
-        } else {
-          // Active states: downloading, probing, verifying
-          if (job.state === 'probing') {
-            subtext = 'Connecting to peers…';
-          } else if (downloaded === 0) {
-            subtext = 'Starting…';
-          } else if (hasKnownTotal) {
-            subtext = `${fmtProgressBytes(downloaded, total)}${speedPart}`;
-          } else {
-            subtext = `${fmtB(downloaded)}${speedPart}`;
-          }
-        }
-
-        // ETA display
-        let etaNum = '--';
-        let etaSub = 'left';
-        if (isComplete) {
-          etaNum = 'Done';
-          etaSub = 'Finished';
-        } else if (isFailed) {
-          etaNum = 'Failed';
-          etaSub = hasKnownTotal ? `${Math.floor(pct)}%` : '';
-        } else if (isPaused) {
-          etaNum = 'Paused';
-          etaSub = hasKnownTotal ? `${Math.floor(pct)}%` : '';
-        } else if (isFinishing) {
-          etaNum = 'Finishing…';
-          etaSub = 'Sync';
-        } else {
-          // Active downloading
-          if (job.state === 'probing') {
-            etaNum = 'Peers';
-            etaSub = 'resolving';
-          } else if (downloaded === 0) {
-            etaNum = 'Starting…';
-            etaSub = '';
-          } else if (!hasKnownTotal) {
-            etaNum = 'Live';
-            etaSub = 'Unknown size';
-          } else {
-            const formatted = formatEta(job.eta_seconds);
-            if (formatted === '--') {
-              etaNum = '--';
-              etaSub = 'calculating';
-            } else {
-              etaNum = formatted;
-              etaSub = 'left';
-            }
-          }
-        }
-
-        // Category icon
-        const catName = typeOfJob(job);
-        const chip = CATEGORY_CHIPS[catName] || CATEGORY_CHIPS.Other;
-
-        // Hostname parsing
-        let host = 'download';
-        try {
-          host = new URL(job.url).hostname;
-        } catch {
-          host = job.url.split('/')[2] || 'source';
-        }
-
-        // Chunks meter
-        const jobChunks = chunks[id] || [];
-        const isResumable = job.is_resumable;
-        const connCount = jobChunks.length > 0 ? jobChunks.length : 1;
-
-        const isOpen = !!expanded[id];
-
-        return (
-          <div
-            key={id}
-            className={`toast ${isOpen ? 'open' : ''}`}
-            style={{
-              ['--rc' as any]: ringColor,
-              width: `${cardWidth}px`,
-            }}
-            onContextMenu={handleContextMenu}
-            onMouseDown={handleDragStart}
-            onMouseEnter={() => {
-              hoveredRef.current[id] = true;
-            }}
-            onMouseLeave={() => {
-              hoveredRef.current[id] = false;
-            }}
-          >
-            <div className="row" onMouseDown={handleDragStart}>
-              <div className="rg">
-                <svg className="r" viewBox="0 0 52 52">
-                  <circle className="rt" cx="26" cy="26" r="21" />
-                  <circle
-                    className="rp"
-                    cx="26"
-                    cy="26"
-                    r="21"
-                    strokeDasharray={CIRCUMFERENCE.toFixed(1)}
-                    strokeDashoffset={offset.toFixed(1)}
-                  />
-                </svg>
-                <span
-                  className={`chip ${job.thumbnail_url ? 'has-thumb' : ''}`}
-                  style={{
-                    background: job.thumbnail_url
-                      ? 'transparent'
-                      : `linear-gradient(${chip.grad[0]}, ${chip.grad[1]})`,
-                  }}
-                >
-                  {job.thumbnail_url ? (
-                    <img
-                      src={job.thumbnail_url}
-                      alt=""
-                      className="toast-thumb-img"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLElement).style.display = 'none';
-                        const fallback = e.currentTarget.parentElement?.querySelector('.chip-fallback-svg');
-                        if (fallback) (fallback as HTMLElement).style.display = 'block';
-                      }}
-                    />
-                  ) : null}
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="chip-fallback-svg"
-                    style={{ display: job.thumbnail_url ? 'none' : 'block' }}
-                  >
-                    <path d={chip.path} />
-                  </svg>
-                </span>
-                {isComplete && (
-                  <span className="bd">
-                    <svg viewBox="0 0 24 24">
-                      <path d="M5 12l5 5 9-10" />
-                    </svg>
-                  </span>
-                )}
-                {isFailed && (
-                  <span className="bd">
-                    <svg viewBox="0 0 24 24">
-                      <path d="M12 6v8M12 18h.01" />
-                    </svg>
-                  </span>
-                )}
-              </div>
-
-              <div
-                className="tx"
-                onMouseDown={handleTextMouseDown}
-                onMouseMove={handleTextMouseMove}
-                onClick={() => handleTextClick(id)}
-                title="Click for details"
-              >
-                <b>{job.filename}</b>
-                <span>{subtext}</span>
-              </div>
-
-              <div
-                className="eta"
-                onMouseDown={handleTextMouseDown}
-                onMouseMove={handleTextMouseMove}
-                onClick={() => handleTextClick(id)}
-                title="Click for details"
-              >
-                <b>{etaNum}</b>
-                {etaSub ? <span>{etaSub}</span> : null}
-              </div>
-
-              {isDown && (
-                <button
-                  className="ib"
-                  title="Pause"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleTogglePause(job);
-                  }}
-                >
-                  <svg viewBox="0 0 24 24">
-                    <path d="M9 5v14M15 5v14" />
-                  </svg>
-                </button>
-              )}
-
-              {isPaused && (
-                <button
-                  className="ib pr"
-                  title="Resume"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleTogglePause(job);
-                  }}
-                >
-                  <svg viewBox="0 0 24 24">
-                    <path d="M7 4v16l13-8z" />
-                  </svg>
-                </button>
-              )}
-
-              {isComplete && (
-                <>
-                  <button
-                    className="ib pr"
-                    title="Open"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenFile(job.target_path);
-                    }}
-                  >
-                    <svg viewBox="0 0 24 24">
-                      <path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6" />
-                    </svg>
-                  </button>
-                  <button
-                    className="ib"
-                    title="Show in folder"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenFolder(job.target_path);
-                    }}
-                  >
-                    <svg viewBox="0 0 24 24">
-                      <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-                    </svg>
-                  </button>
-                </>
-              )}
-
-              {isFailed && (
-                <button
-                  className="ib pr"
-                  title="Retry"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    try {
-                      await invoke('retry_download', { id: job.id });
-                    } catch (err) {
-                      console.error('Failed to retry download:', err);
-                    }
-                  }}
-                >
-                  <svg viewBox="0 0 24 24">
-                    <path d="M20 12a8 8 0 11-2.6-5.9M20 4v5h-5" />
-                  </svg>
-                </button>
-              )}
-
-              <button
-                className="cx"
-                title="Dismiss notification"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDismiss(id);
-                }}
-              >
-                <svg viewBox="0 0 10 10">
-                  <path d="M0 0l10 10M10 0L0 10" />
-                </svg>
-              </button>
-            </div>
-
-            {isOpen && (
-              <div className="dr">
-                <div className="ms">
-                  {jobChunks.length > 0 ? (
-                    jobChunks.map((chunk, idx) => {
-                      const totalChunk = chunk.end_byte - chunk.start_byte + 1;
-                      const ratio =
-                        totalChunk > 0
-                          ? Math.min(1, Math.max(0, chunk.written_bytes / totalChunk))
-                          : 0;
-                      return (
-                        <i key={idx}>
-                          <b style={{ width: `${(isComplete ? 1 : ratio) * 100}%` }} />
-                        </i>
-                      );
-                    })
-                  ) : (
-                    <i>
-                      <b style={{ width: `${(isComplete ? 1 : pct / 100) * 100}%` }} />
-                    </i>
-                  )}
-                </div>
-                <div className="l">
-                  <span>Source</span>
-                  <b>{host}</b>
-                </div>
-                <div className="l">
-                  <span>Save to</span>
-                  <b>{job.target_path}</b>
-                </div>
-                <div className="l">
-                  <span>Connections</span>
-                  <b>
-                    {connCount} · {isResumable ? 'resumable' : 'non-resumable'}
-                  </b>
-                </div>
-                {!isComplete && !isFailed && (
-                  <div className="toast-drawer-actions">
-                    <button
-                      type="button"
-                      className="toast-action-cancel"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCancelDownload(job);
-                      }}
-                    >
-                      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" style={{ marginRight: '6px' }}>
-                        <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z" />
-                      </svg>
-                      Cancel Download
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+            : prev
         );
-      })}
+      }
 
-      {remainingCount > 0 && (
-        <div className="toast-more">+{remainingCount} more active download(s)</div>
-      )}
+      if (!compactRef.current && activeTabRef.current === 'status') {
+        try {
+          const d = await invoke<DownloadStatusDetails>('get_download_status_details', {
+            id: targetId,
+          });
+          syncDetailsFromBackend(d);
+        } catch {
+          // ignore transient read errors
+        }
+      }
+    };
 
-      {contextMenuPos && (
-        <div
-          className="toast-context-menu"
-          style={{
-            left: `${Math.min(window.innerWidth - 165, Math.max(10, contextMenuPos.x))}px`,
-            top: `${Math.min(window.innerHeight - 155, Math.max(10, contextMenuPos.y))}px`,
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="toast-context-menu-title">Toast Size</div>
-          <button
-            type="button"
-            className={`toast-context-menu-item ${cardWidth === 380 ? 'active' : ''}`}
-            onClick={() => handleSelectPreset('compact')}
-          >
-            <span>Compact</span>
-            <span className="toast-size-badge">380px</span>
+    const timerId = window.setInterval(flushTick, 1000);
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [targetId, isVisible, jobState, syncDetailsFromBackend]);
+
+  // Save window position after manual drags
+  useEffect(() => {
+    let unlistenMove: (() => void) | undefined;
+    let moveTimer: number | null = null;
+    try {
+      const win = getCurrentWebviewWindow();
+      win
+        .onMoved((ev) => {
+          if (moveTimer !== null) {
+            window.clearTimeout(moveTimer);
+          }
+          moveTimer = window.setTimeout(async () => {
+            try {
+              const scale = await win.scaleFactor();
+              const x = ev.payload.x / (scale || 1);
+              const y = ev.payload.y / (scale || 1);
+              await invoke('save_toast_position', { x, y });
+            } catch {
+              // ignore
+            }
+          }, 250);
+        })
+        .then((fn) => {
+          unlistenMove = fn;
+        })
+        .catch(() => {});
+    } catch {
+      // ignore outside Tauri
+    }
+    return () => {
+      if (moveTimer !== null) window.clearTimeout(moveTimer);
+      if (unlistenMove) unlistenMove();
+    };
+  }, []);
+
+  // Resize native WebView2 window height cleanly to match .dl-win without slack or clipping
+  useLayoutEffect(() => {
+    const syncWindowHeight = () => {
+      if (!winRef.current) return;
+      const measured = Math.ceil(winRef.current.getBoundingClientRect().height);
+      const targetHeight = Math.max(36, measured);
+      if (Math.abs(lastMeasuredHeightRef.current - targetHeight) >= 1) {
+        lastMeasuredHeightRef.current = targetHeight;
+        invoke('update_toast_bounds', { width: 460, height: targetHeight }).catch(() => {});
+      }
+    };
+
+    syncWindowHeight();
+    if (!winRef.current) return;
+    const ro = new ResizeObserver(syncWindowHeight);
+    ro.observe(winRef.current);
+    return () => {
+      ro.disconnect();
+    };
+  }, [compact, activeTab, job?.state, job?.error_message, details?.chunks.length]);
+
+  const pctKnown = useMemo<number | null>(() => {
+    if (!job) return null;
+    if (job.state === 'completed') return 100;
+    if (job.total_bytes != null && job.total_bytes > 0) {
+      return Math.min(100, Math.max(0, (job.downloaded_bytes / job.total_bytes) * 100));
+    }
+    return null;
+  }, [job]);
+
+  const windowTitle = useMemo(() => formatWindowTitle(job, pctKnown), [job, pctKnown]);
+
+  // Keep native OS title in sync at <= 1 Hz with window bar title
+  useEffect(() => {
+    try {
+      getCurrentWebviewWindow().setTitle(windowTitle).catch(() => {});
+    } catch {
+      // ignore
+    }
+  }, [windowTitle]);
+
+  const runAction = useCallback(async (fn: () => Promise<void>) => {
+    if (actionLockRef.current) return;
+    actionLockRef.current = true;
+    setActionBusy(true);
+    try {
+      await fn();
+    } catch (err) {
+      console.error('Progress window action failed:', err);
+    } finally {
+      actionLockRef.current = false;
+      setActionBusy(false);
+    }
+  }, []);
+
+  const handleTitleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const el = e.target as HTMLElement;
+    if (el.closest('.dl-wc') || el.closest('button')) return;
+    try {
+      getCurrentWebviewWindow().startDragging().catch(() => {});
+    } catch {
+      // ignore
+    }
+  };
+
+  const commitSpeedLimit = useCallback(
+    async (enabled: boolean, kbpsStr: string) => {
+      if (!targetId) return;
+      const parsed = parseInt(kbpsStr, 10);
+      const safeKbps = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 1_048_576) : DEFAULT_SPEED_KBPS;
+      if (enabled && (!Number.isFinite(parsed) || parsed <= 0)) {
+        setLimiterKbpsInput(String(safeKbps));
+      }
+      const limitBps = enabled ? safeKbps * 1000 : 0;
+      try {
+        await invoke('set_download_speed_limit', { id: targetId, limitBps });
+        setDetails((prev) => (prev ? { ...prev, job_speed_limit_bps: limitBps } : prev));
+      } catch (err) {
+        console.error('Failed to set download speed limit:', err);
+      }
+    },
+    [targetId]
+  );
+
+  const handleToggleLimiter = (checked: boolean) => {
+    setLimiterEnabled(checked);
+    if (limiterDebounceRef.current !== null) {
+      window.clearTimeout(limiterDebounceRef.current);
+      limiterDebounceRef.current = null;
+    }
+    commitSpeedLimit(checked, limiterKbpsInput);
+  };
+
+  const handleKbpsChange = (val: string) => {
+    setLimiterKbpsInput(val);
+    if (limiterDebounceRef.current !== null) {
+      window.clearTimeout(limiterDebounceRef.current);
+      limiterDebounceRef.current = null;
+    }
+    if (limiterEnabled) {
+      const parsed = parseInt(val, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        limiterDebounceRef.current = window.setTimeout(() => {
+          limiterDebounceRef.current = null;
+          commitSpeedLimit(true, val);
+        }, 200);
+      }
+    }
+  };
+
+  const handleCompletionOptionChange = async (
+    key: keyof DownloadCompletionOptions,
+    checked: boolean
+  ) => {
+    if (!targetId) return;
+    const nextOpts: DownloadCompletionOptions = {
+      ...completionOpts,
+      [key]: checked,
+    };
+    setCompletionOpts(nextOpts);
+    try {
+      await invoke('set_download_completion_options', { id: targetId, options: nextOpts });
+    } catch (err) {
+      console.error('Failed to save completion options:', err);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (limiterDebounceRef.current !== null) {
+        window.clearTimeout(limiterDebounceRef.current);
+      }
+    };
+  }, []);
+
+  const totalBytesKnown = Boolean(job && job.total_bytes != null && job.total_bytes > 0);
+  const barWidthPct = pctKnown !== null ? pctKnown : job?.state === 'completed' ? 100 : 0;
+  const barStateCls = job ? computeBarClass(job.state, totalBytesKnown) : '';
+
+  const segments = useMemo<ChunkRecord[]>(() => {
+    if (!job) return [];
+    const list = details?.chunks;
+    if (list && list.length > 0) {
+      return [...list].sort((a, b) => a.chunk_index - b.chunk_index);
+    }
+    return [
+      {
+        id: null,
+        download_id: job.id,
+        chunk_index: 0,
+        start_byte: 0,
+        end_byte: job.total_bytes && job.total_bytes > 0 ? job.total_bytes - 1 : 0,
+        written_bytes: job.downloaded_bytes,
+        is_complete: job.state === 'completed',
+      },
+    ];
+  }, [details?.chunks, job]);
+
+  const activeConnections = useMemo(() => {
+    if (!job) return 0;
+    if (details) return details.active_connections;
+    return isTransferActive(job.state) ? Math.max(1, job.chunk_count || 1) : 0;
+  }, [details, job]);
+
+  const completedSegmentsCount = useMemo(
+    () => segments.filter((s) => s.is_complete).length,
+    [segments]
+  );
+
+  const statusMeta = job ? formatStatusLabel(job) : { text: 'Loading…', cls: 'v' };
+
+  const downloadedText = useMemo(() => {
+    if (!job) return '--';
+    const dStr = fmtB(job.downloaded_bytes);
+    if (pctKnown !== null) {
+      return `${dStr} ( ${pctKnown.toFixed(2)} % )`;
+    }
+    return dStr;
+  }, [job, pctKnown]);
+
+  const transferRateText = useMemo(() => {
+    if (!job) return '--';
+    if (job.state === 'downloading' || job.state === 'probing') {
+      return job.speed_bps && job.speed_bps > 0 ? fmtSp(job.speed_bps) : '0 KB/s';
+    }
+    return '--';
+  }, [job]);
+
+  const timeLeftText = useMemo(() => {
+    if (!job) return '--';
+    if (job.state === 'completed') return '0 sec';
+    if (job.state === 'downloading') return fmtT(job.eta_seconds);
+    return '--';
+  }, [job]);
+
+  // Footer button definitions & hint
+  const renderFooter = () => {
+    if (!job) {
+      return (
+        <div className="dl-foot">
+          <span className="dl-hint">Loading download details…</span>
+          <button type="button" className="dl-btn" onClick={closePopupWindow}>
+            Close
           </button>
-          <button
-            type="button"
-            className={`toast-context-menu-item ${cardWidth === 470 ? 'active' : ''}`}
-            onClick={() => handleSelectPreset('normal')}
-          >
-            <span>Normal</span>
-            <span className="toast-size-badge">470px</span>
-          </button>
-          <button
-            type="button"
-            className={`toast-context-menu-item ${cardWidth === 580 ? 'active' : ''}`}
-            onClick={() => handleSelectPreset('large')}
-          >
-            <span>Large</span>
-            <span className="toast-size-badge">580px</span>
-          </button>
-          <div className="toast-context-menu-separator" />
-          <button
-            type="button"
-            className="toast-context-menu-item"
-            onClick={async () => {
-              setContextMenuPos(null);
-              try {
-                await invoke('show_main_window');
-              } catch (err) {
-                console.error('Failed to open main window:', err);
-              }
-            }}
-          >
-            <span>Open TORI</span>
-          </button>
-          <button
-            type="button"
-            className="toast-context-menu-item"
-            onClick={handleResetPosition}
-          >
-            <span>Reset Position</span>
+          <button type="button" className="dl-btn pri" disabled>
+            Pause
           </button>
         </div>
-      )}
+      );
+    }
+
+    const st = job.state;
+    const folderLabel = parentFolderLabel(job.target_path);
+
+    if (st === 'completed') {
+      return (
+        <div className="dl-foot">
+          <span className="dl-hint" title={job.target_path}>
+            <button
+              type="button"
+              className="dl-hint-link"
+              onClick={() => runAction(() => invoke('open_folder', { path: job.target_path }))}
+              title={`Open folder: ${folderLabel}`}
+            >
+              Open containing folder
+            </button>
+          </span>
+          <button
+            type="button"
+            className="dl-btn"
+            disabled={actionBusy}
+            onClick={closePopupWindow}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            className="dl-btn pri"
+            disabled={actionBusy}
+            onClick={() => runAction(() => invoke('open_file', { path: job.target_path }))}
+          >
+            Open
+          </button>
+        </div>
+      );
+    }
+
+    if (st === 'failed' || st === 'cancelled') {
+      const hintTxt =
+        st === 'failed'
+          ? job.error_message || 'Download interrupted'
+          : 'Download cancelled';
+      return (
+        <div className="dl-foot">
+          <span className="dl-hint" title={hintTxt}>
+            {hintTxt}
+          </span>
+          <button
+            type="button"
+            className="dl-btn"
+            disabled={actionBusy}
+            onClick={closePopupWindow}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            className="dl-btn pri"
+            disabled={actionBusy}
+            onClick={() => runAction(() => invoke('retry_download', { id: job.id }))}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+
+    if (st === 'paused') {
+      return (
+        <div className="dl-foot">
+          <span className="dl-hint">Download paused</span>
+          <button
+            type="button"
+            className="dl-btn"
+            disabled={actionBusy}
+            onClick={() => runAction(() => invoke('cancel_download', { id: job.id }))}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="dl-btn pri"
+            disabled={actionBusy}
+            onClick={() => runAction(() => invoke('resume_download', { id: job.id }))}
+          >
+            Resume
+          </button>
+        </div>
+      );
+    }
+
+    if (st === 'verifying') {
+      return (
+        <div className="dl-foot">
+          <span className="dl-hint">Finalizing file on disk…</span>
+          <button
+            type="button"
+            className="dl-btn"
+            disabled={actionBusy}
+            onClick={closePopupWindow}
+          >
+            Close
+          </button>
+          <button type="button" className="dl-btn pri" disabled>
+            Saving…
+          </button>
+        </div>
+      );
+    }
+
+    const activeLimitBps = details?.job_speed_limit_bps || 0;
+    const activeHint =
+      activeLimitBps > 0
+        ? `Speed limit: ${Math.max(1, Math.round(activeLimitBps / 1000))} KB/s`
+        : st === 'queued'
+        ? 'Waiting in queue…'
+        : st === 'scheduled'
+        ? 'Scheduled download'
+        : st === 'probing'
+        ? 'Negotiating connections…'
+        : 'Transferring data…';
+
+    return (
+      <div className="dl-foot">
+        <span className="dl-hint" title={activeHint}>
+          {activeHint}
+        </span>
+        <button
+          type="button"
+          className="dl-btn"
+          disabled={actionBusy}
+          onClick={() => runAction(() => invoke('cancel_download', { id: job.id }))}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="dl-btn pri"
+          disabled={actionBusy || st === 'pausing'}
+          onClick={() => runAction(() => invoke('pause_download', { id: job.id }))}
+        >
+          {st === 'pausing' ? 'Pausing…' : 'Pause'}
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <div className="dl-popup-root">
+      <div
+        ref={winRef}
+        id="w"
+        className={compact ? 'dl-win m' : 'dl-win'}
+        data-job-id={job?.id || targetId || ''}
+        data-state={job?.state || 'loading'}
+      >
+        {/* Titlebar (.wbar) */}
+        <div
+          className="dl-wbar"
+          onMouseDown={handleTitleMouseDown}
+          onDoubleClick={() => compact && setCompact(false)}
+          title={job?.filename || windowTitle}
+        >
+          <span id="wt" className="dl-wbar-title">
+            {windowTitle}
+          </span>
+          <div className="dl-wc">
+            <button
+              type="button"
+              id="mn"
+              className="dl-mn"
+              title={compact ? 'Restore Progress Window' : 'Minimize to Compact Bar'}
+              aria-label={compact ? 'Restore Progress Window' : 'Minimize to Compact Bar'}
+              onClick={() => setCompact((c) => !c)}
+            >
+              {compact ? (
+                <svg viewBox="0 0 10 10" aria-hidden="true">
+                  <rect x="2" y="2" width="6" height="6" rx="0.5" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 10 10" aria-hidden="true">
+                  <path d="M1.5 5h7" />
+                </svg>
+              )}
+            </button>
+            <button
+              type="button"
+              id="cl"
+              className="dl-cl"
+              title="Close window (download continues in background)"
+              aria-label="Close Progress Window"
+              onClick={closePopupWindow}
+            >
+              <svg viewBox="0 0 10 10" aria-hidden="true">
+                <path d="M2 2l6 6M8 2L2 8" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Compact Progress Strip (.mini) */}
+        <div className="dl-mini" aria-hidden={!compact}>
+          <i className={barStateCls} style={{ width: `${barWidthPct.toFixed(2)}%` }} />
+        </div>
+
+        {/* 3 Navigation Tabs */}
+        <div className="dl-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'status'}
+            data-tab="status"
+            className={`dl-tab ${activeTab === 'status' ? 'on' : ''}`}
+            onClick={() => setActiveTab('status')}
+          >
+            Download status
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'limiter'}
+            data-tab="limiter"
+            className={`dl-tab ${activeTab === 'limiter' ? 'on' : ''}`}
+            onClick={() => setActiveTab('limiter')}
+          >
+            Speed limiter
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'completion'}
+            data-tab="completion"
+            className={`dl-tab ${activeTab === 'completion' ? 'on' : ''}`}
+            onClick={() => setActiveTab('completion')}
+          >
+            Options on completion
+          </button>
+        </div>
+
+        {/* Tab 1: Download status */}
+        {activeTab === 'status' && (
+          <div className="dl-pane" data-pane="status">
+            <div className="dl-grid">
+              <span className="k">URL</span>
+              <span className="v" title={job?.url || ''}>
+                {job?.url || '--'}
+              </span>
+
+              <span className="k">Status</span>
+              <span className={statusMeta.cls} title={job?.error_message || statusMeta.text}>
+                {statusMeta.text}
+              </span>
+
+              <span className="k">File size</span>
+              <span className="v">{job ? fmtB(job.total_bytes) : '--'}</span>
+
+              <span className="k">Downloaded</span>
+              <span className="v">{downloadedText}</span>
+
+              <span className="k">Transfer rate</span>
+              <span className="v">{transferRateText}</span>
+
+              <span className="k">Time left</span>
+              <span className="v">{timeLeftText}</span>
+
+              <span className="k">Resume capability</span>
+              <span className={job?.is_resumable ? 'v g' : 'v'}>
+                {job ? (job.is_resumable ? 'Yes' : 'No') : '--'}
+              </span>
+            </div>
+
+            {job?.state === 'failed' && job.error_message && (
+              <div className="dl-err-banner" title={job.error_message}>
+                {job.error_message}
+              </div>
+            )}
+
+            <div className="dl-bw" aria-label="Overall progress">
+              <div
+                className={`dl-bar ${barStateCls}`}
+                style={{ width: `${barWidthPct.toFixed(2)}%` }}
+              />
+            </div>
+
+            <div className="dl-seg">
+              <div className="dl-seg-hdr">
+                <span>
+                  Connections : <b id="dl-conn-count">{activeConnections}</b>
+                </span>
+                {segments.length > 1 && (
+                  <span>
+                    {completedSegmentsCount} / {segments.length} parts complete
+                  </span>
+                )}
+              </div>
+              <div className="dl-sg">
+                {segments.map((seg) => {
+                  const span = seg.end_byte >= seg.start_byte ? seg.end_byte - seg.start_byte + 1 : 0;
+                  let segPct = 0;
+                  if (seg.is_complete || job?.state === 'completed') {
+                    segPct = 100;
+                  } else if (span > 0) {
+                    segPct = Math.min(100, Math.max(0, (seg.written_bytes / span) * 100));
+                  } else if (seg.written_bytes > 0 && isTransferActive(job?.state || 'downloading')) {
+                    segPct = 50;
+                  }
+                  const segCls =
+                    seg.is_complete || job?.state === 'completed'
+                      ? 'done'
+                      : job?.state === 'paused' || job?.state === 'pausing'
+                      ? 'paused'
+                      : job?.state === 'failed' || job?.state === 'cancelled'
+                      ? 'failed'
+                      : '';
+                  return (
+                    <i key={seg.chunk_index} title={`Part ${seg.chunk_index + 1}: ${segPct.toFixed(0)}%`}>
+                      <b className={segCls} style={{ width: `${segPct.toFixed(1)}%` }} />
+                    </i>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: Speed limiter */}
+        {activeTab === 'limiter' && (
+          <div className="dl-pane" data-pane="limiter">
+            <label className="dl-opt-row" htmlFor="dl-lim-enable">
+              <input
+                id="dl-lim-enable"
+                type="checkbox"
+                checked={limiterEnabled}
+                onChange={(e) => handleToggleLimiter(e.target.checked)}
+              />
+              <span>Use speed limiter</span>
+            </label>
+
+            <div className={`dl-fr ${!limiterEnabled ? 'dis' : ''}`}>
+              <span>Maximum speed</span>
+              <input
+                id="dl-lim-value"
+                className="dl-fi"
+                type="number"
+                min={1}
+                max={1048576}
+                disabled={!limiterEnabled}
+                value={limiterKbpsInput}
+                onFocus={() => {
+                  limiterEditingRef.current = true;
+                }}
+                onChange={(e) => handleKbpsChange(e.target.value)}
+                onBlur={() => {
+                  limiterEditingRef.current = false;
+                  if (limiterEnabled) {
+                    if (limiterDebounceRef.current !== null) {
+                      window.clearTimeout(limiterDebounceRef.current);
+                      limiterDebounceRef.current = null;
+                    }
+                    commitSpeedLimit(true, limiterKbpsInput);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && limiterEnabled) {
+                    if (limiterDebounceRef.current !== null) {
+                      window.clearTimeout(limiterDebounceRef.current);
+                      limiterDebounceRef.current = null;
+                    }
+                    commitSpeedLimit(true, limiterKbpsInput);
+                  }
+                }}
+              />
+              <span>KB/s</span>
+            </div>
+
+            <div className="dl-note">
+              {limiterEnabled
+                ? `Throttles this download immediately to ${Math.max(
+                    1,
+                    parseInt(limiterKbpsInput, 10) || DEFAULT_SPEED_KBPS
+                  )} KB/s without affecting global settings.`
+                : 'Enable to cap bandwidth for this download without affecting other active transfers.'}
+              {details && details.global_speed_limit_bps > 0 && (
+                <div>
+                  Global Settings limiter is also active at{' '}
+                  {Math.max(1, Math.round(details.global_speed_limit_bps / 1024))} KB/s.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 3: Options on completion */}
+        {activeTab === 'completion' && (
+          <div className="dl-pane" data-pane="completion">
+            <label className="dl-opt-row" htmlFor="dl-opt-close">
+              <input
+                id="dl-opt-close"
+                type="checkbox"
+                checked={completionOpts.close_on_complete}
+                onChange={(e) =>
+                  handleCompletionOptionChange('close_on_complete', e.target.checked)
+                }
+              />
+              <span>Close this window when the download completes</span>
+            </label>
+
+            <label className="dl-opt-row" htmlFor="dl-opt-notify">
+              <input
+                id="dl-opt-notify"
+                type="checkbox"
+                checked={completionOpts.notify_on_complete}
+                onChange={(e) =>
+                  handleCompletionOptionChange('notify_on_complete', e.target.checked)
+                }
+              />
+              <span>Show a notification when complete</span>
+            </label>
+
+            <label className="dl-opt-row" htmlFor="dl-opt-open">
+              <input
+                id="dl-opt-open"
+                type="checkbox"
+                checked={completionOpts.open_on_complete}
+                onChange={(e) =>
+                  handleCompletionOptionChange('open_on_complete', e.target.checked)
+                }
+              />
+              <span>Open the file when complete</span>
+            </label>
+
+            <div className="dl-note">
+              Saved automatically for this download and enforced even if you close this window.
+            </div>
+          </div>
+        )}
+
+        {/* Fixed 2-button Footer (.foot) */}
+        {renderFooter()}
+      </div>
     </div>
   );
 };

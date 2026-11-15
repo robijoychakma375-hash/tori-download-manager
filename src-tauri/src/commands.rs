@@ -1,7 +1,111 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use tauri::{Emitter, Manager, State};
-use tdm_core::{ChunkRecord, DownloadJob};
+use tdm_core::{
+    ChunkRecord, DownloadCompletionOptions, DownloadJob, DownloadStatusDetails,
+};
+
+static AUTO_OPENED_PROGRESS_IDS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn mark_auto_opened_once(id: &str) -> bool {
+    let lock = AUTO_OPENED_PROGRESS_IDS.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut set = lock.lock().unwrap();
+    if set.contains(id) {
+        return false;
+    }
+    if set.len() > 2048 {
+        set.clear();
+    }
+    set.insert(id.to_string());
+    true
+}
+
+pub fn progress_window_label(id: &str) -> String {
+    let mut clean = String::with_capacity(id.len());
+    for ch in id.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            clean.push(ch);
+        } else {
+            clean.push('_');
+        }
+    }
+    format!("progress_{}", clean)
+}
+
+fn always_on_top_enabled(manager: &tdm_core::DownloadManager) -> bool {
+    if let Ok(Some(saved)) = manager.database().get_setting("app_settings") {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&saved) {
+            if let Some(aot) = val.get("alwaysOnTop").and_then(|v| v.as_bool()) {
+                return aot;
+            }
+        }
+    }
+    true
+}
+
+fn url_encode_query_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(*b, b'-' | b'_' | b'.' | b'~') {
+            out.push(*b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+pub fn send_desktop_notification(title: &str, body: &str) {
+    crate::lifecycle::log_event(
+        "NOTIFY",
+        "DOWNLOAD_COMPLETE",
+        &format!("title={}, body={}", title, body),
+    );
+
+    #[cfg(windows)]
+    {
+        let safe_title = xml_escape(title).replace('\'', "''");
+        let safe_body = xml_escape(body).replace('\'', "''");
+        let ps_script = format!(
+            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; \
+             [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null; \
+             $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; \
+             $xml.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>'); \
+             $toast = New-Object Windows.UI.Notifications.ToastNotification $xml; \
+             [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('TORI Download Manager').Show($toast)",
+            safe_title, safe_body
+        );
+        std::thread::spawn(move || {
+            let _ = silent_command("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    &ps_script,
+                ])
+                .output();
+        });
+    }
+}
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -180,6 +284,10 @@ pub async fn delete_download(
         .delete_download(&id, delete_files)
         .map_err(|e| e.to_string())?;
 
+    let label = progress_window_label(&id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.close();
+    }
     let _ = app.emit("download-deleted", &id);
     Ok(())
 }
@@ -194,6 +302,10 @@ pub async fn delete_downloads(
     let mut deleted = Vec::new();
     for id in ids {
         if state.manager.delete_download(&id, delete_files).is_ok() {
+            let label = progress_window_label(&id);
+            if let Some(win) = app.get_webview_window(&label) {
+                let _ = win.close();
+            }
             let _ = app.emit("download-deleted", &id);
             deleted.push(id);
         }
@@ -569,6 +681,7 @@ pub fn apply_settings_to_manager(
 #[tauri::command]
 pub async fn update_engine_settings(
     settings: serde_json::Value,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     apply_settings_to_manager(&state.manager, &settings);
@@ -578,6 +691,16 @@ pub async fn update_engine_settings(
         .database()
         .set_setting("app_settings", &serialized)
         .map_err(|e| e.to_string())?;
+    let aot = settings
+        .get("alwaysOnTop")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    for (label, win) in app.webview_windows() {
+        if label.starts_with("progress_") {
+            let _ = win.set_always_on_top(aot);
+        }
+    }
+    let _ = app.emit("settings-updated", &settings);
     if let Some(close_to_tray) = settings.get("closeToTray").and_then(|v| v.as_bool()) {
         crate::lifecycle::log_event(
             "SETTINGS",
@@ -682,16 +805,34 @@ pub async fn open_progress_window_internal(
     id: &str,
     force: bool,
 ) -> Result<(), String> {
-    if !force {
-        let db = manager.database();
-        if let Ok(Some(saved)) = db.get_setting("app_settings") {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&saved) {
-                if let Some(mode) = val.get("showDownloadPopup").and_then(|v| v.as_str()) {
-                    if mode == "never" {
-                        return Ok(());
-                    }
+    let mut initial_theme: Option<String> = None;
+    let mut initial_accent: Option<String> = None;
+    let mut popup_mode = "always".to_string();
+
+    if let Ok(Some(saved)) = manager.database().get_setting("app_settings") {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&saved) {
+            if let Some(mode) = val.get("showDownloadPopup").and_then(|v| v.as_str()) {
+                popup_mode = mode.to_string();
+            }
+            if let Some(t) = val.get("theme").and_then(|v| v.as_str()) {
+                if matches!(t, "light" | "dark" | "system") {
+                    initial_theme = Some(t.to_string());
                 }
             }
+            if let Some(a) = val.get("accent").and_then(|v| v.as_str()) {
+                if matches!(a, "indigo" | "ocean" | "emerald" | "rose") {
+                    initial_accent = Some(a.to_string());
+                }
+            }
+        }
+    }
+
+    if !force {
+        if popup_mode == "never" {
+            return Ok(());
+        }
+        if popup_mode == "on_start" && !mark_auto_opened_once(id) {
+            return Ok(());
         }
     }
 
@@ -700,39 +841,59 @@ pub async fn open_progress_window_internal(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Job {} not found", id))?;
 
-    let label = "progress_toast";
-    if let Some(win) = app.get_webview_window(label) {
-        let _ = win.show();
+    let always_on_top = always_on_top_enabled(manager);
+    let label = progress_window_label(id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.set_always_on_top(always_on_top);
         let _ = win.unminimize();
-        let _ = app.emit("toast-add-download", id);
+        let _ = win.show();
+        let _ = win.set_focus();
+        if force {
+            let _ = app.emit_to(&label, "progress-restore-full", id);
+        }
         return Ok(());
     }
 
-    let url = format!("index.html?window=toast&id={}", id);
-    let title = format!("TORI Download - {}", job.filename);
+    let open_count = app
+        .webview_windows()
+        .keys()
+        .filter(|k| k.starts_with("progress_"))
+        .count();
 
-    let initial_width = manager
-        .database()
-        .get_setting("toast_preferred_width")
-        .ok()
-        .flatten()
-        .and_then(|s| s.parse::<f64>().ok())
-        .unwrap_or(494.0)
-        .clamp(384.0, 744.0);
+    let mut url = format!("index.html?window=toast&id={}", url_encode_query_component(id));
+    if let Some(t) = initial_theme {
+        url.push_str(&format!("&theme={}", t));
+    }
+    if let Some(a) = initial_accent {
+        url.push_str(&format!("&accent={}", a));
+    }
+
+    let initial_pct = match job.total_bytes {
+        Some(tot) if tot > 0 => ((job.downloaded_bytes as f64 / tot as f64) * 100.0).floor().clamp(0.0, 100.0) as u32,
+        _ => 0,
+    };
+    let title = match job.state {
+        tdm_core::JobState::Completed => "Download complete".to_string(),
+        tdm_core::JobState::Failed => "Download failed".to_string(),
+        _ => format!("{}% {}", initial_pct, job.filename),
+    };
+
+    let initial_width = 460.0;
+    let initial_height = 382.0;
 
     let mut builder =
-        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
+        tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(url.into()))
             .title(title)
-            .inner_size(initial_width, 100.0)
-            .min_inner_size(384.0, 76.0)
-            .max_inner_size(744.0, 800.0)
-            .always_on_top(true)
+            .inner_size(initial_width, initial_height)
+            .min_inner_size(360.0, 34.0)
+            .max_inner_size(720.0, 760.0)
+            .always_on_top(always_on_top)
             .decorations(false)
-            .transparent(true)
-            .skip_taskbar(true)
-            .focused(false)
-            .resizable(true)
-            .shadow(false);
+            .transparent(false)
+            .skip_taskbar(false)
+            .focused(force)
+            .resizable(false)
+            .shadow(true);
 
     let (saved_x, saved_y) =
         if let Ok(Some(saved)) = manager.database().get_setting("toast_window_position") {
@@ -752,7 +913,16 @@ pub async fn open_progress_window_internal(
             (None, None)
         };
 
-    let (x, y) = get_clamped_toast_position(app, saved_x, saved_y, initial_width, 100.0);
+    let cascade = (open_count.min(6) as f64) * 26.0;
+    let (base_x, base_y) = match (saved_x, saved_y) {
+        (Some(sx), Some(sy)) => (Some(sx + cascade), Some(sy + cascade)),
+        _ => (None, None),
+    };
+    let (mut x, mut y) = get_clamped_toast_position(app, base_x, base_y, initial_width, initial_height);
+    if saved_x.is_none() && cascade > 0.0 {
+        x = (x - cascade).max(16.0);
+        y = (y - cascade).max(16.0);
+    }
     builder = builder.position(x, y);
 
     let _win = builder
@@ -1013,58 +1183,93 @@ pub async fn get_toast_size(state: State<'_, AppState>) -> Result<Option<f64>, S
 #[tauri::command]
 pub async fn open_progress_window(
     id: String,
+    force: Option<bool>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    open_progress_window_internal(&app, &state.manager, &id, true).await
+    open_progress_window_internal(&app, &state.manager, &id, force.unwrap_or(true)).await
 }
 
 #[tauri::command]
 pub async fn update_toast_bounds(
     width: f64,
     height: f64,
+    window: tauri::Window,
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
 ) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window("progress_toast") {
-        let _ = win.set_size(tauri::LogicalSize::new(width, height));
+    let w = width.clamp(360.0, 720.0);
+    let h = height.clamp(34.0, 760.0);
+    let target = if window.label().starts_with("progress_") {
+        app.get_webview_window(window.label())
+    } else {
+        app.get_webview_window("progress_toast")
+    };
 
-        let (saved_x, saved_y) = if let Ok(Some(saved)) = state
-            .manager
-            .database()
-            .get_setting("toast_window_position")
-        {
-            if let Ok(pos) = serde_json::from_str::<ToastPosition>(&saved) {
-                if pos.is_manual
-                    && !(pos.x >= 239.0 && pos.x <= 241.0 && pos.y >= 179.0 && pos.y <= 181.0)
-                {
-                    (Some(pos.x), Some(pos.y))
-                } else {
-                    let _ = state
-                        .manager
-                        .database()
-                        .set_setting("toast_window_position", "");
-                    (None, None)
-                }
-            } else {
-                (None, None)
+    if let Some(win) = target {
+        let _ = win.set_size(tauri::LogicalSize::new(w, h));
+        let scale = win.scale_factor().unwrap_or(1.0);
+        let cur_pos = win.outer_position().ok().map(|p| (p.x as f64 / scale, p.y as f64 / scale));
+        if let Some((cx, cy)) = cur_pos {
+            let (nx, ny) = get_clamped_toast_position(&app, Some(cx), Some(cy), w, h);
+            if (nx - cx).abs() > 1.0 || (ny - cy).abs() > 1.0 {
+                let _ = win.set_position(tauri::LogicalPosition::new(nx, ny));
             }
-        } else {
-            (None, None)
-        };
-
-        let (x, y) = get_clamped_toast_position(&app, saved_x, saved_y, width, height);
-        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+        }
     }
     Ok(())
 }
 
 #[tauri::command]
-pub async fn hide_toast_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window("progress_toast") {
-        let _ = win.destroy();
+pub async fn hide_toast_window(window: tauri::Window, app: tauri::AppHandle) -> Result<(), String> {
+    if window.label() != "main" {
+        let _ = window.close();
+    } else if let Some(win) = app.get_webview_window("progress_toast") {
+        let _ = win.close();
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_download_status_details(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<DownloadStatusDetails, String> {
+    state
+        .manager
+        .get_download_status_details(&id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_download_speed_limit(
+    id: String,
+    limit_bps: u64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .manager
+        .set_job_speed_limit(&id, limit_bps)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_download_completion_options(
+    id: String,
+    options: DownloadCompletionOptions,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .manager
+        .set_completion_options(&id, &options)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_download_completion_options(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<DownloadCompletionOptions, String> {
+    Ok(state.manager.get_completion_options(&id))
 }
 
 fn get_default_download_path() -> PathBuf {

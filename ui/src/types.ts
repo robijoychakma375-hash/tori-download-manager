@@ -59,6 +59,21 @@ export interface DownloadProgress {
   error_message: string | null;
 }
 
+export interface DownloadStatusDetails {
+  id: string;
+  active_connections: number;
+  max_connections: number;
+  chunks: ChunkRecord[];
+  global_speed_limit_bps: number;
+  job_speed_limit_bps: number;
+}
+
+export interface DownloadCompletionOptions {
+  close_on_complete: boolean;
+  notify_on_complete: boolean;
+  open_on_complete: boolean;
+}
+
 export type DownloadEvent =
   | { type: 'Progress'; payload: DownloadProgress }
   | { type: 'StateChanged'; payload: { id: string; state: JobState; error: string | null } }
@@ -123,6 +138,7 @@ export interface AppSettings {
   motion: boolean;
   details?: boolean;
   showDownloadPopup?: 'always' | 'on_start' | 'never';
+  alwaysOnTop?: boolean;
   closeToTray?: boolean;
   autoCheckUpdates?: boolean;
   lastUpdateCheck?: number;

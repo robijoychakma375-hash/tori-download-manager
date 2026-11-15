@@ -218,6 +218,46 @@ pub fn run() {
                                 }
                             }
                         }
+                        tdm_core::DownloadEvent::StateChanged {
+                            id,
+                            state: tdm_core::JobState::Completed,
+                            error: None,
+                        } => {
+                            let app = bus_app_handle.clone();
+                            let m = mgr.clone();
+                            let id_c = id.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let opts = m.get_completion_options(&id_c);
+                                if opts.notify_on_complete {
+                                    let fname = m
+                                        .get_download(&id_c)
+                                        .ok()
+                                        .flatten()
+                                        .map(|j| j.filename)
+                                        .unwrap_or_else(|| "Download".to_string());
+                                    let _ = app.emit(
+                                        "download-complete-notification",
+                                        serde_json::json!({ "id": &id_c, "filename": &fname }),
+                                    );
+                                    commands::send_desktop_notification(
+                                        "TORI Download Complete",
+                                        &fname,
+                                    );
+                                }
+                                if opts.open_on_complete {
+                                    if let Ok(Some(job)) = m.get_download(&id_c) {
+                                        let _ = commands::open_file(job.target_path).await;
+                                    }
+                                }
+                                if opts.close_on_complete {
+                                    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                                    let label = commands::progress_window_label(&id_c);
+                                    if let Some(win) = app.get_webview_window(&label) {
+                                        let _ = win.close();
+                                    }
+                                }
+                            });
+                        }
                         _ => {}
                     }
                     let _ = bus_app_handle.emit("download-event", &event);
@@ -342,6 +382,10 @@ pub fn run() {
             get_browser_integration_info,
             regenerate_pairing_token,
             get_download,
+            get_download_status_details,
+            set_download_speed_limit,
+            set_download_completion_options,
+            get_download_completion_options,
             open_progress_window,
             update_toast_bounds,
             hide_toast_window,

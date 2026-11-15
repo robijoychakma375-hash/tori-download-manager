@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -18,10 +18,22 @@ use crate::engine::governor::{ConcurrencyGovernor, GovernorConfig};
 use crate::engine::limiter::BandwidthLimiter;
 use crate::engine::planner::plan_chunks;
 use crate::engine::probe::{extract_safe_header_filename_candidate, sanitize_filename, ProbeResult};
-use crate::engine::worker::{download_chunk_with_options, download_stream_with_options};
+use crate::engine::worker::{download_chunk_with_limiters, download_stream_with_limiters};
 use crate::engine::writer::PartFileWriter;
 use crate::error::{EngineError, Result};
-use crate::types::{ChunkRecord, DownloadJob, DownloadProgress, JobState, JobType, Priority};
+use crate::types::{
+    ChunkRecord, DownloadCompletionOptions, DownloadJob, DownloadProgress, DownloadStatusDetails,
+    JobState, JobType, Priority,
+};
+
+#[derive(Clone)]
+struct ActiveJobTelemetry {
+    active_chunk_bounds: Arc<Mutex<HashMap<usize, Arc<AtomicU64>>>>,
+    active_chunk_progress: Arc<Mutex<HashMap<usize, Arc<AtomicU64>>>>,
+    stream_downloaded: Arc<AtomicU64>,
+    is_stream_mode: Arc<AtomicBool>,
+    max_connections: Arc<AtomicUsize>,
+}
 
 pub struct DownloadManager {
     client: Client,
@@ -34,6 +46,8 @@ pub struct DownloadManager {
     stop_tokens: Arc<Mutex<HashMap<String, CancellationToken>>>,
     max_active_jobs: Arc<AtomicUsize>,
     rate_limiter: Arc<BandwidthLimiter>,
+    job_rate_limiters: Arc<Mutex<HashMap<String, Arc<BandwidthLimiter>>>>,
+    active_job_telemetry: Arc<Mutex<HashMap<String, ActiveJobTelemetry>>>,
     max_connections_per_download: Arc<AtomicUsize>,
     max_retries: Arc<AtomicUsize>,
     dynamic_segmentation: Arc<std::sync::atomic::AtomicBool>,
@@ -190,6 +204,8 @@ impl DownloadManager {
         let stop_tokens = Arc::new(Mutex::new(HashMap::new()));
         let max_active_jobs = Arc::new(AtomicUsize::new(4));
         let rate_limiter = Arc::new(BandwidthLimiter::new(0));
+        let job_rate_limiters = Arc::new(Mutex::new(HashMap::new()));
+        let active_job_telemetry = Arc::new(Mutex::new(HashMap::new()));
         let max_connections_per_download = Arc::new(AtomicUsize::new(16));
         let max_retries = Arc::new(AtomicUsize::new(3));
         let dynamic_segmentation = Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -219,6 +235,8 @@ impl DownloadManager {
         let adaptive_sched = Arc::clone(&adaptive_scheduler);
         let torrent_sched = Arc::clone(&torrent_manager);
         let rate_limiter_sched = Arc::clone(&rate_limiter);
+        let job_limiters_sched = Arc::clone(&job_rate_limiters);
+        let telemetry_sched = Arc::clone(&active_job_telemetry);
         let max_retries_sched = Arc::clone(&max_retries);
         let dynamic_seg_sched = Arc::clone(&dynamic_segmentation);
 
@@ -267,6 +285,8 @@ impl DownloadManager {
                                             &stop_tokens_sched,
                                             &max_jobs_sched,
                                             &rate_limiter_sched,
+                                            &job_limiters_sched,
+                                            &telemetry_sched,
                                             &max_retries_sched,
                                             &dynamic_seg_sched,
                                         );
@@ -311,6 +331,8 @@ impl DownloadManager {
             stop_tokens,
             max_active_jobs,
             rate_limiter,
+            job_rate_limiters,
+            active_job_telemetry,
             max_connections_per_download,
             max_retries,
             dynamic_segmentation,
@@ -343,6 +365,127 @@ impl DownloadManager {
 
     pub fn speed_limit(&self) -> u64 {
         self.rate_limiter.rate_limit()
+    }
+
+    fn job_limiter_for_id(
+        id: &str,
+        db: &Database,
+        job_rate_limiters: &Arc<Mutex<HashMap<String, Arc<BandwidthLimiter>>>>,
+    ) -> Arc<BandwidthLimiter> {
+        if let Some(existing) = job_rate_limiters.lock().unwrap().get(id).cloned() {
+            return existing;
+        }
+        let key = format!("job_speed_limit:{}", id);
+        let initial = db
+            .get_setting(&key)
+            .ok()
+            .flatten()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        let mut guard = job_rate_limiters.lock().unwrap();
+        guard
+            .entry(id.to_string())
+            .or_insert_with(|| Arc::new(BandwidthLimiter::new(initial)))
+            .clone()
+    }
+
+    /// Sets and persists the per-download speed limit (bytes/sec, 0 = disabled) and takes immediate effect on active workers.
+    pub fn set_job_speed_limit(&self, id: &str, limit_bps: u64) -> Result<()> {
+        let key = format!("job_speed_limit:{}", id);
+        if limit_bps == 0 {
+            let _ = self.db.delete_setting(&key);
+        } else {
+            self.db.set_setting(&key, &limit_bps.to_string())?;
+        }
+        let limiter = Self::job_limiter_for_id(id, &self.db, &self.job_rate_limiters);
+        limiter.set_rate_limit(limit_bps);
+        Ok(())
+    }
+
+    pub fn job_speed_limit(&self, id: &str) -> u64 {
+        if let Some(existing) = self.job_rate_limiters.lock().unwrap().get(id).cloned() {
+            return existing.rate_limit();
+        }
+        let key = format!("job_speed_limit:{}", id);
+        self.db
+            .get_setting(&key)
+            .ok()
+            .flatten()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(0)
+    }
+
+    /// Persists per-download completion preferences (close popup, notify, open file).
+    pub fn set_completion_options(&self, id: &str, opts: &DownloadCompletionOptions) -> Result<()> {
+        let key = format!("job_completion_opts:{}", id);
+        let json = serde_json::to_string(opts).map_err(|e| EngineError::Other(e.to_string()))?;
+        self.db.set_setting(&key, &json)?;
+        Ok(())
+    }
+
+    pub fn get_completion_options(&self, id: &str) -> DownloadCompletionOptions {
+        let key = format!("job_completion_opts:{}", id);
+        self.db
+            .get_setting(&key)
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str::<DownloadCompletionOptions>(&s).ok())
+            .unwrap_or_default()
+    }
+
+    /// Returns a lightweight real-time snapshot of active connections, live per-chunk bytes, and speed limits.
+    pub fn get_download_status_details(&self, id: &str) -> Result<DownloadStatusDetails> {
+        let mut chunks = self.db.get_chunks(id)?;
+        let telemetry = self.active_job_telemetry.lock().unwrap().get(id).cloned();
+
+        let (active_connections, max_connections) = if let Some(tel) = telemetry {
+            let max_con = tel.max_connections.load(Ordering::Relaxed).max(1);
+            if tel.is_stream_mode.load(Ordering::Relaxed) {
+                let downloaded = tel.stream_downloaded.load(Ordering::Relaxed);
+                if let Some(first) = chunks.first_mut() {
+                    first.written_bytes = first.written_bytes.max(downloaded);
+                }
+                (1, max_con)
+            } else {
+                let bounds_snap: HashMap<usize, u64> = tel
+                    .active_chunk_bounds
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (*k, v.load(Ordering::Relaxed)))
+                    .collect();
+                let prog_snap: HashMap<usize, u64> = tel
+                    .active_chunk_progress
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (*k, v.load(Ordering::Relaxed)))
+                    .collect();
+                let active_con = bounds_snap.len();
+                for c in &mut chunks {
+                    if let Some(&b) = bounds_snap.get(&c.chunk_index) {
+                        c.end_byte = b;
+                    }
+                    if let Some(&p) = prog_snap.get(&c.chunk_index) {
+                        c.written_bytes = c.written_bytes.max(p);
+                    }
+                }
+                (active_con, max_con)
+            }
+        } else {
+            let is_active = self.active_tokens.lock().unwrap().contains_key(id);
+            let max_con = self.max_connections_per_download();
+            (if is_active { 1 } else { 0 }, max_con)
+        };
+
+        Ok(DownloadStatusDetails {
+            id: id.to_string(),
+            active_connections,
+            max_connections,
+            chunks,
+            global_speed_limit_bps: self.speed_limit(),
+            job_speed_limit_bps: self.job_speed_limit(id),
+        })
     }
 
     pub fn set_max_connections_per_download(&self, con: usize) {
@@ -1691,6 +1834,8 @@ impl DownloadManager {
             &self.stop_tokens,
             &self.max_active_jobs,
             &self.rate_limiter,
+            &self.job_rate_limiters,
+            &self.active_job_telemetry,
             &self.max_retries,
             &self.dynamic_segmentation,
         )
@@ -1709,6 +1854,8 @@ impl DownloadManager {
         stop_tokens: &Arc<Mutex<HashMap<String, CancellationToken>>>,
         max_active_jobs: &Arc<AtomicUsize>,
         rate_limiter: &Arc<BandwidthLimiter>,
+        job_rate_limiters: &Arc<Mutex<HashMap<String, Arc<BandwidthLimiter>>>>,
+        active_job_telemetry: &Arc<Mutex<HashMap<String, ActiveJobTelemetry>>>,
         max_retries: &Arc<AtomicUsize>,
         dynamic_segmentation: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<()> {
@@ -1780,9 +1927,13 @@ impl DownloadManager {
         let stop_tokens_c = stop_tokens.clone();
         let max_jobs_c = max_active_jobs.clone();
         let limiter_c = rate_limiter.clone();
+        let job_limiter_c = Self::job_limiter_for_id(id, db, job_rate_limiters);
+        let telemetry_c = active_job_telemetry.clone();
         let max_retries_c = max_retries.load(Ordering::Relaxed) as u32;
         let dynamic_seg_c = dynamic_segmentation.load(Ordering::Relaxed);
         let limiter_for_queued = rate_limiter.clone();
+        let job_limiters_for_queued = job_rate_limiters.clone();
+        let telemetry_for_queued = active_job_telemetry.clone();
         let retries_for_queued = max_retries.clone();
         let dynamic_for_queued = dynamic_segmentation.clone();
         let download_id = id.to_string();
@@ -1799,10 +1950,14 @@ impl DownloadManager {
                 cancel_token,
                 stop_token,
                 limiter_c,
+                job_limiter_c,
+                telemetry_c.clone(),
                 max_retries_c,
                 dynamic_seg_c,
             )
             .await;
+
+            telemetry_c.lock().unwrap().remove(&download_id);
 
             let mut tokens = active_tokens_c.lock().unwrap();
             tokens.remove(&download_id);
@@ -1861,6 +2016,8 @@ impl DownloadManager {
                         &stop_tokens_c,
                         &max_jobs_c,
                         &limiter_for_queued,
+                        &job_limiters_for_queued,
+                        &telemetry_for_queued,
                         &retries_for_queued,
                         &dynamic_for_queued,
                     );
@@ -1996,6 +2153,10 @@ impl DownloadManager {
         }
 
         self.db.delete_job(id)?;
+        let _ = self.db.delete_setting(&format!("job_speed_limit:{}", id));
+        let _ = self.db.delete_setting(&format!("job_completion_opts:{}", id));
+        self.job_rate_limiters.lock().unwrap().remove(id);
+        self.active_job_telemetry.lock().unwrap().remove(id);
         self.event_bus
             .emit(DownloadEvent::Deleted { id: id.to_string() });
         let _ = self.process_queue();
@@ -2014,6 +2175,8 @@ impl DownloadManager {
         cancel_token: CancellationToken,
         stop_token: CancellationToken,
         rate_limiter: Arc<BandwidthLimiter>,
+        job_rate_limiter: Arc<BandwidthLimiter>,
+        telemetry_registry: Arc<Mutex<HashMap<String, ActiveJobTelemetry>>>,
         max_retries: u32,
         dynamic_segmentation: bool,
     ) -> Result<()> {
@@ -2290,6 +2453,17 @@ impl DownloadManager {
                 effective_max_concurrency = effective_max_concurrency.min(4);
             }
 
+            telemetry_registry.lock().unwrap().insert(
+                download_id.clone(),
+                ActiveJobTelemetry {
+                    active_chunk_bounds: active_chunk_bounds.clone(),
+                    active_chunk_progress: active_chunk_progress.clone(),
+                    stream_downloaded: total_downloaded_atomic.clone(),
+                    is_stream_mode: Arc::new(AtomicBool::new(false)),
+                    max_connections: Arc::new(AtomicUsize::new(effective_max_concurrency)),
+                },
+            );
+
             // Spawn initial workers respecting Governor per-host & global connection permits
             for chunk in &chunks {
                 if chunk.is_complete {
@@ -2328,11 +2502,12 @@ impl DownloadManager {
                 let cancel_c = cancel_token.clone();
                 let counter_c = total_downloaded_atomic.clone();
                 let limiter_c = rate_limiter.clone();
+                let job_limiter_c = job_rate_limiter.clone();
 
                 join_set.spawn(async move {
                     let _p = permit;
                     let idx = chunk_copy.chunk_index;
-                    let res = download_chunk_with_options(
+                    let res = download_chunk_with_limiters(
                         &client_c,
                         &url_c,
                         etag_c.as_deref(),
@@ -2344,6 +2519,7 @@ impl DownloadManager {
                         Some(bound),
                         Some(progress),
                         Some(&limiter_c),
+                        Some(&job_limiter_c),
                         Some(max_retries),
                         referer_c.as_deref(),
                         user_agent_c.as_deref(),
@@ -2465,11 +2641,12 @@ impl DownloadManager {
                             let cancel_c = cancel_token.clone();
                             let counter_c = total_downloaded_atomic.clone();
                             let limiter_c = rate_limiter.clone();
+                            let job_limiter_c = job_rate_limiter.clone();
 
                             join_set.spawn(async move {
                                 let _p = permit;
                                 let idx = chunk_copy.chunk_index;
-                                let res = download_chunk_with_options(
+                                let res = download_chunk_with_limiters(
                                     &client_c,
                                     &url_c,
                                     etag_c.as_deref(),
@@ -2481,6 +2658,7 @@ impl DownloadManager {
                                     Some(bound),
                                     Some(progress),
                                     Some(&limiter_c),
+                                    Some(&job_limiter_c),
                                     Some(max_retries),
                                     referer_c.as_deref(),
                                     user_agent_c.as_deref(),
@@ -2584,11 +2762,12 @@ impl DownloadManager {
                                         let cancel_c = cancel_token.clone();
                                         let counter_c = total_downloaded_atomic.clone();
                                         let limiter_c = rate_limiter.clone();
+                                        let job_limiter_c = job_rate_limiter.clone();
 
                                         join_set.spawn(async move {
                                             let _p = permit;
                                             let idx = new_chunk.chunk_index;
-                                            let res = download_chunk_with_options(
+                                            let res = download_chunk_with_limiters(
                                                 &client_c,
                                                 &url_c,
                                                 etag_c.as_deref(),
@@ -2600,6 +2779,7 @@ impl DownloadManager {
                                                 Some(bound),
                                                 Some(progress),
                                                 Some(&limiter_c),
+                                                Some(&job_limiter_c),
                                                 Some(max_retries),
                                                 referer_c.as_deref(),
                                                 user_agent_c.as_deref(),
@@ -2646,7 +2826,18 @@ impl DownloadManager {
             let url = job.resolved_url.clone().unwrap_or_else(|| job.url.clone());
             let counter = total_downloaded_atomic.clone();
 
-            let bytes_written = download_stream_with_options(
+            telemetry_registry.lock().unwrap().insert(
+                download_id.clone(),
+                ActiveJobTelemetry {
+                    active_chunk_bounds: Arc::new(Mutex::new(HashMap::new())),
+                    active_chunk_progress: Arc::new(Mutex::new(HashMap::new())),
+                    stream_downloaded: total_downloaded_atomic.clone(),
+                    is_stream_mode: Arc::new(AtomicBool::new(true)),
+                    max_connections: Arc::new(AtomicUsize::new(1)),
+                },
+            );
+
+            let bytes_written = download_stream_with_limiters(
                 &client,
                 &url,
                 &writer,
@@ -2654,6 +2845,7 @@ impl DownloadManager {
                 &download_id,
                 &cancel_token,
                 Some(&rate_limiter),
+                Some(&job_rate_limiter),
                 Some(max_retries),
                 job.referer.as_deref(),
                 job.user_agent.as_deref(),
@@ -2671,6 +2863,8 @@ impl DownloadManager {
 
             Ok(())
         };
+
+        telemetry_registry.lock().unwrap().remove(&download_id);
 
         // Stop progress loop
         progress_cancel.cancel();

@@ -211,3 +211,25 @@ pub struct DownloadProgress {
     pub state: JobState,
     pub error_message: Option<String>,
 }
+
+/// Live snapshot of connections, per-chunk ranges/progress, and active limits for the Progress Window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadStatusDetails {
+    pub id: String,
+    pub active_connections: usize,
+    pub max_connections: usize,
+    pub chunks: Vec<ChunkRecord>,
+    pub global_speed_limit_bps: u64,
+    pub job_speed_limit_bps: u64,
+}
+
+/// Per-download completion preferences stored persistently per download ID.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DownloadCompletionOptions {
+    #[serde(default)]
+    pub close_on_complete: bool,
+    #[serde(default)]
+    pub notify_on_complete: bool,
+    #[serde(default)]
+    pub open_on_complete: bool,
+}

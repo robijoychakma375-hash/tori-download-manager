@@ -24,4 +24,7 @@ pub use resolver::{
     DownloadCapability, FilesizeType, MediaCandidate, MediaMetadata, MediaResolver, PlaylistItem,
     PlaylistMetadata, ResolveRequest, ResolvedMediaFormat, ResolverStatus,
 };
-pub use types::{ChunkRecord, DownloadJob, DownloadProgress, JobState, JobType, Priority};
+pub use types::{
+    ChunkRecord, DownloadCompletionOptions, DownloadJob, DownloadProgress, DownloadStatusDetails,
+    JobState, JobType, Priority,
+};

@@ -36,13 +36,17 @@ impl BandwidthLimiter {
         self.rate_bps.load(Ordering::Relaxed)
     }
 
-    pub async fn acquire(&self, bytes: u64) {
-        let rate = self.rate_bps.load(Ordering::Relaxed);
-        if rate == 0 || bytes == 0 {
+    pub async fn acquire(&self, mut bytes: u64) {
+        if bytes == 0 {
             return;
         }
 
         loop {
+            let rate = self.rate_bps.load(Ordering::Relaxed);
+            if rate == 0 {
+                return;
+            }
+
             let wait = {
                 let mut guard = self.state.lock().unwrap();
                 let now = Instant::now();
@@ -52,17 +56,27 @@ impl BandwidthLimiter {
                 let max_bucket = (rate as f64) * 2.0; // Allow burst up to 2.0s
                 guard.tokens = (guard.tokens + elapsed * (rate as f64)).min(max_bucket);
 
-                if guard.tokens >= bytes as f64 {
-                    guard.tokens -= bytes as f64;
-                    return;
+                // Never demand more tokens at once than a bounded fraction of the bucket capacity,
+                // otherwise large chunk reads at low rate limits would spin forever and deadlock.
+                let slice_cap = (max_bucket * 0.25).floor().max(1.0) as u64;
+                let slice = bytes.min(slice_cap);
+                if guard.tokens >= slice as f64 {
+                    guard.tokens -= slice as f64;
+                    bytes -= slice;
+                    if bytes == 0 {
+                        return;
+                    }
+                    Duration::ZERO
                 } else {
-                    let deficit = (bytes as f64) - guard.tokens;
+                    let deficit = (slice as f64) - guard.tokens;
                     Duration::from_secs_f64(deficit / (rate as f64))
                 }
             };
 
-            // Sleep without holding lock
-            tokio::time::sleep(wait.min(Duration::from_secs(1))).await;
+            if !wait.is_zero() {
+                // Sleep without holding lock
+                tokio::time::sleep(wait.min(Duration::from_secs(1))).await;
+            }
         }
     }
 }
@@ -98,6 +112,25 @@ mod tests {
         assert!(
             elapsed >= Duration::from_millis(300),
             "Should throttle: {:?}",
+            elapsed
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bandwidth_limiter_large_chunk_exceeding_bucket_never_deadlocks() {
+        // 50 KB/s -> max_bucket = 100_000 bytes; acquiring 180_000 bytes (> max_bucket) must finish
+        let limiter = BandwidthLimiter::new(50_000);
+        // Drain initial burst to 0
+        limiter.acquire(50_000).await;
+
+        let start = Instant::now();
+        tokio::time::timeout(Duration::from_secs(6), limiter.acquire(150_000))
+            .await
+            .expect("Large acquire > max_bucket must not deadlock");
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(2400),
+            "150 KB at 50 KB/s should throttle ~3s, got {:?}",
             elapsed
         );
     }

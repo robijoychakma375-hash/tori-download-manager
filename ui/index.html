@@ -37,6 +37,13 @@
             if (s && s.theme) theme = s.theme;
             if (s && s.accent) accent = s.accent;
           }
+          try {
+            var q = new URLSearchParams(window.location.search);
+            var qt = q.get('theme');
+            var qa = q.get('accent');
+            if (qt && (qt === 'light' || qt === 'dark' || qt === 'system')) theme = qt;
+            if (qa && (qa === 'indigo' || qa === 'ocean' || qa === 'emerald' || qa === 'rose')) accent = qa;
+          } catch (_e) {}
           var isDark = theme === 'dark' || (theme === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
           var effectiveTheme = isDark ? 'dark' : 'light';
           document.documentElement.dataset.theme = effectiveTheme;
