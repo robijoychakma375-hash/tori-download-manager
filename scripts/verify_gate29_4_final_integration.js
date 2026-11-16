@@ -64,14 +64,14 @@ const QA_FF_EXT_DIR = path.join(QA_ROOT, 'firefox_unpacked');
 const QA_FF_DL = path.join(QA_ROOT, 'firefox_browser_dl');
 const QA_BACKUP_DIR = path.join(QA_ROOT, 'oem_backup');
 
-const CLEAN_PORT = 19970;
-const CLEAN_CDP_PORT = 19971;
-const UPG_PORT = 19972;
-const UPG_CDP_PORT = 19973;
-const ENG_PORT = 19974;
-const ENG_CDP_PORT = 19975;
-const FIXTURE_PORT = 19976;
-const CHROME_CDP_PORT = 19977;
+const CLEAN_PORT = 24970;
+const CLEAN_CDP_PORT = 24971;
+const UPG_PORT = 24972;
+const UPG_CDP_PORT = 24973;
+const ENG_PORT = 24974;
+const ENG_CDP_PORT = 24975;
+const FIXTURE_PORT = 24976;
+const CHROME_CDP_PORT = 24977;
 const FF_MARIONETTE_PORT = 2836;
 
 const CLEAN_TOKEN = 'tori_qa_g29_4_clean_token';

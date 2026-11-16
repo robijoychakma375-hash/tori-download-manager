@@ -39,11 +39,11 @@ const EDGE_EXE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.
 const FIREFOX_EXE = 'C:\\Program Files\\Mozilla Firefox\\firefox.exe';
 const OEM_HOST_EXE = path.join(process.env.LOCALAPPDATA || '', 'TORI Download Manager', 'bin', 'tdm-native-host.exe');
 
-const DESKTOP_GUI_PORT = 19910;
-const WEBVIEW2_CDP_PORT = 19911;
-const CHROME_CDP_PORT = 19913;
-const EDGE_CDP_PORT = 19914;
-const FIXTURE_PORT = 19915;
+const DESKTOP_GUI_PORT = 24910;
+const WEBVIEW2_CDP_PORT = 24911;
+const CHROME_CDP_PORT = 24913;
+const EDGE_CDP_PORT = 24914;
+const FIXTURE_PORT = 24915;
 const FF_MARIONETTE_PORT = 2831;
 
 const QA_ROOT = path.join(ROOT, 'target', 'gate27_8_full_qa');
@@ -997,13 +997,18 @@ async function run() {
   await edgeWebCdp.connect(6000);
 
   const edgePing = await edgeOptCdp.evalAsync(`new Promise(r => {
-    chrome.storage.local.set({
-      tori_settings: {
-        port: ${DESKTOP_GUI_PORT}, key: '${DESKTOP_TOKEN}', auto: true, cap: true, min: 0, badge: true, sites: [],
-        types: ['zip','rar','7z','iso','exe','dmg','pdf','mp4','mp3','mkv']
+    const t = setInterval(() => {
+      if (chrome?.storage?.local && chrome?.runtime?.sendMessage) {
+        clearInterval(t);
+        chrome.storage.local.set({
+          tori_settings: {
+            port: ${DESKTOP_GUI_PORT}, key: '${DESKTOP_TOKEN}', auto: true, cap: true, min: 0, badge: true, sites: [],
+            types: ['zip','rar','7z','iso','exe','dmg','pdf','mp4','mp3','mkv']
+          }
+        }, () => setTimeout(() => chrome.runtime.sendMessage({ action: 'PING_DESKTOP', port: ${DESKTOP_GUI_PORT}, key: '${DESKTOP_TOKEN}' }, r), 300));
       }
-    }, () => setTimeout(() => chrome.runtime.sendMessage({ action: 'PING_DESKTOP', port: ${DESKTOP_GUI_PORT}, key: '${DESKTOP_TOKEN}' }, r), 300));
-  })`, 8000);
+    }, 100);
+  })`, 15000);
 
   await edgeWebCdp.evalAsync(`document.getElementById('dl-edge-cd').click()`, 4000, { userGesture: true });
   const { found: edgeDone, jobs: edgeAllJobs } = await waitForJobState(

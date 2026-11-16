@@ -26,9 +26,9 @@ const OEM_APPDATA_DIR = path.join(process.env.APPDATA || '', 'tori-download-mana
 const OEM_DB_PATH = path.join(OEM_APPDATA_DIR, 'tdm_storage.sqlite');
 const OEM_EXE_PATH = path.join(process.env.LOCALAPPDATA || '', 'TORI Download Manager', 'tori-download-manager.exe');
 
-const GUI_PORT = 19940;
-const CDP_PORT = 19941;
-const FIXTURE_PORT = 19945;
+const GUI_PORT = 24940;
+const CDP_PORT = 24941;
+const FIXTURE_PORT = 24945;
 const API_TOKEN = 'tori_qa_gate29_1_token';
 
 const results = [];

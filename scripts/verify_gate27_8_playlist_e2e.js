@@ -40,17 +40,17 @@ const INSTALLER_EXE = path.join(ROOT, 'release', 'v1.0.5-rc', 'TORI Download Man
 const SIGNED_XPI = path.join(ROOT, 'release', 'v1.0.7-extension-rc', 'a70ed17e183648a9bcf4-1.0.7.xpi');
 const EXPECTED_XPI_SHA256 = 'b082c8f2f4c8b4ed035fab77d9569622737defb3e02279f20073d3404dda4fa0';
 const EXPECTED_GECKO_ID = 'tori-download-manager@toridm.org';
-const EXT_DIR = path.join(ROOT, 'release', 'v1.0.8-extension-rc', 'tori-companion-v1.0.8-chromium');
+const EXT_DIR = path.join(ROOT, 'release', 'v1.0.9-extension-rc', 'tori-companion-v1.0.9-chromium');
 const CHROME_EXE = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const EDGE_EXE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const FIREFOX_EXE = 'C:\\Program Files\\Mozilla Firefox\\firefox.exe';
 const OEM_DESKTOP_EXE = path.join(process.env.LOCALAPPDATA || '', 'TORI Download Manager', 'tori-download-manager.exe');
 const OEM_HOST_EXE = path.join(process.env.LOCALAPPDATA || '', 'TORI Download Manager', 'bin', 'tdm-native-host.exe');
 
-const DESKTOP_GUI_PORT = 19920;
-const WEBVIEW2_CDP_PORT = 19921;
-const CHROME_CDP_PORT = 19923;
-const EDGE_CDP_PORT = 19924;
+const DESKTOP_GUI_PORT = 24920;
+const WEBVIEW2_CDP_PORT = 24921;
+const CHROME_CDP_PORT = 24923;
+const EDGE_CDP_PORT = 24924;
 const FF_MARIONETTE_PORT = 2832;
 
 const QA_ROOT = path.join(ROOT, 'target', 'gate27_8_playlist_qa');
@@ -90,7 +90,7 @@ function killTracked(proc) {
   try {
     execFileSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore', timeout: 4000 });
   } catch {
-    try { proc.kill('SIGKILL'); } catch {}
+    try { proc.kill('SIGKILL'); } catch { }
   }
 }
 
@@ -99,7 +99,7 @@ function restoreOemEnvironment() {
     if (fs.existsSync(OEM_HOST_EXE)) {
       execFileSync(OEM_HOST_EXE, ['--register'], { stdio: 'ignore', timeout: 5000 });
     }
-  } catch {}
+  } catch { }
   if (oemWasRunning && fs.existsSync(OEM_DESKTOP_EXE)) {
     try {
       // Ensure no orphaned QA tori-download-manager holds the single-instance mutex
@@ -108,7 +108,7 @@ function restoreOemEnvironment() {
         stdio: 'ignore',
       });
       p.unref();
-    } catch {}
+    } catch { }
     oemWasRunning = false;
   }
 }
@@ -126,7 +126,7 @@ function stopQaDesktopOnly() {
       ],
       { stdio: 'ignore', timeout: 4000 }
     );
-  } catch {}
+  } catch { }
 }
 
 function cleanupAll() {
@@ -191,7 +191,7 @@ function httpJson({ port, path: reqPath, method = 'GET', headers = {}, body = nu
         res.on('data', (c) => (raw += c));
         res.on('end', () => {
           let data = null;
-          try { data = JSON.parse(raw); } catch {}
+          try { data = JSON.parse(raw); } catch { }
           resolve({ status: res.statusCode, ok: res.statusCode >= 200 && res.statusCode < 300, data, raw });
         });
       }
@@ -220,7 +220,7 @@ function sendNativeHostOneShot(hostExePath, payload, env, timeoutMs = 22000) {
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true;
-        try { proc.kill('SIGKILL'); } catch {}
+        try { proc.kill('SIGKILL'); } catch { }
         reject(new Error(`Native host timed out after ${timeoutMs}ms. stderr=${stderr}`));
       }
     }, timeoutMs);
@@ -268,7 +268,7 @@ class CDPClient {
       const ws = new WebSocket(this.wsUrl);
       this.ws = ws;
       const timer = setTimeout(() => {
-        try { ws.close(); } catch {}
+        try { ws.close(); } catch { }
         reject(new Error(`CDP connect timeout: ${this.wsUrl}`));
       }, timeoutMs);
       ws.addEventListener('open', () => { clearTimeout(timer); resolve(); });
@@ -282,7 +282,7 @@ class CDPClient {
             if (msg.error) p.reject(new Error(JSON.stringify(msg.error)));
             else p.resolve(msg.result);
           }
-        } catch {}
+        } catch { }
       });
     });
   }
@@ -317,12 +317,12 @@ class CDPClient {
     return res?.result?.value;
   }
   close() {
-    try { this.ws?.close(); } catch {}
+    try { this.ws?.close(); } catch { }
   }
 }
 
 async function waitForContext(cdp, checkExpr = 'true', timeoutMs = 20000, label = 'target') {
-  try { await cdp.send('Runtime.enable', {}, 4000); } catch {}
+  try { await cdp.send('Runtime.enable', {}, 4000); } catch { }
   const deadline = Date.now() + timeoutMs;
   let lastErr = '';
   while (Date.now() < deadline) {
@@ -350,7 +350,7 @@ async function waitForCdpTargets(port, timeoutMs = 15000, requireBrowserWs = fal
           return { version, targets };
         }
       }
-    } catch {}
+    } catch { }
     await sleep(200);
   }
   throw new Error(`CDP on port ${port} did not become ready`);
@@ -450,7 +450,7 @@ class MarionetteClient {
     });
   }
   disconnect() {
-    try { this.socket?.end(); } catch {}
+    try { this.socket?.end(); } catch { }
   }
 }
 
@@ -624,7 +624,7 @@ async function launchChromiumAndPair({ exe, profDir, cdpPort, browserLabel, env 
   }
   const uiCdp = new CDPClient(extMgrTarget.webSocketDebuggerUrl);
   await uiCdp.connect(8000);
-  try { await uiCdp.send('Runtime.enable', {}, 5000); } catch {}
+  try { await uiCdp.send('Runtime.enable', {}, 5000); } catch { }
   let extUiReady = false;
   for (let i = 0; i < 40; i++) {
     try {
@@ -633,7 +633,7 @@ async function launchChromiumAndPair({ exe, profDir, cdpPort, browserLabel, env 
         4000
       );
       if (extUiReady) break;
-    } catch {}
+    } catch { }
     await sleep(250);
   }
   if (!extUiReady) throw new Error(`${browserLabel} extensions page did not finish initializing execution context`);
@@ -641,7 +641,7 @@ async function launchChromiumAndPair({ exe, profDir, cdpPort, browserLabel, env 
   await uiCdp.evalAsync(`chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true })`, 8000);
   const loadPromise = uiCdp.evalAsync(
     `chrome.developerPrivate.loadUnpacked().then(() => 'OK').catch(e => String(e))`,
-    15000,
+    25000,
     { userGesture: true }
   );
   const uiaOk = submitChromeLoadUnpackedDialog(proc.pid, EXT_DIR);
@@ -828,10 +828,10 @@ async function run() {
     'PL-COLD-01',
     'Closed Desktop launches on open_playlist, restores visibility, and mounts #playlist-modal before returning confirmed=true',
     coldResp?.response?.status === 'ok' &&
-      coldResp?.response?.confirmed === true &&
-      Boolean(coldModalState?.hasModal) &&
-      coldModalState?.visibleWidth > 100 &&
-      !coldModalState?.hidden,
+    coldResp?.response?.confirmed === true &&
+    Boolean(coldModalState?.hasModal) &&
+    coldModalState?.visibleWidth > 100 &&
+    !coldModalState?.hidden,
     `ms=${coldElapsedMs}, resp=${JSON.stringify(coldResp.response)}, ui=${JSON.stringify(coldModalState)}`
   );
 
@@ -915,7 +915,7 @@ async function run() {
           if (tgt?.webSocketDebuggerUrl) {
             cdp = new CDPClient(tgt.webSocketDebuggerUrl);
             await cdp.connect(6000);
-            try { await cdp.send('Runtime.enable', {}, 4000); } catch {}
+            try { await cdp.send('Runtime.enable', {}, 4000); } catch { }
           }
         }
         if (cdp) {
@@ -930,7 +930,7 @@ async function run() {
         }
       } catch (e) {
         lastErr = e.message || String(e);
-        if (cdp) { try { cdp.close(); } catch {} cdp = null; }
+        if (cdp) { try { cdp.close(); } catch { } cdp = null; }
       }
       await sleep(350);
     }
@@ -1067,13 +1067,13 @@ async function run() {
     'Tray-hidden Desktop restores and mounts #playlist-modal after real Chrome YouTube click with confirmed toast',
     Boolean(
       toastProgression?.clicked &&
-        !toastProgression?.isError &&
-        String(toastProgression?.finalToast || '').includes('Playlist opened') &&
-        trayRestoreModalCheck?.wasHiddenBeforeClick &&
-        trayRestoreModalCheck?.hasModal &&
-        trayRestoreModalCheck?.winVisible &&
-        trayRestoreModalCheck?.hasRestoreLog &&
-        trayRestoreModalCheck?.visibleWidth > 100
+      !toastProgression?.isError &&
+      String(toastProgression?.finalToast || '').includes('Playlist opened') &&
+      trayRestoreModalCheck?.wasHiddenBeforeClick &&
+      trayRestoreModalCheck?.hasModal &&
+      trayRestoreModalCheck?.winVisible &&
+      trayRestoreModalCheck?.hasRestoreLog &&
+      trayRestoreModalCheck?.visibleWidth > 100
     ),
     JSON.stringify({ toastProgression, trayRestoreModalCheck })
   );
@@ -1228,18 +1228,18 @@ async function run() {
 
   const uiChecksOk = Boolean(
     resolvedUiState?.resolved &&
-      uiInteraction?.initialChecked >= 3 &&
-      uiInteraction.afterUncheckOne === uiInteraction.initialChecked - 1 &&
-      uiInteraction.afterRecheckOne === uiInteraction.initialChecked &&
-      uiInteraction.afterDeselectAll === 0 &&
-      uiInteraction.afterReselectAll === uiInteraction.initialChecked &&
-      uiInteraction.finalChecked === 1 &&
-      uiInteraction.formatOptions.includes('best') &&
-      uiInteraction.formatOptions.includes('1080p') &&
-      uiInteraction.formatOptions.includes('720p') &&
-      uiInteraction.formatOptions.includes('480p') &&
-      uiInteraction.formatOptions.includes('audio_only') &&
-      uiInteraction.canClickDl
+    uiInteraction?.initialChecked >= 3 &&
+    uiInteraction.afterUncheckOne === uiInteraction.initialChecked - 1 &&
+    uiInteraction.afterRecheckOne === uiInteraction.initialChecked &&
+    uiInteraction.afterDeselectAll === 0 &&
+    uiInteraction.afterReselectAll === uiInteraction.initialChecked &&
+    uiInteraction.finalChecked === 1 &&
+    uiInteraction.formatOptions.includes('best') &&
+    uiInteraction.formatOptions.includes('1080p') &&
+    uiInteraction.formatOptions.includes('720p') &&
+    uiInteraction.formatOptions.includes('480p') &&
+    uiInteraction.formatOptions.includes('audio_only') &&
+    uiInteraction.canClickDl
   );
 
   record('PL-MODAL-01', 'PlaylistModal loads real YouTube metadata, item checkboxes, Select/Deselect All & quality selector work', uiChecksOk, JSON.stringify({ resolvedUiState, uiInteraction }));
@@ -1249,10 +1249,10 @@ async function run() {
     'Selected authorized test video queues from PlaylistModal, routes to Video/, and completes on disk',
     Boolean(
       completedFileInfo &&
-        !completedFileInfo.failed &&
-        completedFileInfo.diskSize > 100000 &&
-        String(completedFileInfo.target_path).toLowerCase().includes('video') &&
-        /\.(mp4|mkv|webm)$/i.test(String(completedFileInfo.target_path))
+      !completedFileInfo.failed &&
+      completedFileInfo.diskSize > 100000 &&
+      String(completedFileInfo.target_path).toLowerCase().includes('video') &&
+      /\.(mp4|mkv|webm)$/i.test(String(completedFileInfo.target_path))
     ),
     JSON.stringify(completedFileInfo || queuedJobsInfo)
   );
@@ -1421,7 +1421,7 @@ async function run() {
       ],
       { stdio: 'ignore', timeout: 4000 }
     );
-  } catch {}
+  } catch { }
   const brokenNmManifest = path.join(QA_ROOT, 'broken_nm_host.json');
   fs.writeFileSync(
     brokenNmManifest,
@@ -1455,7 +1455,9 @@ async function run() {
     12000
   );
   step6OptCdp.close();
-  try { await ytCdp.send('Page.bringToFront', {}, 5000); } catch {}
+  try { await chrome.bCdp.send('Target.closeTarget', { targetId: step6OptCreated.targetId }); } catch { }
+  try { await chrome.bCdp.send('Target.activateTarget', { targetId: ytTarget.targetId }); } catch { }
+  try { await ytCdp.send('Page.bringToFront', {}, 5000); } catch { }
   const errCheck = await ytCdp.evalAsync(`(async () => {
     history.pushState({}, '', '${WATCH_IN_PLAYLIST_URL}');
     window.dispatchEvent(new Event('yt-navigate-finish'));
@@ -1471,7 +1473,23 @@ async function run() {
       if (btn && pn && pn.classList.contains('on')) break;
       await new Promise((r) => setTimeout(r, 150));
     }
-    if (!btn) return { foundBtn: false };
+    if (!btn) {
+      const vid = document.querySelector('video');
+      const vRect = vid ? vid.getBoundingClientRect() : null;
+      const pnEl = document.querySelector('.tori-mp .tori-pn');
+      return {
+        foundBtn: false,
+        href: window.location.href,
+        hidden: document.hidden,
+        visibilityState: document.visibilityState,
+        mpCount: document.querySelectorAll('.tori-mp').length,
+        pnClass: pnEl ? pnEl.className : null,
+        hasMixBtn: !!document.querySelector('.tori-mp [data-act="mix-info"]'),
+        videoCount: document.querySelectorAll('video').length,
+        videoRect: vRect ? { w: Math.round(vRect.width), h: Math.round(vRect.height) } : null,
+        pnSnippet: pnEl ? (pnEl.innerHTML || '').slice(0, 350) : null,
+      };
+    }
     btn.click();
     return await new Promise((resolve) => {
       // Bounded poll until btn unlocks from Opening... back to enabled
@@ -1498,10 +1516,10 @@ async function run() {
 
   const errOrRecoveryOk = Boolean(
     errCheck?.foundBtn &&
-      errCheck?.unlocked &&
-      errCheck?.btnText === 'Download Playlist' &&
-      errCheck?.toastIsError === true &&
-      String(errCheck?.toastText || '').length > 5
+    errCheck?.unlocked &&
+    errCheck?.btnText === 'Download Playlist' &&
+    errCheck?.toastIsError === true &&
+    String(errCheck?.toastText || '').length > 5
   );
   record('PL-ERR-01', 'Unreachable Desktop error unlocks Download Playlist button cleanly and surfaces actionable error toast', errOrRecoveryOk, JSON.stringify(errCheck));
 
@@ -1511,7 +1529,7 @@ async function run() {
   edge.optCdp.close();
   edge.bCdp.close();
   deskCdp.close();
-  try { await marionette.send('Marionette:Quit', {}, 5000); } catch {}
+  try { await marionette.send('Marionette:Quit', {}, 5000); } catch { }
   marionette.disconnect();
 
   cleanupAll();
@@ -1533,7 +1551,7 @@ async function run() {
     )
   );
 
-  try { fs.rmSync(QA_ROOT, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(QA_ROOT, { recursive: true, force: true }); } catch { }
 
   console.log('\n========================================================================');
   console.log(` GATE 27.8 PLAYLIST E2E: ${counts.PASS} PASS, ${counts.FAIL} FAIL, ${counts.TIMEOUT} TIMEOUT, ${counts.NOT_TESTED} NOT TESTED`);

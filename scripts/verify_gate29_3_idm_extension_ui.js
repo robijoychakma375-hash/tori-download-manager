@@ -40,11 +40,11 @@ const CHROME_EXE = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const EDGE_EXE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const FIREFOX_EXE = 'C:\\Program Files\\Mozilla Firefox\\firefox.exe';
 
-const DESKTOP_GUI_PORT = 19960;
-const WEBVIEW2_CDP_PORT = 19961;
-const CHROME_CDP_PORT = 19963;
-const EDGE_CDP_PORT = 19964;
-const FIXTURE_PORT = 19965;
+const DESKTOP_GUI_PORT = 24960;
+const WEBVIEW2_CDP_PORT = 24961;
+const CHROME_CDP_PORT = 24963;
+const EDGE_CDP_PORT = 24964;
+const FIXTURE_PORT = 24965;
 const FF_MARIONETTE_PORT = 2834;
 
 const QA_ROOT = path.join(ROOT, 'target', 'gate29_3_qa');

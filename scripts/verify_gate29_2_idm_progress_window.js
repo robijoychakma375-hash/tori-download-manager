@@ -30,9 +30,9 @@ const OEM_EXE_PATH = path.join(
   'tori-download-manager.exe'
 );
 
-const GUI_PORT = 19950;
-const CDP_PORT = 19951;
-const FIXTURE_PORT = 19955;
+const GUI_PORT = 24950;
+const CDP_PORT = 24951;
+const FIXTURE_PORT = 24955;
 const API_TOKEN = 'tori_qa_gate29_2_token';
 
 const results = [];
@@ -60,7 +60,7 @@ function killProcTree(pid) {
   if (!pid) return;
   try {
     execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 });
-  } catch {}
+  } catch { }
 }
 
 function cleanupTrackedProcs() {
@@ -140,9 +140,9 @@ function httpJson({ port, reqPath, method = 'GET', body = null, headers = {} }) 
           ...headers,
           ...(bodyStr
             ? {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(bodyStr),
-              }
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(bodyStr),
+            }
             : {}),
         },
         timeout: 8000,
@@ -154,7 +154,7 @@ function httpJson({ port, reqPath, method = 'GET', body = null, headers = {} }) 
           let parsed = null;
           try {
             parsed = JSON.parse(data);
-          } catch {}
+          } catch { }
           resolve({ status: res.statusCode, ok: res.statusCode >= 200 && res.statusCode < 300, data: parsed, raw: data });
         });
       }
@@ -191,7 +191,7 @@ class CDPClient {
             if (msg.error) rej(new Error(JSON.stringify(msg.error)));
             else res(msg.result);
           }
-        } catch {}
+        } catch { }
       });
     });
   }
@@ -237,7 +237,7 @@ class CDPClient {
   close() {
     try {
       this.ws?.close();
-    } catch {}
+    } catch { }
   }
 }
 
@@ -253,7 +253,7 @@ function getToastTargetId(t) {
     if (u.searchParams.get('window') === 'toast' || u.searchParams.get('window') === 'progress') {
       return u.searchParams.get('id');
     }
-  } catch {}
+  } catch { }
   return null;
 }
 
@@ -269,7 +269,7 @@ async function waitForMainCdp(port, timeoutMs = 20000) {
           !String(t.url).includes('window=toast')
       );
       if (main) return main;
-    } catch {}
+    } catch { }
     await sleep(250);
   }
   throw new Error(`Main WebView2 CDP not ready on port ${port}`);
@@ -299,7 +299,7 @@ async function waitForProgressCdp(port, jobId, timeoutMs = 15000) {
         await sleep(200);
         return c;
       }
-    } catch {}
+    } catch { }
     await sleep(200);
   }
   throw new Error(`Progress window CDP for job ${jobId} did not open within ${timeoutMs}ms`);
@@ -719,11 +719,11 @@ async function run() {
       'STATE-PAUSE-THEME',
       'Pause switches connections->0, bar->paused, btn->Resume & live Dark+Ocean theme propagates without restart',
       pausedDarkCheck.state === 'paused' &&
-        pausedDarkCheck.theme === 'dark' &&
-        pausedDarkCheck.accent === 'ocean' &&
-        pausedDarkCheck.conn === 0 &&
-        pausedDarkCheck.priBtn === 'Resume' &&
-        pausedDarkCheck.barHasPaused,
+      pausedDarkCheck.theme === 'dark' &&
+      pausedDarkCheck.accent === 'ocean' &&
+      pausedDarkCheck.conn === 0 &&
+      pausedDarkCheck.priBtn === 'Resume' &&
+      pausedDarkCheck.barHasPaused,
       JSON.stringify(pausedDarkCheck)
     );
 
@@ -853,11 +853,11 @@ async function run() {
       'STATE-COMPLETE',
       'Completed popup displays "Download complete", Close/Open buttons, Open folder link & exact SHA-256 on disk',
       completed1 &&
-        completeSnap.title === 'Download complete' &&
-        completeSnap.btns.join(',') === 'Close,Open' &&
-        completeSnap.hasOpenFolderLink &&
-        completeSnap.barDone &&
-        diskMulti === expectedMultiSha,
+      completeSnap.title === 'Download complete' &&
+      completeSnap.btns.join(',') === 'Close,Open' &&
+      completeSnap.hasOpenFolderLink &&
+      completeSnap.barDone &&
+      diskMulti === expectedMultiSha,
       JSON.stringify(completeSnap)
     );
 
@@ -918,11 +918,11 @@ async function run() {
       'STATE-FAIL-RETRY',
       'Failed download shows error UI & Retry recovers to 100% completion',
       failSnap.state === 'failed' &&
-        failSnap.title === 'Download failed' &&
-        failSnap.btns.join(',') === 'Close,Retry' &&
-        failSnap.errVisible &&
-        failSnap.barFailed &&
-        retriedCompleted,
+      failSnap.title === 'Download failed' &&
+      failSnap.btns.join(',') === 'Close,Retry' &&
+      failSnap.errVisible &&
+      failSnap.barFailed &&
+      retriedCompleted,
       JSON.stringify(failSnap)
     );
     await popFail.eval(`document.getElementById('cl').click()`);
@@ -1007,11 +1007,13 @@ async function run() {
     const popOpt = await waitForProgressCdp(CDP_PORT, optJobId, 15000);
     await popOpt.eval(`document.querySelector('.dl-tab[data-tab="completion"]').click()`);
     await sleep(200);
-    await popOpt.eval(`(() => {
+    await popOpt.eval(`(async () => {
       const c1 = document.getElementById('dl-opt-close');
-      const c2 = document.getElementById('dl-opt-notify');
       if (!c1.checked) c1.click();
+      await new Promise((r) => setTimeout(r, 120));
+      const c2 = document.getElementById('dl-opt-notify');
       if (!c2.checked) c2.click();
+      await new Promise((r) => setTimeout(r, 120));
     })()`);
     await sleep(250);
     await popOpt.screenshot(path.join(SCREENSHOTS_DIR, '07_progress_options_completion.png'));
@@ -1112,12 +1114,12 @@ async function run() {
       'MULTI-AND-CLOSE',
       'Multiple independent popups coexist cleanly & closing progress window leaves transfer running to exact completion',
       hasTwoIndependentPopups &&
-        bgWindowClosed &&
-        bothFinished &&
-        bgDiskSha === expectedMultiSha &&
-        unkDiskSha === expectedUnkSha &&
-        unkSnap.texts.includes('Unknown') &&
-        !unkSnap.texts.some((t) => t.includes('NaN')),
+      bgWindowClosed &&
+      bothFinished &&
+      bgDiskSha === expectedMultiSha &&
+      unkDiskSha === expectedUnkSha &&
+      unkSnap.texts.includes('Unknown') &&
+      !unkSnap.texts.some((t) => t.includes('NaN')),
       JSON.stringify({ hasTwoIndependentPopups, bgWindowClosed, bothFinished, unkSnap })
     );
 
@@ -1140,7 +1142,7 @@ async function run() {
   if (oemWasRunning && fs.existsSync(OEM_EXE_PATH)) {
     try {
       spawn(OEM_EXE_PATH, ['--minimized'], { detached: true, stdio: 'ignore' }).unref();
-    } catch {}
+    } catch { }
   }
 
   console.log('\n========================================================================');

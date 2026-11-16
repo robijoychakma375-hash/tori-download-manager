@@ -2287,7 +2287,10 @@ function normalizePlatformUrl(rawUrl) {
     return ret;
   };
 
+  let lastCheckedUrl = window.location.href;
+
   function notifyAllOverlays(reason) {
+    lastCheckedUrl = window.location.href;
     document.querySelectorAll('.tori-mp').forEach((mp) => {
       if (typeof mp.__toriHandleNav === 'function') {
         mp.__toriHandleNav(reason);
@@ -2296,15 +2299,19 @@ function normalizePlatformUrl(rawUrl) {
   }
 
   window.addEventListener('popstate', () => notifyAllOverlays('popstate'));
-  document.addEventListener('yt-navigate-finish', () => notifyAllOverlays('yt-navigate-finish'));
-  document.addEventListener('yt-page-data-updated', () => notifyAllOverlays('yt-page-data-updated'));
+  for (const evtName of ['yt-navigate-finish', 'yt-page-data-updated']) {
+    document.addEventListener(evtName, () => notifyAllOverlays(evtName));
+    window.addEventListener(evtName, () => notifyAllOverlays(evtName));
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && window.location.href !== lastCheckedUrl) {
+      notifyAllOverlays('visibilitychange');
+    }
+  });
 
   // Watchdog URL polling every 600ms for client-side routing on arbitrary SPAs
-  let lastCheckedUrl = window.location.href;
   setInterval(() => {
-    if (document.hidden) return;
     if (window.location.href !== lastCheckedUrl) {
-      lastCheckedUrl = window.location.href;
       notifyAllOverlays('url-watchdog');
     }
   }, 600);
