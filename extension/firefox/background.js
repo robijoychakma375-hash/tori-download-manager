@@ -270,7 +270,18 @@ let extSettings = {
   auto: true,
   cap: true,
   min: 1,
+  ask: false,
+  alt: true,
+  incog: false,
+  pill: true,
+  pos: 'Top right',
+  picker: true,
+  kind: 'Video',
+  fmt: 'Best available',
+  audio: true,
   badge: true,
+  theme: 'light',
+  accent: 'indigo',
   sites: ['docs.google.com', 'mail.google.com', 'github.com'],
   types: [...DEFAULT_CAPTURE_TYPES],
 };
@@ -280,13 +291,15 @@ let settingsLoadPromise = null;
 function ensureSettingsLoaded() {
   if (!settingsLoadPromise) {
     settingsLoadPromise = new Promise((resolve) => {
-      chrome.storage.local.get(['tori_settings'], (res) => {
+      chrome.storage.local.get(['tori_settings', 'tori_theme', 'tori_accent'], (res) => {
         if (res.tori_settings) {
           extSettings = { ...extSettings, ...res.tori_settings };
           extSettings.types = normalizeCaptureTypes(extSettings.types);
         } else {
           extSettings.types = [...DEFAULT_CAPTURE_TYPES];
         }
+        if (res.tori_theme) extSettings.theme = res.tori_theme;
+        if (res.tori_accent) extSettings.accent = res.tori_accent;
         resolve(extSettings);
       });
     });
@@ -299,10 +312,24 @@ ensureSettingsLoaded();
 
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.tori_settings?.newValue) {
+    const prevBadge = extSettings.badge !== false;
     extSettings = { ...extSettings, ...changes.tori_settings.newValue };
     if (extSettings.types) {
       extSettings.types = normalizeCaptureTypes(extSettings.types);
     }
+    const nextBadge = extSettings.badge !== false;
+    if (prevBadge !== nextBadge) {
+      for (const [tabId, list] of tabMediaCache.entries()) {
+        const txt = nextBadge && list.length > 0 ? String(list.length) : '';
+        chrome.action.setBadgeText({ tabId, text: txt }).catch(() => {});
+      }
+    }
+  }
+  if (changes.tori_theme?.newValue) {
+    extSettings.theme = changes.tori_theme.newValue;
+  }
+  if (changes.tori_accent?.newValue) {
+    extSettings.accent = changes.tori_accent.newValue;
   }
 });
 
@@ -1617,6 +1644,11 @@ async function handleBrowserDownload(item) {
     return;
   }
 
+  // 1a. Respect private/incognito capture preference
+  if (item.incognito && !extSettings.incog) {
+    return;
+  }
+
   // 1b. Check browser danger warnings: respect security boundaries
   if (item.danger && item.danger !== 'safe' && item.danger !== 'accepted') {
     console.debug('[TORI] Download has browser danger status:', item.danger);
@@ -1774,6 +1806,167 @@ if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
   });
 }
 
+let showDesktopInFlight = null;
+
+async function fetchStatusOnce(port, token, timeoutMs = 1800) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const headers = {};
+    if (token) headers['X-Tori-Token'] = token;
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/status`, {
+      method: 'GET',
+      headers,
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    const data = await res.json().catch(() => ({}));
+    return { reached: true, status: res.status, ok: res.ok, data, port };
+  } catch (err) {
+    clearTimeout(timer);
+    return {
+      reached: false,
+      status: 0,
+      ok: false,
+      error: err?.name === 'AbortError' ? 'Timed out checking Desktop status' : err?.message || 'Unreachable',
+      port,
+    };
+  }
+}
+
+async function probeDesktopPassive(customPort = null, customKey = undefined, allowSweep = true) {
+  await ensureSettingsLoaded();
+  const start = Date.now();
+  const targetPort = Number(customPort) || Number(extSettings.port) || 6800;
+  const targetKey = customKey !== undefined ? customKey : (extSettings.key || '');
+
+  let probe = await fetchStatusOnce(targetPort, targetKey, 1800);
+  if (!probe.reached && allowSweep && !customPort) {
+    const candidates = [6800, 6801, 6802, 6803].filter((p) => p !== targetPort);
+    for (const cand of candidates) {
+      const candProbe = await fetchStatusOnce(cand, targetKey, 500);
+      if (candProbe.reached && candProbe.data?.name === 'TORI Download Manager') {
+        probe = candProbe;
+        if (cand !== extSettings.port) {
+          extSettings.port = cand;
+          await chrome.storage.local.set({ tori_settings: extSettings }).catch(() => {});
+        }
+        break;
+      }
+    }
+  }
+
+  const latency = Math.max(1, Date.now() - start);
+  if (probe.reached && probe.data && probe.data.status === 'ok') {
+    if (probe.data.authenticated) {
+      return {
+        status: 'ok',
+        connectionState: 'connected',
+        authenticated: true,
+        desktop_running: true,
+        version: probe.data.version || '2.0.0',
+        port: probe.data.port || probe.port,
+        latency,
+        mode: 'http',
+      };
+    }
+    return {
+      status: 'unpaired',
+      connectionState: 'disconnected',
+      authenticated: false,
+      desktop_running: true,
+      version: probe.data.version || '2.0.0',
+      port: probe.data.port || probe.port,
+      latency,
+      mode: 'http',
+      message: 'Pairing required (API key mismatch)',
+    };
+  }
+
+  if (probe.status === 401) {
+    return {
+      status: 'unpaired',
+      connectionState: 'disconnected',
+      authenticated: false,
+      desktop_running: true,
+      version: '2.0.0',
+      port: probe.port,
+      latency,
+      mode: 'http',
+      message: 'Pairing required (API key mismatch)',
+    };
+  }
+
+  return {
+    status: 'unavailable',
+    connectionState: 'unavailable',
+    authenticated: false,
+    desktop_running: false,
+    port: targetPort,
+    latency,
+    mode: 'none',
+    message: 'TORI Desktop is not running or unreachable on 127.0.0.1:' + targetPort,
+  };
+}
+
+async function openDesktopWindowUnified() {
+  if (showDesktopInFlight) {
+    return showDesktopInFlight;
+  }
+
+  showDesktopInFlight = (async () => {
+    await ensureSettingsLoaded();
+    let probe = await probeDesktopPassive(null, undefined, true);
+
+    if (probe.desktop_running && !probe.authenticated) {
+      const paired = await autoPairWithDesktop(true);
+      if (paired?.ok && paired.token) {
+        probe = await probeDesktopPassive(paired.port || null, paired.token, false);
+      }
+    }
+
+    if (probe.desktop_running && probe.authenticated) {
+      const httpRes = await callDesktopApi(
+        '/api/v1/window/show',
+        'POST',
+        null,
+        5000,
+        probe.port,
+        extSettings.key || ''
+      );
+      if (httpRes.ok) {
+        return {
+          status: 'ok',
+          mode: 'http',
+          port: probe.port,
+          message: 'TORI Desktop window restored',
+        };
+      }
+    }
+
+    const nmRes = await sendNativeMessage({ action: 'show_window' });
+    if (nmRes && nmRes.status === 'ok') {
+      autoPairWithDesktop(false).catch(() => {});
+      return {
+        status: 'ok',
+        mode: 'native',
+        message: nmRes.message || 'TORI Desktop launched',
+      };
+    }
+
+    return {
+      status: 'error',
+      message:
+        nmRes?.message ||
+        'Could not launch or reach TORI Desktop. Verify TORI Download Manager is installed and native messaging is registered.',
+    };
+  })().finally(() => {
+    showDesktopInFlight = null;
+  });
+
+  return showDesktopInFlight;
+}
+
 // -------------------------------------------------------------------------
 // Runtime Message Listener (Popup & Content Script interaction)
 // -------------------------------------------------------------------------
@@ -1836,15 +2029,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'GET_CONNECTION_STATUS') {
-    const port = message.port || extSettings.port || 6800;
+    const targetPort = Number(message.port) || Number(extSettings.port) || 6800;
     const token = message.key !== undefined ? message.key : (extSettings.key || '');
-    callDesktopApi('/api/v1/pair/status', 'GET', null, 2500, port, token).then((httpRes) => {
-      if (httpRes.ok && httpRes.data && httpRes.data.paired) {
-        sendResponse({ status: 'ok', paired: true, port: httpRes.data.port, version: httpRes.data.version });
-      } else if (httpRes.ok && httpRes.data && httpRes.data.desktop_running) {
-        sendResponse({ status: 'unpaired', paired: false, port: httpRes.data.port, message: 'Pairing Required' });
+    probeDesktopPassive(targetPort, token, !message.port).then((probe) => {
+      if (probe.status === 'ok' && probe.authenticated) {
+        sendResponse({
+          status: 'ok',
+          connectionState: 'connected',
+          paired: true,
+          port: probe.port,
+          version: probe.version,
+          latency: probe.latency,
+        });
+      } else if (probe.desktop_running) {
+        sendResponse({
+          status: 'unpaired',
+          connectionState: 'disconnected',
+          paired: false,
+          port: probe.port,
+          version: probe.version,
+          message: 'Pairing Required',
+        });
       } else {
-        sendResponse({ status: 'disconnected', paired: false, port, message: 'Desktop Offline' });
+        sendResponse({
+          status: 'unavailable',
+          connectionState: 'unavailable',
+          paired: false,
+          port: probe.port,
+          message: 'Desktop Unavailable',
+        });
       }
     });
     return true;
@@ -1852,88 +2065,84 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'PING_DESKTOP') {
     const start = Date.now();
-    let targetPort = message.port || extSettings.port || 6800;
+    const hasCustomPort = message.port !== undefined && message.port !== null && message.port !== '';
+    let targetPort = hasCustomPort ? Number(message.port) : (Number(extSettings.port) || 6800);
     let targetKey = message.key !== undefined ? message.key : (extSettings.key || '');
+    const isPassive = message.passive === true;
 
     (async () => {
-      let httpRes = await callDesktopApi('/api/v1/status', 'GET', null, 2000, targetPort, targetKey);
+      let result = await probeDesktopPassive(hasCustomPort ? targetPort : null, targetKey, !hasCustomPort);
 
-      // If unauthenticated or token mismatch, attempt auto-pairing recovery
-      if (httpRes.status === 401 || (httpRes.ok && httpRes.data && !httpRes.data.authenticated)) {
-        const pairRes = await autoPairWithDesktop();
+      // Only attempt auto-pairing when desktop is already responding (401/unpaired) OR when explicitly non-passive
+      if (!isPassive && result.desktop_running && !result.authenticated && extSettings.auto !== false) {
+        const pairRes = await autoPairWithDesktop(false);
         if (pairRes.ok && pairRes.token) {
           targetPort = pairRes.port || targetPort;
           targetKey = pairRes.token;
-          httpRes = await callDesktopApi('/api/v1/status', 'GET', null, 2000, targetPort, targetKey);
+          result = await probeDesktopPassive(targetPort, targetKey, false);
+          result.token = pairRes.token;
         }
       }
 
-      const latency = Math.max(1, Date.now() - start);
-
-      if (httpRes.ok && httpRes.data && httpRes.data.status === 'ok') {
-        if (httpRes.data.authenticated) {
-          sendResponse({
-            status: 'ok',
-            authenticated: true,
-            version: httpRes.data.version || '2.0.0',
-            port: httpRes.data.port || targetPort,
-            latency,
-            mode: 'http',
-          });
-        } else {
-          sendResponse({
-            status: 'unpaired',
-            authenticated: false,
-            version: httpRes.data.version || '2.0.0',
-            port: httpRes.data.port || targetPort,
-            latency,
-            mode: 'http',
-            message: 'Pairing Required (API Key mismatch)',
-          });
-        }
-      } else if (httpRes.status === 401) {
-        sendResponse({
-          status: 'unpaired',
-          authenticated: false,
-          version: '2.0.0',
-          port: targetPort,
-          latency,
-          mode: 'http',
-          message: 'Pairing Required (API Key mismatch)',
-        });
-      } else {
-        // Desktop is stopped / unreachable
-        sendResponse({
-          status: 'disconnected',
-          authenticated: false,
-          port: targetPort,
-          latency,
-          mode: 'none',
-          message: 'Desktop Offline',
-        });
-      }
+      result.latency = result.latency || Math.max(1, Date.now() - start);
+      sendResponse(result);
     })();
     return true; // Keep channel open for async response
   }
 
-  if (message.action === 'SHOW_DESKTOP') {
-    callDesktopApi('/api/v1/window/show', 'POST').then(async (httpRes) => {
-      if (httpRes.ok) {
-        sendResponse(httpRes.data);
-      } else {
-        // Fallback to Native Messaging to spawn/bring desktop forward
-        sendResponse(await sendNativeMessage({ action: 'show_window' }));
+  if (message.action === 'RECONNECT_DESKTOP') {
+    const start = Date.now();
+    (async () => {
+      await ensureSettingsLoaded();
+      const targetPort = Number(message.port) || Number(extSettings.port) || 6800;
+      let result = await probeDesktopPassive(message.port || null, message.key, !message.port);
+
+      // Explicitly force pairing / native check when user initiates reconnect
+      if (!result.authenticated) {
+        const pairRes = await autoPairWithDesktop(true);
+        if (pairRes.ok && pairRes.token) {
+          result = await probeDesktopPassive(pairRes.port || targetPort, pairRes.token, false);
+          result.token = pairRes.token;
+          result.nativeHost = true;
+        } else {
+          result.nativeHost = false;
+          if (!result.desktop_running && pairRes?.error) {
+            result.message = pairRes.error;
+          }
+        }
       }
+
+      result.latency = Math.max(1, Date.now() - start);
+      sendResponse(result);
+    })();
+    return true;
+  }
+
+  if (message.action === 'SHOW_DESKTOP') {
+    openDesktopWindowUnified().then((res) => {
+      sendResponse(res);
     });
     return true;
   }
 
   if (message.action === 'OPEN_OPTIONS') {
-    if (chrome.runtime.openOptionsPage) {
-      chrome.runtime.openOptionsPage(() => {
-        sendResponse({ status: 'ok' });
-      });
-    } else {
+    try {
+      if (chrome.runtime.openOptionsPage) {
+        chrome.runtime.openOptionsPage(() => {
+          if (chrome.runtime.lastError) {
+            chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html') }, (tab) => {
+              sendResponse({ status: 'ok', tabId: tab?.id });
+            });
+          } else {
+            sendResponse({ status: 'ok' });
+          }
+        });
+      } else {
+        chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html') }, (tab) => {
+          sendResponse({ status: 'ok', tabId: tab?.id });
+        });
+      }
+    } catch (_) {
       chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html') }, (tab) => {
         sendResponse({ status: 'ok', tabId: tab?.id });
       });

@@ -1,473 +1,751 @@
-/**
- * TORI Download Manager — Extension Options Controller
- * Faithful implementation of Design Source B (design/extension-options/tori-extension-options.html)
- * with real Native Messaging engine integration and chrome.storage persistence.
- */
+(() => {
+  'use strict';
 
-const P = {
-  link: 'M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1',
-  dl: 'M12 4v10M8 10l4 4 4-4M5 19h14',
-  play: 'M9 6.5v11l9-5.5z',
-  globe: 'M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18',
-  half: 'M12 3a9 9 0 100 18zM12 3v18',
-  info: 'M12 3a9 9 0 100 18zM12 11v5M12 8h.01',
-  ck: 'M5 12l5 5 9-10',
-};
+  const DEFAULT_EXTS = [
+    'zip', 'rar', '7z', 'iso', 'tar', 'gz', 'bz2', 'xz',
+    'exe', 'msi', 'dmg', 'bin',
+    'pdf', 'epub',
+    'mkv', 'mp4', 'avi', 'mov', 'webm', 'flv', 'wmv', 'm4v',
+    'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'opus',
+  ];
 
-const N = [
-  ['conn', 'Connection', '#6366f1', 'link'],
-  ['cap', 'Capture', '#22b45a', 'dl'],
-  ['media', 'Media', '#ff453a', 'play'],
-  ['sites', 'Sites', '#3b82f6', 'globe'],
-  ['app', 'Appearance', '#bf5af2', 'half'],
-  ['about', 'About', '#8e8e93', 'info'],
-];
+  const DEFAULT_SETTINGS = {
+    port: 6800,
+    key: '',
+    auto: true,
+    cap: true,
+    min: 1,
+    ask: false,
+    alt: true,
+    incog: false,
+    pill: true,
+    pos: 'Top right',
+    picker: true,
+    kind: 'Video',
+    fmt: 'Best available',
+    audio: true,
+    badge: true,
+    theme: 'light',
+    accent: 'indigo',
+    sites: [],
+    types: [...DEFAULT_EXTS],
+  };
 
-const DEFAULT_CAPTURE_TYPES = [
-  'zip', 'rar', '7z', 'iso', 'tar', 'gz', 'bz2', 'xz',
-  'exe', 'msi', 'dmg', 'bin',
-  'pdf', 'epub',
-  'mkv', 'mp4', 'avi', 'mov', 'webm', 'flv', 'wmv', 'm4v',
-  'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'opus'
-];
+  let cur = { ...DEFAULT_SETTINGS };
+  let activeTab = 'conn';
+  let saveTimer = null;
+  let sysMql = null;
+  let lastNativeHostState = null;
 
-const LEGACY_DEFAULT_TYPES = ['zip', 'rar', '7z', 'iso', 'exe', 'dmg', 'pdf', 'mp4', 'mp3'];
+  const $ = (id) => document.getElementById(id);
 
-function normalizeCaptureTypes(types) {
-  if (!Array.isArray(types) || types.length === 0) {
-    return [...DEFAULT_CAPTURE_TYPES];
-  }
-  const clean = types.map((t) => (t || '').toLowerCase().replace(/^\./, '').trim()).filter(Boolean);
-  const isLegacy = clean.length === LEGACY_DEFAULT_TYPES.length &&
-    LEGACY_DEFAULT_TYPES.every((t) => clean.includes(t));
-  if (isLegacy) {
-    return [...DEFAULT_CAPTURE_TYPES];
-  }
-  if (!clean.includes('mkv')) {
-    clean.push('mkv');
-  }
-  return clean;
-}
-
-const DEFAULT_SETTINGS = {
-  port: 6800,
-  key: '',
-  auto: true,
-  cap: true,
-  min: 1,
-  ask: false,
-  alt: true,
-  types: [...DEFAULT_CAPTURE_TYPES],
-  incog: false,
-  pill: true,
-  pos: 'Top right',
-  audio: true,
-  fmt: 'Best available',
-  kind: 'Video',
-  picker: true,
-  sites: ['docs.google.com', 'mail.google.com', 'github.com'],
-  theme: 'light',
-  badge: true,
-};
-
-let S = { ...DEFAULT_SETTINGS };
-let sec = 'conn';
-let testState = 'wait';
-let testLatency = 0;
-let testEngineVer = '2.0.0';
-let testPort = 6800;
-
-const $ = (s) => document.querySelector(s);
-const svg = (d) => `<svg viewBox="0 0 24 24"><path d="${d}"/></svg>`;
-const tg = (k) => `<label class="swl"><input type="checkbox" data-k="${k}" ${S[k] ? 'checked' : ''}><span class="sw-track"><span class="sw-knob"></span></span></label>`;
-const sr = (t, s, c, cls = '') => `<div class="sr ${cls}"><div><b>${t}</b><span class="sub">${s}</span></div><div class="sc">${c}</div></div>`;
-const sel = (k, o) => `<select class="fi" data-k="${k}">${o.map((x) => `<option ${S[k] === x ? 'selected' : ''}>${x}</option>`).join('')}</select>`;
-
-const V = {
-  conn: () => `
-    <h2>Connection</h2>
-    <div class="sub0">Connect this extension to the Tori Download Manager app on your computer.</div>
-    <div class="card">
-      <div class="stt ${testState === 'bad' ? 'bad' : testState === 'wait' ? 'wait' : testState === 'unpaired' ? 'unpaired' : ''}">
-        <span class="big"><i></i></span>
-        <div style="flex:1">
-          <b style="font-size:14px">${
-            testState === 'bad'
-              ? 'Can’t reach Tori'
-              : testState === 'wait'
-              ? 'Connecting…'
-              : testState === 'unpaired'
-              ? 'Pairing Required'
-              : 'Connected to Tori'
-          }</b>
-          <span class="sub" style="display:block;color:var(--mut);font-size:11.5px;margin-top:2px">${
-            testState === 'bad'
-              ? `Nothing is listening on 127.0.0.1:${S.port}. Is Tori Download Manager running?`
-              : testState === 'wait'
-              ? `Checking 127.0.0.1:${S.port}…`
-              : testState === 'unpaired'
-              ? `Tori is listening on 127.0.0.1:${testPort}. Click 'Pair with Tori' to pair automatically.`
-              : `Tori v${testEngineVer} · 127.0.0.1:${testPort} · ${testLatency} ms · Paired`
-          }</span>
-        </div>
-        ${
-          testState === 'unpaired'
-            ? '<button class="btn pri" data-a="pair" style="margin-right:8px">Pair with Tori</button>'
-            : ''
-        }
-        <button class="btn def" data-a="test">Test connection</button>
-      </div>
-    </div>
-    <div class="card">
-      ${sr('Server Address', 'The Tori app runs on this computer only', '<input class="fi" value="127.0.0.1" disabled style="width:130px">')}
-      ${sr('Server Port', 'Same as Browser Integration → Server Port in Tori', `<input class="fi" type="number" data-k="port" value="${S.port}" style="width:90px">`)}
-      ${sr(
-        'API Key',
-        'Auto-paired with Tori Desktop',
-        `<input class="fi" id="key" type="password" data-k="key" value="${escapeHtml(S.key)}" style="width:200px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"><button class="btn" data-a="show">Show</button><button class="btn" data-a="pair" title="Pair automatically with desktop">Auto-pair</button><button class="btn" data-a="paste">Paste</button>`
-      )}
-      ${sr('Connect automatically', 'Connect when the browser starts', tg('auto'))}
-    </div>`,
-
-  cap: () => `
-    <h2>Capture</h2>
-    <div class="sub0">Choose which downloads are sent to Tori.</div>
-    <div class="card">
-      ${sr('Capture downloads', 'Send browser downloads to Tori', tg('cap'))}
-    </div>
-    <div class="card ${S.cap ? '' : 'dis'}" style="${S.cap ? '' : 'opacity:.45;pointer-events:none'}">
-      ${sr(
-        'Minimum file size',
-        'Smaller files stay in the browser',
-        `<input class="fi" type="number" data-k="min" value="${S.min}" min="0" style="width:70px"><span class="sub" style="margin:0">MB</span>`
-      )}
-      ${sr('Ask before sending to Tori', 'Show a confirmation for each download', tg('ask'))}
-      ${sr('Hold Alt to skip Tori', 'Download in the browser while holding Alt', tg('alt'))}
-      ${sr('Capture in private windows', 'Off by default for privacy', tg('incog'))}
-      <div class="sr" style="display:block">
-        <b>File types</b>
-        <span class="sub">Only these file types are captured</span>
-        <div class="chips">
-          ${S.types
-            .map(
-              (t, i) =>
-                `<span class="chp">.${escapeHtml(t)}<u data-a="rt" data-i="${i}" title="Remove">×</u></span>`
-            )
-            .join('')}
-        </div>
-        <div class="add" style="padding-top:0">
-          <input class="fi" id="ty" placeholder="Add extension, e.g. torrent">
-          <button class="btn" data-a="at">Add</button>
-        </div>
-      </div>
-    </div>`,
-
-  media: () => `
-    <h2>Media</h2>
-    <div class="sub0">Control the download button that appears on videos.</div>
-    <div class="card">
-      ${sr('Show download button on videos', 'The “Download video” pill over the player', tg('pill'))}
-    </div>
-    <div class="card ${S.pill ? '' : 'dis'}" style="${S.pill ? '' : 'opacity:.45;pointer-events:none'}">
-      ${sr(
-        'Button position',
-        'Where the pill appears on the video',
-        sel('pos', ['Top right', 'Top left', 'Bottom right', 'Bottom left'])
-      )}
-      ${sr('Always show format picker', 'Choose quality each time instead of using the default', tg('picker'))}
-      ${sr('Default type', 'Used when the picker is off', sel('kind', ['Video', 'Audio only']))}
-      ${sr(
-        'Default quality',
-        'Picks the closest available format',
-        sel('fmt', ['Best available', '1080p', '720p', '480p', '360p'])
-      )}
-      ${sr('Detect audio-only media', 'Show music and podcasts too', tg('audio'))}
-    </div>`,
-
-  sites: () => `
-    <h2>Sites</h2>
-    <div class="sub0">Tori will not capture downloads or show the video button on these sites.</div>
-    <div class="card ls">
-      ${
-        S.sites.length
-          ? S.sites
-              .map(
-                (d, i) => `
-          <div class="sr">
-            <span class="nm"><i class="ft" style="--c:#3b82f6">${svg(P.globe)}</i>${escapeHtml(d)}</span>
-            <button class="x" data-a="rs" data-i="${i}" title="Remove site">×</button>
-          </div>`
-              )
-              .join('')
-          : '<div class="sr"><span class="sub">No excluded sites</span></div>'
-      }
-    </div>
-    <div class="add">
-      <input class="fi" id="st" placeholder="Add a site, e.g. example.com">
-      <button class="btn def" data-a="as">Add site</button>
-    </div>`,
-
-  app: () => `
-    <h2>Appearance</h2>
-    <div class="sub0">How the extension looks.</div>
-    <div class="card">
-      ${sr(
-        'Theme',
-        'Light, dark, or follow the browser',
-        `<select class="fi" data-k="theme">${[
-          ['light', 'Light'],
-          ['dark', 'Dark'],
-          ['system', 'System (auto)'],
-        ]
-          .map(([v, l]) => `<option value="${v}" ${S.theme === v ? 'selected' : ''}>${l}</option>`)
-          .join('')}</select>`
-      )}
-      ${sr('Show media count on the icon', 'Badge with the number of videos found on the page', tg('badge'))}
-    </div>`,
-
-  about: () => `
-    <div class="ab2">
-      <span class="logo">${svg(P.dl)}</span>
-      <h2 style="margin:0">Tori Extension</h2>
-      <div class="sub0" style="margin:6px 0 16px">Version 1.0.1 (API v2.0.0) · Native Messaging Host: com.tori.download_manager</div>
-      <div style="display:flex;gap:10px;justify-content:center">
-        <button class="btn" data-a="toast_updates">Check for updates</button>
-        <button class="btn def" data-a="open_desktop">Open Tori</button>
-      </div>
-    </div>`,
-};
-
-function render() {
-  $('#nav').innerHTML =
-    `<div class="brand"><span class="logo">${svg(P.dl)}</span><div><b>Tori</b><span>Extension options</span></div></div>` +
-    N.map(
-      ([k, l, c, p]) =>
-        `<div class="ni ${k === sec ? 'on' : ''}" data-s="${k}"><i class="ft" style="--c:${c}">${svg(
-          P[p] || P.dl
-        )}</i>${l}</div>`
-    ).join('');
-
-  $('#content').innerHTML = V[sec]();
-}
-
-function saved(t = 'Saved') {
-  const e = $('#sv');
-  if (!e) return;
-  e.innerHTML = `<i class="ft" style="--c:#30c75e">${svg(P.ck)}</i><span>${t}</span>`;
-  e.classList.add('on');
-  clearTimeout(saved.t);
-  saved.t = setTimeout(() => e.classList.remove('on'), 1400);
-}
-
-function applyTheme() {
-  const h = document.documentElement;
-  h.dataset.theme =
-    S.theme === 'system'
-      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+  // ---------- Theme & Accent ----------
+  function resolveTheme(mode) {
+    if (mode === 'dark') return 'dark';
+    if (mode === 'system') {
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
         ? 'dark'
-        : 'light'
-      : S.theme;
-}
-
-function persistSettings() {
-  chrome.storage.local.set({ tori_settings: S, tori_theme: S.theme }, () => {
-    saved();
-  });
-}
-
-function testNativeConnection() {
-  testState = 'wait';
-  render();
-  const startTime = performance.now();
-
-  chrome.runtime.sendMessage({ action: 'PING_DESKTOP', port: S.port, key: S.key }, (res) => {
-    const elapsed = Math.round(performance.now() - startTime);
-    testLatency = Math.max(1, elapsed);
-
-    if (chrome.runtime.lastError || !res || res.status === 'disconnected') {
-      testState = 'bad';
-    } else if (res.status === 'unpaired') {
-      testState = 'unpaired';
-      testPort = res.port || S.port || 6800;
-      testEngineVer = res.version || '2.0.0';
-    } else if (res.status === 'ok' && res.authenticated) {
-      testState = 'ok';
-      testPort = res.port || S.port || 6800;
-      testEngineVer = res.version || '2.0.0';
-      if (res.token && res.token !== S.key) {
-        S.key = res.token;
-        persistSettings();
-      }
-      if (res.port && res.port !== S.port) {
-        S.port = res.port;
-        persistSettings();
-      }
-    } else {
-      testState = 'bad';
+        : 'light';
     }
-    render();
+    return 'light';
+  }
+
+  function applyAppearance(themeMode, accent) {
+    const resolvedTheme = resolveTheme(themeMode);
+    const resolvedAccent = ['indigo', 'ocean', 'emerald', 'rose'].includes(accent) ? accent : 'indigo';
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.dataset.accent = resolvedAccent;
+  }
+
+  function bindSystemThemeWatcher() {
+    if (!window.matchMedia || sysMql) return;
+    sysMql = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSysChange = () => {
+      if (cur.theme === 'system') {
+        applyAppearance('system', cur.accent);
+      }
+    };
+    if (typeof sysMql.addEventListener === 'function') {
+      sysMql.addEventListener('change', onSysChange);
+    } else if (typeof sysMql.addListener === 'function') {
+      sysMql.addListener(onSysChange);
+    }
+  }
+
+  // ---------- Navigation Tabs ----------
+  const tabs = Array.from(document.querySelectorAll('#nav .ni[role="tab"]'));
+  const panels = Array.from(document.querySelectorAll('.opt-panel[role="tabpanel"]'));
+
+  function setActiveTab(name, focusTab = false) {
+    const valid = tabs.some((t) => t.dataset.tab === name);
+    activeTab = valid ? name : 'conn';
+    tabs.forEach((tab) => {
+      const isSelected = tab.dataset.tab === activeTab;
+      tab.classList.toggle('on', isSelected);
+      tab.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+      tab.setAttribute('tabindex', isSelected ? '0' : '-1');
+      if (isSelected && focusTab) tab.focus();
+    });
+    panels.forEach((panel) => {
+      const match = panel.dataset.panel === activeTab;
+      if (match) panel.removeAttribute('hidden');
+      else panel.setAttribute('hidden', '');
+    });
+  }
+
+  tabs.forEach((tab, idx) => {
+    tab.addEventListener('click', () => setActiveTab(tab.dataset.tab));
+    tab.addEventListener('keydown', (e) => {
+      let next = -1;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') next = (idx + 1) % tabs.length;
+      else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') next = (idx - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = tabs.length - 1;
+      if (next >= 0) {
+        e.preventDefault();
+        setActiveTab(tabs[next].dataset.tab, true);
+      }
+    });
   });
-}
 
-// ---------------------------------------------------------------------------
-// Event Listeners
-// ---------------------------------------------------------------------------
-document.addEventListener('input', (e) => {
-  const k = e.target.dataset.k;
-  if (!k) return;
-
-  S[k] =
-    e.target.type === 'checkbox'
-      ? e.target.checked
-      : e.target.type === 'number'
-      ? +e.target.value
-      : e.target.value;
-
-  if (k === 'theme') {
-    applyTheme();
+  // ---------- Storage & Save Indicator ----------
+  function showSaved(label = 'Saved') {
+    const el = $('sv');
+    if (!el) return;
+    el.textContent = label;
+    el.classList.add('on');
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => el.classList.remove('on'), 1500);
   }
 
-  if (k === 'cap' || k === 'pill') {
-    render();
+  function persistSettings(patch, toast = 'Saved') {
+    cur = { ...cur, ...patch };
+    applyAppearance(cur.theme, cur.accent);
+    chrome.storage.local.set(
+      {
+        tori_settings: cur,
+        tori_theme: cur.theme,
+        tori_accent: cur.accent,
+      },
+      () => {
+        if (!chrome.runtime.lastError) {
+          showSaved(toast);
+        }
+      }
+    );
   }
 
-  persistSettings();
-});
+  function sendRuntimeMsg(payload, timeoutMs = 12000) {
+    return new Promise((resolve) => {
+      let done = false;
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        resolve({ status: 'timeout', error: 'Request timed out' });
+      }, timeoutMs);
 
-document.addEventListener('click', async (e) => {
-  const t = e.target;
-
-  // Tab navigation
-  const n = t.closest('[data-s]');
-  if (n) {
-    sec = n.dataset.s;
-    render();
-    return;
-  }
-
-  // Actions
-  const a = t.closest('[data-a]');
-  if (!a) return;
-  const k = a.dataset.a;
-  const i = +a.dataset.i;
-
-  if (k === 'test') {
-    testNativeConnection();
-  }
-
-  if (k === 'pair') {
-    saved('Pairing with Tori…');
-    chrome.runtime.sendMessage({ action: 'INITIATE_PAIRING' }, (res) => {
-      if (res && res.ok && res.token) {
-        S.key = res.token;
-        if (res.port) S.port = res.port;
-        persistSettings();
-        testNativeConnection();
-        saved('Paired successfully');
-      } else {
-        saved(res?.error || 'Pairing failed. Make sure Tori Desktop is running.');
+      try {
+        chrome.runtime.sendMessage(payload, (res) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          if (chrome.runtime.lastError) {
+            resolve({
+              status: 'error',
+              error: chrome.runtime.lastError.message || 'Extension communication failed',
+            });
+            return;
+          }
+          resolve(res || {});
+        });
+      } catch (err) {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          resolve({ status: 'error', error: String(err) });
+        }
       }
     });
   }
 
-  if (k === 'show') {
-    const x = $('#key');
-    if (x) {
-      x.type = x.type === 'password' ? 'text' : 'password';
-      a.textContent = x.type === 'password' ? 'Show' : 'Hide';
+  // ---------- Live 5-State Connection UI ----------
+  function setConnFeedback(text, tone = '') {
+    const el = $('conn-msg');
+    if (!el) return;
+    if (!text) {
+      el.hidden = true;
+      el.textContent = '';
+      el.className = 'inline-note';
+      return;
     }
+    el.hidden = false;
+    el.textContent = text;
+    el.className = tone ? `inline-note ${tone}` : 'inline-note';
   }
 
-  if (k === 'paste') {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text && text.trim()) {
-        S.key = text.trim();
-        persistSettings();
-        render();
-        saved('Pasted from clipboard');
+  function renderConnectionState(state, detail = {}) {
+    const dot = $('cdot');
+    const sdot = $('sdot');
+    const stxt = $('stxt');
+    const tit = $('ctit');
+    const sub = $('csub');
+    const cdEnd = $('cd-end');
+    const cdVer = $('cd-ver');
+    const cdLat = $('cd-lat');
+    const cdNat = $('cd-nat');
+    const abDesk = $('ab-desk');
+
+    const activePort = detail.port || cur.port || 6800;
+    if (cdEnd) cdEnd.textContent = `127.0.0.1:${activePort}`;
+
+    if (typeof detail.nativeHost === 'boolean') {
+      lastNativeHostState = detail.nativeHost;
+    }
+    if (cdNat) {
+      cdNat.textContent =
+        lastNativeHostState === true
+          ? 'Reachable'
+          : lastNativeHostState === false
+            ? 'Not registered / Error'
+            : 'Standby (on-demand)';
+    }
+
+    let cls = 'wait';
+    let label = 'Connecting…';
+    let desc = 'Probing local Tori Desktop HTTP bridge…';
+
+    if (state === 'connected') {
+      cls = 'ok';
+      label = 'Connected';
+      desc = `Authenticated with Tori Desktop${detail.version ? ` v${detail.version}` : ''} on port ${activePort}.`;
+      if (cdVer) cdVer.textContent = detail.version ? `v${detail.version}` : 'Online';
+      if (cdLat) cdLat.textContent = typeof detail.latency === 'number' ? `${detail.latency} ms` : 'OK';
+    } else if (state === 'reconnecting') {
+      cls = 'wait';
+      label = 'Reconnecting…';
+      desc = 'Scanning local bridge ports and refreshing pairing state…';
+    } else if (state === 'disconnected') {
+      cls = 'off';
+      label = 'Disconnected';
+      desc = detail.message || 'Tori Desktop is running, but pairing or API key authentication is required.';
+      if (cdVer) cdVer.textContent = detail.version ? `v${detail.version}` : 'Running';
+      if (cdLat) cdLat.textContent = typeof detail.latency === 'number' ? `${detail.latency} ms` : 'Unpaired';
+    } else if (state === 'unavailable') {
+      cls = 'off';
+      label = 'Desktop unavailable';
+      desc = detail.message || 'Tori Desktop is not responding on localhost. Click Open Tori to launch or restore it.';
+      if (cdVer) cdVer.textContent = 'Offline';
+      if (cdLat) cdLat.textContent = '—';
+    } else {
+      cls = 'wait';
+      label = 'Connecting…';
+      if (cdVer) cdVer.textContent = '…';
+      if (cdLat) cdLat.textContent = '…';
+    }
+
+    if (dot) dot.className = `dot lg ${cls}`;
+    if (sdot) sdot.className = `dot ${cls}`;
+    if (stxt) stxt.textContent = label;
+    if (tit) tit.textContent = label;
+    if (sub) sub.textContent = desc;
+    if (abDesk) abDesk.textContent = detail.version ? `${label} (v${detail.version})` : label;
+  }
+
+  async function refreshConnection(passive = true) {
+    renderConnectionState(passive ? 'connecting' : 'reconnecting', { port: cur.port });
+    const res = await sendRuntimeMsg({
+      action: passive ? 'PING_DESKTOP' : 'RECONNECT_DESKTOP',
+      port: cur.port,
+      key: cur.key,
+      passive,
+    });
+
+    if (res.status === 'ok') {
+      if (res.token && res.token !== cur.key) {
+        cur.key = res.token;
+        const keyInput = $('key');
+        if (keyInput) keyInput.value = res.token;
+        persistSettings({ key: res.token, port: res.port || cur.port }, 'Paired');
+      } else if (res.port && res.port !== cur.port) {
+        cur.port = res.port;
+        const portInput = $('port');
+        if (portInput) portInput.value = res.port;
+        persistSettings({ port: res.port }, 'Port synced');
       }
-    } catch (_) {
-      saved('Could not access clipboard');
+      renderConnectionState('connected', res);
+      if (!passive) setConnFeedback('Reconnected to Tori Desktop successfully.', 'ok');
+      return;
+    }
+
+    if (res.status === 'unpaired' || res.connectionState === 'disconnected' || res.desktop_running) {
+      renderConnectionState('disconnected', res);
+      if (!passive) {
+        setConnFeedback(res.message || 'Tori Desktop requires pairing. Click Auto-Pair or check the API key.', 'err');
+      }
+      return;
+    }
+
+    renderConnectionState('unavailable', res);
+    if (!passive) {
+      setConnFeedback(res.message || res.error || 'Unable to reach Tori Desktop.', 'err');
     }
   }
 
-  if (k === 'rt') {
-    S.types.splice(i, 1);
-    persistSettings();
-    render();
+  // ---------- Render Dynamic Lists ----------
+  function createRemoveSvg() {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '12');
+    svg.setAttribute('height', '12');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.8');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M4.5 4.5l7 7M11.5 4.5l-7 7');
+    svg.appendChild(p);
+    return svg;
   }
 
-  if (k === 'at') {
-    const input = $('#ty');
-    const val = input ? input.value.trim().replace(/^\./, '').toLowerCase() : '';
-    if (val && !S.types.includes(val)) {
-      S.types.push(val);
-      persistSettings();
-      render();
+  function renderExts() {
+    const root = $('exts');
+    if (!root) return;
+    root.textContent = '';
+    const list = Array.isArray(cur.types) ? cur.types : [];
+    if (list.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'No extensions configured. Add extensions like .zip or .mkv above.';
+      root.appendChild(empty);
+      return;
+    }
+
+    list.forEach((rawExt) => {
+      const ext = String(rawExt || '').toLowerCase().replace(/^\./, '').trim();
+      if (!ext) return;
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      const txt = document.createElement('span');
+      txt.textContent = `.${ext}`;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chip-rm';
+      btn.setAttribute('aria-label', `Remove .${ext}`);
+      btn.appendChild(createRemoveSvg());
+      btn.addEventListener('click', () => {
+        const next = (cur.types || [])
+          .map((i) => String(i || '').toLowerCase().replace(/^\./, '').trim())
+          .filter((item) => item && item !== ext);
+        persistSettings({ types: next }, `Removed .${ext}`);
+        renderExts();
+      });
+      chip.append(txt, btn);
+      root.appendChild(chip);
+    });
+  }
+
+  function normalizeDomain(raw) {
+    let v = String(raw || '').trim().toLowerCase();
+    if (!v) return '';
+    v = v.replace(/^[a-z]+:\/\//i, '');
+    v = v.split(/[/?#]/)[0];
+    v = v.replace(/:\d+$/, '');
+    v = v.replace(/^www\./, '');
+    if (!v || /\s/.test(v) || !/^[a-z0-9.-]+$/i.test(v)) return '';
+    if (!v.includes('.') && v !== 'localhost') return '';
+    return v;
+  }
+
+  function renderSites() {
+    const root = $('sites');
+    const countEl = $('site-count');
+    if (!root) return;
+    root.textContent = '';
+    const list = Array.isArray(cur.sites) ? cur.sites : [];
+    if (countEl) {
+      countEl.textContent = list.length === 1 ? '1 domain excluded' : `${list.length} domains excluded`;
+    }
+
+    if (list.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'No excluded sites. Download capture and media overlays remain active everywhere.';
+      root.appendChild(empty);
+      return;
+    }
+
+    list.forEach((host) => {
+      const row = document.createElement('div');
+      row.className = 'site-row';
+      const span = document.createElement('span');
+      span.className = 'site-host mono';
+      span.textContent = host;
+      const rmBtn = document.createElement('button');
+      rmBtn.type = 'button';
+      rmBtn.className = 'btn sm';
+      rmBtn.textContent = 'Remove';
+      rmBtn.setAttribute('aria-label', `Remove ${host}`);
+      rmBtn.addEventListener('click', () => {
+        const next = (cur.sites || []).filter((s) => s !== host);
+        persistSettings({ sites: next }, `Removed ${host}`);
+        renderSites();
+      });
+      row.append(span, rmBtn);
+      root.appendChild(row);
+    });
+  }
+
+  function renderThemeRadios() {
+    document.querySelectorAll('.th-opt[data-theme-val]').forEach((btn) => {
+      const checked = btn.dataset.themeVal === cur.theme;
+      btn.setAttribute('aria-checked', checked ? 'true' : 'false');
+    });
+  }
+
+  function renderAccentRadios() {
+    document.querySelectorAll('.ac-sw[data-accent-val]').forEach((btn) => {
+      const checked = btn.dataset.accentVal === cur.accent;
+      btn.setAttribute('aria-checked', checked ? 'true' : 'false');
+    });
+  }
+
+  function updateCustomPosStatus() {
+    chrome.storage.local.get('tori_custom_overlay_pos', (res) => {
+      const el = $('pos-status');
+      const btn = $('reset-pos');
+      if (!el) return;
+      const saved = res && res.tori_custom_overlay_pos;
+      if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
+        el.textContent = `Custom dragged position saved (${Math.round(saved.x)}px, ${Math.round(saved.y)}px).`;
+        if (btn) btn.disabled = false;
+      } else {
+        el.textContent = `Anchored to ${cur.pos || 'Top right'} corner.`;
+        if (btn) btn.disabled = false;
+      }
+    });
+  }
+
+  function populateForm() {
+    const manifestVer = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.0.9';
+    if ($('nav-ver')) $('nav-ver').textContent = `v${manifestVer}`;
+    if ($('ab-ver')) $('ab-ver').textContent = manifestVer;
+    if ($('ab-ver2')) $('ab-ver2').textContent = manifestVer;
+
+    const ua = navigator.userAgent || '';
+    let browserName = 'Google Chrome MV3';
+    if (/Edg\//.test(ua)) browserName = 'Microsoft Edge MV3';
+    else if (/Firefox\//.test(ua)) browserName = 'Mozilla Firefox MV3';
+    if ($('ab-browser')) $('ab-browser').textContent = browserName;
+
+    const checks = ['auto', 'cap', 'ask', 'alt', 'incog', 'pill', 'picker', 'audio', 'badge'];
+    checks.forEach((k) => {
+      const el = $(k);
+      if (el) el.checked = Boolean(cur[k]);
+    });
+
+    if ($('port')) $('port').value = cur.port || 6800;
+    if ($('key')) $('key').value = cur.key || '';
+    if ($('min')) $('min').value = Number.isFinite(Number(cur.min)) ? cur.min : 1;
+    if ($('pos')) $('pos').value = cur.pos || 'Top right';
+    if ($('kind')) $('kind').value = cur.kind || 'Video';
+    if ($('fmt')) $('fmt').value = cur.fmt || 'Best available';
+
+    applyAppearance(cur.theme, cur.accent);
+    renderThemeRadios();
+    renderAccentRadios();
+    renderExts();
+    renderSites();
+    updateCustomPosStatus();
+  }
+
+  // ---------- Event Wiring ----------
+  function bindInputs() {
+    ['auto', 'cap', 'ask', 'alt', 'incog', 'pill', 'picker', 'audio', 'badge'].forEach((k) => {
+      const el = $(k);
+      if (!el) return;
+      el.addEventListener('change', () => {
+        persistSettings({ [k]: el.checked });
+      });
+    });
+
+    ['pos', 'kind', 'fmt'].forEach((k) => {
+      const el = $(k);
+      if (!el) return;
+      el.addEventListener('change', () => {
+        persistSettings({ [k]: el.value });
+        if (k === 'pos') updateCustomPosStatus();
+      });
+    });
+
+    const portEl = $('port');
+    if (portEl) {
+      portEl.addEventListener('change', () => {
+        const parsed = Number.parseInt(portEl.value, 10);
+        if (!Number.isFinite(parsed) || parsed < 1024 || parsed > 65535) {
+          portEl.value = cur.port || 6800;
+          setConnFeedback('Port must be between 1024 and 65535.', 'err');
+          return;
+        }
+        setConnFeedback('');
+        persistSettings({ port: parsed }, 'Port updated');
+        refreshConnection(true);
+      });
+    }
+
+    const minEl = $('min');
+    if (minEl) {
+      minEl.addEventListener('change', () => {
+        const val = Math.max(0, Number.parseInt(minEl.value, 10) || 0);
+        minEl.value = val;
+        persistSettings({ min: val });
+      });
+    }
+
+    const keyEl = $('key');
+    if (keyEl) {
+      keyEl.addEventListener('change', () => {
+        persistSettings({ key: keyEl.value.trim() }, 'API Key updated');
+        refreshConnection(true);
+      });
+    }
+
+    const toggleKeyBtn = $('toggle-key');
+    if (toggleKeyBtn && keyEl) {
+      toggleKeyBtn.addEventListener('click', () => {
+        const isPw = keyEl.type === 'password';
+        keyEl.type = isPw ? 'text' : 'password';
+        toggleKeyBtn.textContent = isPw ? 'Hide' : 'Show';
+      });
+    }
+
+    const pasteBtn = $('paste-btn');
+    if (pasteBtn && keyEl) {
+      pasteBtn.addEventListener('click', async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          const cleaned = String(text || '').trim();
+          if (!cleaned) {
+            setConnFeedback('Clipboard is empty.', 'err');
+            return;
+          }
+          keyEl.value = cleaned;
+          persistSettings({ key: cleaned }, 'API Key pasted');
+          setConnFeedback('API Key pasted from clipboard. Verifying connection…');
+          refreshConnection(true);
+        } catch (_) {
+          setConnFeedback('Clipboard read permission was not granted. Paste directly into the field.', 'err');
+          keyEl.focus();
+        }
+      });
+    }
+
+    const pairBtn = $('pair-btn');
+    if (pairBtn) {
+      pairBtn.addEventListener('click', async () => {
+        pairBtn.disabled = true;
+        const orig = pairBtn.textContent;
+        pairBtn.textContent = 'Pairing…';
+        setConnFeedback('Requesting pairing token from Tori Desktop…');
+        const res = await sendRuntimeMsg({ action: 'INITIATE_PAIRING' });
+        pairBtn.disabled = false;
+        pairBtn.textContent = orig;
+        if (res && res.ok && res.token) {
+          if (keyEl) keyEl.value = res.token;
+          if (portEl && res.port) portEl.value = res.port;
+          persistSettings({ key: res.token, port: res.port || cur.port }, 'Paired');
+          setConnFeedback('Paired automatically with Tori Desktop.', 'ok');
+          refreshConnection(true);
+        } else {
+          setConnFeedback((res && (res.error || res.message)) || 'Auto-pairing failed. Make sure Tori Desktop is open.', 'err');
+          refreshConnection(true);
+        }
+      });
+    }
+
+    const recBtn = $('crec');
+    if (recBtn) {
+      recBtn.addEventListener('click', async () => {
+        recBtn.disabled = true;
+        setConnFeedback('');
+        await refreshConnection(false);
+        recBtn.disabled = false;
+      });
+    }
+
+    async function handleOpenTori(btnEl) {
+      if (!btnEl) return;
+      btnEl.disabled = true;
+      const prev = btnEl.textContent;
+      btnEl.textContent = 'Opening…';
+      const res = await sendRuntimeMsg({ action: 'SHOW_DESKTOP' });
+      btnEl.disabled = false;
+      btnEl.textContent = prev;
+      if (res && res.status === 'ok') {
+        setConnFeedback('Tori Desktop window opened.', 'ok');
+        refreshConnection(true);
+      } else {
+        setConnFeedback((res && (res.message || res.error)) || 'Failed to open Tori Desktop.', 'err');
+      }
+    }
+
+    if ($('copen')) $('copen').addEventListener('click', () => handleOpenTori($('copen')));
+    if ($('ab-open')) $('ab-open').addEventListener('click', () => handleOpenTori($('ab-open')));
+    if ($('ab-test')) {
+      $('ab-test').addEventListener('click', async () => {
+        setActiveTab('conn');
+        await refreshConnection(false);
+      });
+    }
+
+    // Extension chips form
+    const extForm = $('ext-form');
+    const extInput = $('ext-input');
+    const extErr = $('ext-err');
+    if (extForm && extInput) {
+      extForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (extErr) extErr.hidden = true;
+        let raw = extInput.value.trim().toLowerCase();
+        if (!raw) return;
+        const parts = raw.split(/[\s,;]+/).filter(Boolean);
+        const current = (Array.isArray(cur.types) ? cur.types : [])
+          .map((t) => String(t || '').toLowerCase().replace(/^\./, '').trim())
+          .filter(Boolean);
+        let added = 0;
+        for (const p of parts) {
+          const clean = p.replace(/^\.+/, '');
+          if (!/^[a-z0-9]{1,12}$/i.test(clean)) {
+            if (extErr) {
+              extErr.textContent = `Invalid extension "${p}". Use alphanumeric characters like mkv or zip.`;
+              extErr.hidden = false;
+            }
+            return;
+          }
+          if (!current.includes(clean)) {
+            current.push(clean);
+            added++;
+          }
+        }
+        extInput.value = '';
+        if (added > 0) {
+          persistSettings({ types: current }, `Added ${added} extension${added > 1 ? 's' : ''}`);
+          renderExts();
+        }
+      });
+    }
+
+    if ($('ext-reset')) {
+      $('ext-reset').addEventListener('click', () => {
+        persistSettings({ types: [...DEFAULT_EXTS] }, 'Extensions reset');
+        renderExts();
+      });
+    }
+
+    // Excluded sites form
+    const siteForm = $('site-form');
+    const siteInput = $('site-input');
+    const siteErr = $('site-err');
+    if (siteForm && siteInput) {
+      siteForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (siteErr) siteErr.hidden = true;
+        const host = normalizeDomain(siteInput.value);
+        if (!host) {
+          if (siteErr) {
+            siteErr.textContent = 'Enter a valid domain name such as example.com';
+            siteErr.hidden = false;
+          }
+          return;
+        }
+        const current = Array.isArray(cur.sites) ? [...cur.sites] : [];
+        if (current.includes(host)) {
+          if (siteErr) {
+            siteErr.textContent = `${host} is already in the excluded list.`;
+            siteErr.hidden = false;
+          }
+          return;
+        }
+        current.push(host);
+        siteInput.value = '';
+        persistSettings({ sites: current }, `Excluded ${host}`);
+        renderSites();
+      });
+    }
+
+    // Reset dragged overlay position
+    if ($('reset-pos')) {
+      $('reset-pos').addEventListener('click', () => {
+        chrome.storage.local.remove('tori_custom_overlay_pos', () => {
+          updateCustomPosStatus();
+          showSaved('Position reset');
+        });
+      });
+    }
+
+    // Theme radios
+    document.querySelectorAll('.th-opt[data-theme-val]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const val = btn.dataset.themeVal;
+        persistSettings({ theme: val }, `Theme: ${val}`);
+        renderThemeRadios();
+      });
+    });
+
+    // Accent radios
+    document.querySelectorAll('.ac-sw[data-accent-val]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const val = btn.dataset.accentVal;
+        persistSettings({ accent: val }, `Accent: ${val}`);
+        renderAccentRadios();
+      });
+    });
+
+    // Restore all defaults
+    if ($('ab-reset-all')) {
+      $('ab-reset-all').addEventListener('click', () => {
+        const preservedKey = cur.key || '';
+        const preservedPort = cur.port || 6800;
+        const reset = {
+          ...DEFAULT_SETTINGS,
+          port: preservedPort,
+          key: preservedKey,
+          types: [...DEFAULT_EXTS],
+          sites: [],
+        };
+        persistSettings(reset, 'Defaults restored');
+        populateForm();
+      });
     }
   }
 
-  if (k === 'rs') {
-    S.sites.splice(i, 1);
-    persistSettings();
-    render();
-  }
+  // ---------- Init ----------
+  function init() {
+    bindSystemThemeWatcher();
 
-  if (k === 'as') {
-    const input = $('#st');
-    const val = input ? input.value.trim().toLowerCase() : '';
-    if (val && !S.sites.includes(val)) {
-      S.sites.push(val);
-      persistSettings();
-      render();
+    // Respect hash navigation if opened via #sites, #look, etc.
+    const hashTab = (window.location.hash || '').replace('#', '').trim();
+    if (hashTab) {
+      setActiveTab(hashTab);
     }
+
+    chrome.storage.local.get(['tori_settings', 'tori_theme', 'tori_accent'], (res) => {
+      const saved = (res && res.tori_settings) || {};
+      cur = {
+        ...DEFAULT_SETTINGS,
+        ...saved,
+        sites: Array.isArray(saved.sites) ? saved.sites : [...DEFAULT_SETTINGS.sites],
+        types: Array.isArray(saved.types) ? saved.types : [...DEFAULT_EXTS],
+      };
+      if (!saved.theme && res && res.tori_theme) cur.theme = res.tori_theme;
+      if (!saved.accent && res && res.tori_accent) cur.accent = res.tori_accent;
+
+      populateForm();
+      bindInputs();
+      document.documentElement.dataset.toriReady = '1';
+      refreshConnection(true);
+    });
   }
 
-  if (k === 'toast_updates') {
-    saved('Up to date');
-  }
-
-  if (k === 'open_desktop') {
-    saved('Opening Tori…');
-    chrome.runtime.sendMessage({ action: 'SHOW_DESKTOP' });
-  }
-});
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    const id = e.target.id;
-    if (id === 'ty') {
-      const btn = $('[data-a=at]');
-      if (btn) btn.click();
-    }
-    if (id === 'st') {
-      const btn = $('[data-a=as]');
-      if (btn) btn.click();
-    }
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Initialization
-// ---------------------------------------------------------------------------
-chrome.storage.local.get(['tori_settings', 'tori_theme'], (res) => {
-  if (res.tori_settings) {
-    S = { ...DEFAULT_SETTINGS, ...res.tori_settings };
-    S.types = normalizeCaptureTypes(S.types);
-  }
-  if (res.tori_theme) {
-    S.theme = res.tori_theme;
-  }
-  applyTheme();
-  testNativeConnection();
-});
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
+  document.addEventListener('DOMContentLoaded', init);
+})();

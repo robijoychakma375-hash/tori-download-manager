@@ -302,6 +302,8 @@ function normalizePlatformUrl(rawUrl) {
     fd: 'M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z',
     play: 'M9 6.5v11l9-5.5z',
     music: 'M9 18V6l10-2v12M7 20a2 2 0 100-4 2 2 0 000 4zM17 18a2 2 0 100-4 2 2 0 000 4z',
+    queue: 'M4 7h10M4 12h10M4 17h6M17 11l4 3-4 3z',
+    info: 'M12 3a9 9 0 100 18 9 9 0 000-18zM12 11v6M12 7.5v.01',
   };
 
   let settings = {
@@ -312,9 +314,31 @@ function normalizePlatformUrl(rawUrl) {
     kind: 'Video',
     fmt: 'Best available',
     audio: true,
+    port: 6800,
     sites: ['docs.google.com', 'mail.google.com', 'github.com'],
     theme: 'light',
+    accent: 'indigo',
   };
+
+  function getResolvedTheme() {
+    if (settings.theme === 'dark') return 'dark';
+    if (settings.theme === 'system') {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    return 'light';
+  }
+
+  function applyThemeToElement(el) {
+    if (!el) return;
+    const isDark = getResolvedTheme() === 'dark';
+    el.classList.toggle('tori-dark', isDark);
+    const acc = ['ocean', 'emerald', 'rose'].includes(settings.accent) ? settings.accent : 'indigo';
+    if (acc === 'indigo') {
+      el.removeAttribute('data-accent');
+    } else {
+      el.setAttribute('data-accent', acc);
+    }
+  }
 
   // Check if current site is excluded
   function isSiteExcluded() {
@@ -327,12 +351,15 @@ function normalizePlatformUrl(rawUrl) {
 
   // Load and observe settings changes
   function syncSettings() {
-    chrome.storage.local.get(['tori_settings', 'tori_theme'], (res) => {
+    chrome.storage.local.get(['tori_settings', 'tori_theme', 'tori_accent'], (res) => {
       if (res.tori_settings) {
         settings = { ...settings, ...res.tori_settings };
       }
       if (res.tori_theme) {
         settings.theme = res.tori_theme;
+      }
+      if (res.tori_accent) {
+        settings.accent = res.tori_accent;
       }
       applyTheme();
       if (!isSiteExcluded() && settings.pill) {
@@ -344,14 +371,24 @@ function normalizePlatformUrl(rawUrl) {
   }
 
   function applyTheme() {
-    const isDark =
-      settings.theme === 'dark' ||
-      (settings.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    document.body.classList.toggle('tori-dark', isDark);
+    const isDark = getResolvedTheme() === 'dark';
+    if (document.body) {
+      document.body.classList.toggle('tori-dark', isDark);
+    }
+    document.querySelectorAll('.tori-mp').forEach((el) => applyThemeToElement(el));
+    const toast = document.getElementById('tori-page-toast');
+    if (toast) applyThemeToElement(toast);
+  }
+
+  const mqlColorScheme = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mqlColorScheme && typeof mqlColorScheme.addEventListener === 'function') {
+    mqlColorScheme.addEventListener('change', () => {
+      if (settings.theme === 'system') applyTheme();
+    });
   }
 
   chrome.storage.onChanged.addListener((changes) => {
-    if (changes.tori_settings || changes.tori_theme) {
+    if (changes.tori_settings || changes.tori_theme || changes.tori_accent) {
       syncSettings();
     }
   });
@@ -664,11 +701,14 @@ function normalizePlatformUrl(rawUrl) {
     if (!toast) {
       toast = document.createElement('div');
       toast.id = 'tori-page-toast';
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
       document.body.appendChild(toast);
     }
+    applyThemeToElement(toast);
     toast.innerHTML = `
-      <i class="tori-ft" style="--c:${isError ? '#e5484d' : '#30c75e'};width:20px;height:20px;border-radius:5px">
-        <svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="${P.ck}"/></svg>
+      <i class="tori-ft" style="--c:${isError ? '#e5484d' : '#1faa59'}">
+        <svg viewBox="0 0 24 24"><path d="${P.ck}"/></svg>
       </i>
       <span>${escapeHtml(text)}</span>
     `;
@@ -677,9 +717,19 @@ function normalizePlatformUrl(rawUrl) {
     showToast.timer = setTimeout(() => toast.classList.remove('on'), durationMs);
   }
 
-  // Remove all overlays
+  // Remove all overlays and tear down listeners
+  function destroyOverlay(mp) {
+    if (!mp) return;
+    if (typeof mp.__toriDestroy === 'function') {
+      try {
+        mp.__toriDestroy();
+      } catch (_) {}
+    }
+    mp.remove();
+  }
+
   function removeAllOverlays() {
-    document.querySelectorAll('.tori-mp').forEach((el) => el.remove());
+    document.querySelectorAll('.tori-mp').forEach((el) => destroyOverlay(el));
     document.querySelectorAll('[data-tori-attached]').forEach((el) => {
       el.removeAttribute('data-tori-attached');
     });
@@ -775,25 +825,29 @@ function normalizePlatformUrl(rawUrl) {
     const mp = document.createElement('div');
     mp.className = `tori-mp ${getPosClass(settings.pos)}`;
     mp.__toriVideoEl = videoEl;
+    applyThemeToElement(mp);
 
-    // Create pill button
+    // Create compact pill button
     const pill = document.createElement('button');
     pill.className = 'tori-pill pill';
     pill.type = 'button';
     pill.setAttribute('aria-expanded', 'false');
+    pill.setAttribute('aria-label', 'Open TORI Video Format Picker');
     pill.innerHTML = `
-      <span class="ico tori-logo">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+      <span class="ico tori-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
           <path d="${P.dl}"/>
         </svg>
       </span>
-      <span>Download video</span>
+      <span class="tori-pill-label">Download</span>
       <span class="chip tori-pill-tag">Media</span>
     `;
 
     // Create format panel
     const pn = document.createElement('div');
     pn.className = 'tori-pn panel';
+    pn.setAttribute('role', 'dialog');
+    pn.setAttribute('aria-label', 'TORI Video Format Picker');
 
     mp.appendChild(pill);
     mp.appendChild(pn);
@@ -966,6 +1020,11 @@ function normalizePlatformUrl(rawUrl) {
       endDrag(null, false);
     };
 
+    const onVisibilityChange = () => {
+      if (document.hidden) endDrag(null, false);
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
     pill.addEventListener('pointerdown', (e) => {
       // Only primary mouse button can initiate mouse dragging
       if (e.button !== 0) return;
@@ -1009,11 +1068,61 @@ function normalizePlatformUrl(rawUrl) {
           mp.style.top = `${Math.min(Math.max(4, curT), maxT)}px`;
         }
       }
+      if (pn.classList.contains('on')) {
+        positionPanelWithinViewport();
+      }
     };
     window.addEventListener('resize', onResizeClamp);
 
+    function positionPanelWithinViewport() {
+      if (!pn.classList.contains('on')) return;
+      pn.style.position = '';
+      pn.style.left = '';
+      pn.style.right = '';
+      pn.style.top = '';
+      pn.style.bottom = '';
+      pn.style.transform = '';
+
+      const pRect = pill.getBoundingClientRect();
+      const vw = window.innerWidth || document.documentElement.clientWidth;
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      const panelW = Math.min(320, Math.max(260, vw - 24));
+      pn.style.width = `${panelW}px`;
+
+      const listEl = pn.querySelector('.tori-fl');
+      if (listEl) {
+        const capH = Math.max(96, Math.min(224, vh - 230));
+        listEl.style.maxHeight = `${capH}px`;
+      }
+
+      const nRect = pn.getBoundingClientRect();
+      let tx = 0;
+      let ty = 0;
+      if (nRect.right > vw - 10) {
+        tx = vw - 10 - nRect.right;
+      } else if (nRect.left < 10) {
+        tx = 10 - nRect.left;
+      }
+      if (nRect.bottom > vh - 10) {
+        const spaceAbove = pRect.top - 10;
+        const spaceBelow = vh - pRect.bottom - 10;
+        if (spaceAbove > spaceBelow && nRect.height > spaceBelow) {
+          ty = -(pRect.height + nRect.height + 14);
+        } else {
+          ty = vh - 10 - nRect.bottom;
+        }
+      }
+      if (nRect.top + ty < 10) {
+        ty = 10 - nRect.top;
+      }
+      if (tx !== 0 || ty !== 0) {
+        pn.style.transform = `translate(${Math.round(tx)}px, ${Math.round(ty)}px)`;
+      }
+    }
+
     let activeTab = settings.kind === 'Audio only' ? 'Audio' : 'Video';
     let selectedIdx = 0;
+    let selectedUserChosen = false;
     let isDownloaded = false;
     let tabMediaCandidates = [];
     let resolvedMeta = null;
@@ -1022,6 +1131,7 @@ function normalizePlatformUrl(rawUrl) {
     let currentMediaIdentity = extractMediaIdentity(null, videoEl);
     let currentGeneration = 0;
     let resolveTimeoutTimer = null;
+    let dlTimeoutTimer = null;
 
     function triggerResolution(force = false) {
       if (isResolving && !force) return;
@@ -1132,19 +1242,19 @@ function normalizePlatformUrl(rawUrl) {
       if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
       currentGeneration++;
 
-      // Immediately invalidate old media state
-      resolvedMeta = null;
-      selectedIdx = 0;
-      tabMediaCandidates = [];
-      resolveError = null;
-
       // Reset pill tag to "Resolving…"
       const tagEl = pill.querySelector('.tori-pill-tag');
       if (tagEl) {
         tagEl.textContent = 'Resolving…';
-        tagEl.style.color = 'var(--tori-blue)';
-        tagEl.style.background = 'rgba(79, 70, 229, 0.12)';
+        tagEl.className = 'chip tori-pill-tag';
       }
+
+      // Immediately invalidate old media state
+      resolvedMeta = null;
+      selectedIdx = 0;
+      selectedUserChosen = false;
+      tabMediaCandidates = [];
+      resolveError = null;
 
       // Automatically trigger resolution for the new video
       triggerResolution(true);
@@ -1165,6 +1275,18 @@ function normalizePlatformUrl(rawUrl) {
       audioFormats: getAvailableFormats().audioFormats,
     });
 
+    function pickPreferredFormatIdx(list) {
+      if (!Array.isArray(list) || list.length === 0) return 0;
+      const pref = settings.fmt || 'Best available';
+      if (pref === 'Best available') return 0;
+      const targetH = parseInt(pref, 10);
+      if (!targetH) return 0;
+      const exactIdx = list.findIndex((f) => f.height === targetH || String(f.q || '').includes(`${targetH}p`));
+      if (exactIdx !== -1) return exactIdx;
+      const closestBelow = list.findIndex((f) => f.height && f.height <= targetH);
+      return closestBelow !== -1 ? closestBelow : 0;
+    }
+
     // Collect genuine detected media candidates (never hardcoded, never webpage URL)
     function getAvailableFormats() {
       if (resolvedMeta && Array.isArray(resolvedMeta.formats) && resolvedMeta.formats.length > 0) {
@@ -1178,6 +1300,7 @@ function normalizePlatformUrl(rawUrl) {
         resolvedMeta.formats.forEach((f) => {
           const isAudio = !f.has_video && f.has_audio;
           const isHd = !!(f.height && f.height >= 720);
+          const is4k = !!(f.height && f.height >= 2160);
           const sizeStr = formatFilesizeDisplay(f, resolvedMeta.duration_seconds || videoEl.duration);
 
           let qLabel = f.resolution_label || (isAudio ? 'Audio' : 'Media');
@@ -1189,18 +1312,28 @@ function normalizePlatformUrl(rawUrl) {
             }
           }
 
-          let desc = f.format_note || f.vcodec || f.acodec || f.protocol || '';
+          const vcodecShort = f.vcodec && f.vcodec !== 'none' ? String(f.vcodec).split('.')[0] : '';
+          const acodecShort = f.acodec && f.acodec !== 'none' ? String(f.acodec).split('.')[0] : '';
+          const needsMerge = !!(f.requires_merge || f.merge_audio_format_id);
+
+          let descParts = [];
           if (isAudio) {
-            const codec = f.acodec ? f.acodec.split('.')[0] : '';
-            const note = f.format_note && f.format_note !== f.acodec ? f.format_note : '';
-            desc = codec && note ? `${codec} · ${note}` : codec || note || 'Audio stream';
+            if (acodecShort) descParts.push(acodecShort);
+            if (f.format_note && f.format_note !== f.acodec) descParts.push(f.format_note);
+            if (descParts.length === 0) descParts.push('Audio stream');
+          } else {
+            if (vcodecShort) descParts.push(vcodecShort);
+            if (f.fps && f.fps >= 48) descParts.push(`${Math.round(f.fps)}fps`);
+            if (descParts.length === 0 && f.format_note) descParts.push(f.format_note);
           }
 
           const item = {
             q: qLabel,
+            height: f.height || null,
             tg: (f.container || (isAudio ? 'mp3' : 'mp4')).toUpperCase(),
-            hd: isHd ? 'HD' : null,
-            cd: desc,
+            hd: is4k ? '4K' : isHd ? 'HD' : null,
+            mergeBadge: needsMerge ? '+Audio' : null,
+            cd: descParts.join(' · ') || (f.protocol ? f.protocol.toUpperCase() : ''),
             sz: sizeStr,
             url: f.direct_stream_url || f.url || resolvedMeta.source_url,
             format_id: f.format_id,
@@ -1211,7 +1344,9 @@ function normalizePlatformUrl(rawUrl) {
           };
 
           if (isAudio) {
-            audioFormats.push(item);
+            if (settings.audio !== false) {
+              audioFormats.push(item);
+            }
           } else {
             videoFormats.push(item);
           }
@@ -1361,24 +1496,16 @@ function normalizePlatformUrl(rawUrl) {
       if (isResolving) {
         tagEl.textContent = 'Resolving…';
         tagEl.className = 'chip tori-pill-tag';
-        tagEl.style.color = '#5b5bf0';
-        tagEl.style.background = '#eceafe';
       } else if (hasAnyCandidates) {
         const top = videoFormats[0] || audioFormats[0];
         tagEl.textContent = top.q || top.tg || 'Media';
         tagEl.className = 'chip tori-pill-tag hd';
-        tagEl.style.color = '';
-        tagEl.style.background = '';
       } else if (resolveError) {
         tagEl.textContent = 'Unavailable';
         tagEl.className = 'chip tori-pill-tag';
-        tagEl.style.color = '#dc2626';
-        tagEl.style.background = '#fee2e2';
       } else {
         tagEl.textContent = 'Media';
         tagEl.className = 'chip tori-pill-tag';
-        tagEl.style.color = '';
-        tagEl.style.background = '';
       }
     }
 
@@ -1463,10 +1590,11 @@ function normalizePlatformUrl(rawUrl) {
         lower.includes('econnrefused') ||
         lower.includes('is tori running')
       ) {
+        const portNum = Number(settings.port) || 6800;
         return {
           title: 'TORI Desktop Offline',
-          desc: 'Could not connect to the local TORI server at 127.0.0.1:6800.',
-          hint: 'Ensure TORI Download Manager is launched.',
+          desc: `Could not connect to TORI Desktop at 127.0.0.1:${portNum}.`,
+          hint: 'Open TORI Download Manager or check Connection settings.',
           color: '#e5484d',
         };
       }
@@ -1556,14 +1684,17 @@ function normalizePlatformUrl(rawUrl) {
     function renderPanel() {
       const { title, subInfo, videoFormats, audioFormats, hasAnyCandidates } = getAvailableFormats();
       const currentList = activeTab === 'Video' ? videoFormats : audioFormats;
+      if (!selectedUserChosen && currentList.length > 0) {
+        selectedIdx = pickPreferredFormatIdx(currentList);
+      }
       if (selectedIdx >= currentList.length) selectedIdx = 0;
       const currentItem = currentList[selectedIdx];
 
       let listHtml = '';
       if (isResolving && !hasAnyCandidates) {
         listHtml = `
-          <div class="state" style="padding:24px 14px">
-            <div class="tori-spin"></div>
+          <div class="state">
+            <span class="tori-state-dot" aria-hidden="true"></span>
             <b>Resolving media formats…</b>
             <p>Extracting genuine quality streams and formats</p>
           </div>`;
@@ -1572,10 +1703,14 @@ function normalizePlatformUrl(rawUrl) {
           listHtml = currentList
             .map(
               (f, i) => `
-            <button type="button" class="row tori-fr ${i === selectedIdx ? 'on' : ''} ${f.isAudio ? 'audio' : ''}" data-idx="${i}" role="radio" aria-checked="${i === selectedIdx ? 'true' : 'false'}">
-              <b class="tori-q" title="${escapeHtml(f.q)}">${escapeHtml(f.q)}</b>
-              <span class="tori-cd" title="${escapeHtml(f.cd)}">${escapeHtml(f.cd)}</span>
-              <em class="tori-sz">${escapeHtml(f.sz)}</em>
+            <button type="button" class="row tori-fr fr ${i === selectedIdx ? 'on' : ''} ${f.isAudio ? 'audio' : ''}" data-idx="${i}" role="radio" aria-checked="${i === selectedIdx ? 'true' : 'false'}">
+              <span class="rd" aria-hidden="true"></span>
+              <span class="q tori-q" title="${escapeHtml(f.q)}">${escapeHtml(f.q)}</span>
+              <span class="tg">${escapeHtml(f.tg)}</span>
+              ${f.hd ? `<span class="tg">${escapeHtml(f.hd)}</span>` : ''}
+              ${f.mergeBadge ? `<span class="tg">${escapeHtml(f.mergeBadge)}</span>` : ''}
+              ${f.cd ? `<span class="tori-cd" title="${escapeHtml(f.cd)}">${escapeHtml(f.cd)}</span>` : ''}
+              <em class="sz tori-sz">${escapeHtml(f.sz)}</em>
             </button>`
             )
             .join('');
@@ -1589,17 +1724,18 @@ function normalizePlatformUrl(rawUrl) {
         const notice = getErrorNotice(resolveError);
         listHtml = `
           <div class="state">
-            <i></i>
+            <span class="tori-state-dot" style="background:${escapeHtml(notice.color || 'var(--warn)')}" aria-hidden="true"></span>
             <b>${escapeHtml(notice.title)}</b>
             <p>${escapeHtml(notice.desc)}</p>
-            <span style="font-size:11px;color:#6b7280;margin:4px 0 8px">${escapeHtml(notice.hint)}</span>
-            <button class="tori-retry-btn" data-act="retry" type="button" style="border:1px solid #e6e8ee;border-radius:8px;padding:6px 14px;background:#fff;cursor:pointer;font-weight:600;font-size:12px;color:#171a21">
+            <span class="hint">${escapeHtml(notice.hint)}</span>
+            <button class="tori-retry-btn" data-act="retry" type="button">
               Retry resolution
             </button>
           </div>`;
       }
 
-      const canDownload = hasAnyCandidates && !isResolving && !!currentItem && !!currentItem.url;
+      const canDownload = hasAnyCandidates && !isResolving && !!currentItem && !!(currentItem.url || currentItem.format_id);
+      const sizeLabel = currentItem && currentItem.sz && currentItem.sz !== 'Size unknown' ? ` · ${currentItem.sz}` : '';
       const dlBtnText = isResolving
         ? 'Resolving formats…'
         : !hasAnyCandidates
@@ -1607,21 +1743,19 @@ function normalizePlatformUrl(rawUrl) {
         : !currentItem
         ? 'No Stream'
         : isDownloaded
-        ? 'Sent to Tori ✓'
-        : activeTab === 'Video'
-        ? 'Download video'
-        : 'Download audio';
+        ? 'Queued in Tori'
+        : `Download${sizeLabel}`;
 
       pn.innerHTML = `
-        <div class="head tori-ph">
-          <div class="thumb">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          </div>
-          <div class="meta" style="min-width:0">
-            <b id="title">${escapeHtml(title)}</b>
+        <div class="head tori-ph ph">
+          <span class="ft-video" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="${P.play}"/></svg>
+          </span>
+          <div class="t meta">
+            <b id="title" title="${escapeHtml(title)}">${escapeHtml(title)}</b>
             <span id="sub">${escapeHtml(subInfo)}</span>
           </div>
-          <button class="x tori-x" data-act="close" aria-label="Close">×</button>
+          <button type="button" class="x tori-x" data-act="close" aria-label="Close">×</button>
         </div>
 
         ${
@@ -1629,24 +1763,37 @@ function normalizePlatformUrl(rawUrl) {
             const pInfo = inspectPlaylistUrl(window.location.href);
             if (pInfo.isPlaylist && pInfo.isSupported) {
               return `
-        <div style="margin: 4px 14px 2px; padding: 6px 10px; background: rgba(91,91,240,0.1); border: 1px solid rgba(91,91,240,0.25); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-          <span style="font-size: 11.5px; color: #4338ca; font-weight: 600;">⚡ Playlist available</span>
-          <button type="button" data-act="open-playlist" data-canonical-url="${escapeHtml(pInfo.canonicalUrl || window.location.href)}" style="font-size: 11px; padding: 3px 8px; background: #5b5bf0; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Download Playlist</button>
+        <div class="tori-pl-banner supported">
+          <div class="tori-pl-info">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${P.queue}"/></svg>
+            <div class="tori-pl-text">
+              <span class="tori-pl-title">Playlist available</span>
+            </div>
+          </div>
+          <button type="button" class="tori-pl-btn" data-act="open-playlist" data-canonical-url="${escapeHtml(pInfo.canonicalUrl || window.location.href)}">Download Playlist</button>
         </div>`;
             } else if (pInfo.isPlaylist && pInfo.type === 'mix') {
               return `
-        <div style="margin: 4px 14px 2px; padding: 6px 10px; background: rgba(234, 88, 12, 0.08); border: 1px solid rgba(234, 88, 12, 0.25); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-          <div style="display: flex; flex-direction: column; min-width: 0;">
-            <span style="font-size: 11.5px; color: #c2410c; font-weight: 600;">📻 YouTube Mix (Radio)</span>
-            <span style="font-size: 10px; color: #7c2d12; opacity: 0.85;">Dynamic queue cannot be downloaded as a batch</span>
+        <div class="tori-pl-banner mix">
+          <div class="tori-pl-info">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${P.info}"/></svg>
+            <div class="tori-pl-text">
+              <span class="tori-pl-title">YouTube Mix (Radio)</span>
+              <span class="tori-pl-sub">Dynamic queue cannot be downloaded as batch</span>
+            </div>
           </div>
-          <button type="button" data-act="mix-info" style="font-size: 10.5px; padding: 2px 7px; background: transparent; color: #c2410c; border: 1px solid rgba(234, 88, 12, 0.4); border-radius: 6px; cursor: pointer; font-weight: 600;">Info</button>
+          <button type="button" class="tori-pl-btn sec" data-act="mix-info">Info</button>
         </div>`;
             } else if (pInfo.isPlaylist && pInfo.type === 'unsupported') {
               return `
-        <div style="margin: 4px 14px 2px; padding: 6px 10px; background: rgba(100, 116, 139, 0.08); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-          <span style="font-size: 11px; color: #475569; font-weight: 500;">🔒 Private / restricted playlist</span>
-          <button type="button" data-act="mix-info" style="font-size: 10.5px; padding: 2px 7px; background: transparent; color: #475569; border: 1px solid rgba(100, 116, 139, 0.4); border-radius: 6px; cursor: pointer; font-weight: 500;">Info</button>
+        <div class="tori-pl-banner">
+          <div class="tori-pl-info">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${P.info}"/></svg>
+            <div class="tori-pl-text">
+              <span class="tori-pl-title">Private / restricted playlist</span>
+            </div>
+          </div>
+          <button type="button" class="tori-pl-btn sec" data-act="mix-info">Info</button>
         </div>`;
             }
             return '';
@@ -1658,17 +1805,21 @@ function normalizePlatformUrl(rawUrl) {
           <button type="button" role="tab" class="${activeTab === 'Audio' ? 'on' : ''}" data-tab="Audio" aria-selected="${activeTab === 'Audio' ? 'true' : 'false'}">Audio only</button>
         </div>
 
-        <div class="list tori-fl" role="radiogroup" aria-label="Quality">
+        <div class="list fl tori-fl" role="radiogroup" aria-label="Quality">
           ${listHtml}
         </div>
 
-        <div class="btns tori-ac">
-          <button type="button" class="copy tori-btn sq ${canDownload ? '' : 'dis'}" ${canDownload ? '' : 'disabled'} data-act="copy" aria-label="Copy link" title="${canDownload ? 'Copy stream URL' : 'No stream URL available'}">⧉</button>
-          <button type="button" class="go tori-btn primary def ${canDownload ? '' : 'dis'} ${isDownloaded ? 'ok' : ''}" ${canDownload ? '' : 'disabled'} data-act="download"><span>${escapeHtml(dlBtnText)}</span></button>
-        </div>
-
-        <div class="foot tori-pf">
-          Save to <b id="path">Downloads\\Tori\\${escapeHtml(activeTab)}</b>
+        <div class="pf tori-pf">
+          <div class="sv tori-sv">Save to <b id="path">Downloads\\Tori\\${escapeHtml(activeTab)}</b></div>
+          <div class="ac btns tori-ac">
+            <button type="button" class="copy tori-btn sq ${canDownload ? '' : 'dis'}" ${canDownload ? '' : 'disabled'} data-act="copy" aria-label="Copy link" title="${canDownload ? 'Copy stream URL' : 'No stream URL available'}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${P.cp}"/></svg>
+            </button>
+            <button type="button" class="go tori-btn def f primary ${canDownload ? '' : 'dis'} ${isDownloaded ? 'ok' : ''}" ${canDownload ? '' : 'disabled'} data-act="download">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${P.dl}"/></svg>
+              <span>${escapeHtml(dlBtnText)}</span>
+            </button>
+          </div>
         </div>
       `;
 
@@ -1678,6 +1829,7 @@ function normalizePlatformUrl(rawUrl) {
           e.stopPropagation();
           activeTab = tabBtn.dataset.tab;
           selectedIdx = 0;
+          selectedUserChosen = false;
           renderPanel();
         });
       });
@@ -1686,9 +1838,14 @@ function normalizePlatformUrl(rawUrl) {
         row.addEventListener('click', (e) => {
           e.stopPropagation();
           selectedIdx = parseInt(row.dataset.idx, 10);
+          selectedUserChosen = true;
           renderPanel();
         });
       });
+
+      if (pn.classList.contains('on')) {
+        requestAnimationFrame(positionPanelWithinViewport);
+      }
 
       const closeBtn = pn.querySelector('[data-act="close"]');
       if (closeBtn) {
@@ -1887,31 +2044,66 @@ function normalizePlatformUrl(rawUrl) {
                 user_agent: navigator.userAgent,
               };
 
-          chrome.runtime.sendMessage(reqPayload, (res) => {
+          let dlSettled = false;
+          if (dlTimeoutTimer) clearTimeout(dlTimeoutTimer);
+          const restoreDownloadBtn = () => {
             dlBtn.classList.remove('pending');
-            if (res && res.status === 'ok' && res.job_id) {
-              console.log('[TORI] Download queued successfully', { correlationId, job_id: res.job_id });
-              isDownloaded = true;
-              dlBtn.classList.add('ok');
-              if (btnSpan) btnSpan.textContent = 'Queued in Tori';
-              showToast(`Download queued in Tori (${res.filename || target.filename})`);
-              setTimeout(() => {
-                isDownloaded = false;
-                pn.classList.remove('on');
-                renderPanel();
-              }, 1800);
-            } else if (res && res.status === 'already_exists') {
-              dlBtn.disabled = false;
-              if (btnSpan) btnSpan.textContent = originalText;
-              showToast('Already in download queue');
-            } else {
-              dlBtn.disabled = false;
-              if (btnSpan) btnSpan.textContent = originalText;
-              const errMsg = res?.message || 'Download failed. Check connection to TORI Desktop.';
-              console.warn('[TORI] Download failed', { correlationId, error: errMsg, code: res?.code });
-              showToast(errMsg, true);
+            dlBtn.disabled = false;
+            if (btnSpan) btnSpan.textContent = originalText;
+          };
+
+          dlTimeoutTimer = setTimeout(() => {
+            if (dlSettled) return;
+            dlSettled = true;
+            restoreDownloadBtn();
+            showToast('Timed out waiting for TORI Desktop to confirm download.', true, 4000);
+          }, 15000);
+
+          try {
+            chrome.runtime.sendMessage(reqPayload, (res) => {
+              if (dlSettled) return;
+              dlSettled = true;
+              clearTimeout(dlTimeoutTimer);
+              dlTimeoutTimer = null;
+              dlBtn.classList.remove('pending');
+
+              const lastErr = chrome.runtime.lastError;
+              if (lastErr) {
+                restoreDownloadBtn();
+                showToast(lastErr.message || 'Extension communication failed.', true, 4000);
+                return;
+              }
+
+              if (res && res.status === 'ok' && res.job_id) {
+                console.log('[TORI] Download queued successfully', { correlationId, job_id: res.job_id });
+                isDownloaded = true;
+                dlBtn.classList.add('ok');
+                if (btnSpan) btnSpan.textContent = 'Queued in Tori';
+                showToast(`Download queued in Tori (${res.filename || target.filename})`);
+                setTimeout(() => {
+                  isDownloaded = false;
+                  pn.classList.remove('on');
+                  pill.setAttribute('aria-expanded', 'false');
+                  renderPanel();
+                }, 1800);
+              } else if (res && res.status === 'already_exists' && res.job_id) {
+                restoreDownloadBtn();
+                showToast('Already in download queue');
+              } else {
+                restoreDownloadBtn();
+                const errMsg = res?.message || res?.error || 'Download failed. Check connection to TORI Desktop.';
+                console.warn('[TORI] Download failed', { correlationId, error: errMsg, code: res?.code });
+                showToast(errMsg, true, 4000);
+              }
+            });
+          } catch (err) {
+            if (!dlSettled) {
+              dlSettled = true;
+              clearTimeout(dlTimeoutTimer);
+              restoreDownloadBtn();
+              showToast(err?.message || 'Failed to send download request.', true, 4000);
             }
-          });
+          }
         });
       }
     }
@@ -1923,7 +2115,8 @@ function normalizePlatformUrl(rawUrl) {
         return;
       }
       const list = settings.kind === 'Audio only' && audioFormats.length > 0 ? audioFormats : videoFormats;
-      const target = list[0];
+      const idx = pickPreferredFormatIdx(list);
+      const target = list[idx] || list[0];
       if (!target || (!target.url && !target.format_id)) {
         showToast('No downloadable stream available', true);
         return;
@@ -1958,7 +2151,21 @@ function normalizePlatformUrl(rawUrl) {
             user_agent: navigator.userAgent,
           };
 
+      let settled = false;
+      const dlTimeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        showToast('Download handoff timed out. Check TORI Desktop.', true);
+      }, 15000);
+
       chrome.runtime.sendMessage(reqPayload, (res) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(dlTimeout);
+        if (chrome.runtime.lastError) {
+          showToast(chrome.runtime.lastError.message || 'Extension communication failed', true);
+          return;
+        }
         if (res && res.status === 'ok' && res.job_id) {
           showToast(`Download queued in Tori (${res.filename || target.filename})`);
         } else if (res && res.status === 'already_exists') {
@@ -2030,6 +2237,29 @@ function normalizePlatformUrl(rawUrl) {
     };
     chrome.runtime.onMessage.addListener(onRuntimeCandidateMessage);
 
+    // Clean teardown to avoid listener/timer leaks on SPA navigation or removal
+    mp.__toriDestroy = () => {
+      endDrag(null, false);
+      if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
+      if (asyncRetryTimer) clearTimeout(asyncRetryTimer);
+      if (dlTimeoutTimer) clearTimeout(dlTimeoutTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('resize', onResizeClamp);
+      try {
+        chrome.runtime.onMessage.removeListener(onRuntimeCandidateMessage);
+      } catch (_) {}
+      videoEl.removeEventListener('canplay', handleDynamicMediaActivity);
+      videoEl.removeEventListener('play', handleDynamicMediaActivity);
+      videoEl.removeEventListener('playing', handleDynamicMediaActivity);
+      videoEl.removeEventListener('loadedmetadata', handleDynamicMediaActivity);
+      videoEl.removeEventListener('loadeddata', handleDynamicMediaActivity);
+      if (videoEl.__toriResizeObs) {
+        videoEl.__toriResizeObs.disconnect();
+        delete videoEl.__toriResizeObs;
+      }
+      videoEl.removeAttribute('data-tori-attached');
+    };
+
     // Record DOM media candidates
     recordDomMedia(videoEl);
 
@@ -2072,6 +2302,7 @@ function normalizePlatformUrl(rawUrl) {
   // Watchdog URL polling every 600ms for client-side routing on arbitrary SPAs
   let lastCheckedUrl = window.location.href;
   setInterval(() => {
+    if (document.hidden) return;
     if (window.location.href !== lastCheckedUrl) {
       lastCheckedUrl = window.location.href;
       notifyAllOverlays('url-watchdog');
@@ -2126,6 +2357,8 @@ function normalizePlatformUrl(rawUrl) {
         const pn = mp.querySelector('.tori-pn');
         if (pn && pn.classList.contains('on')) {
           pn.classList.remove('on');
+          const pillBtn = mp.querySelector('.tori-pill');
+          if (pillBtn) pillBtn.setAttribute('aria-expanded', 'false');
         }
       }
     });
@@ -2158,12 +2391,12 @@ function normalizePlatformUrl(rawUrl) {
 
   // Scan document for media elements
   function scanForMedia() {
-    if (isSiteExcluded()) return;
+    if (isSiteExcluded() || !settings.pill) return;
 
     // Clean up any overlays whose associated video is disconnected from DOM
     document.querySelectorAll('.tori-mp').forEach((mp) => {
       if (mp.__toriVideoEl && !document.body.contains(mp.__toriVideoEl)) {
-        mp.remove();
+        destroyOverlay(mp);
       }
     });
 
@@ -2174,10 +2407,57 @@ function normalizePlatformUrl(rawUrl) {
     });
   }
 
-  // DOM MutationObserver for dynamically added videos
-  const observer = new MutationObserver(() => {
-    if (!isSiteExcluded() && settings.pill) {
-      scanForMedia();
+  // Debounced MutationObserver (ignores noisy text/progress DOM ticks during playback)
+  let pendingScanRaf = null;
+  let pendingScanTimer = null;
+  function scheduleMediaScan() {
+    if (pendingScanTimer !== null || pendingScanRaf !== null) return;
+    pendingScanTimer = setTimeout(() => {
+      pendingScanTimer = null;
+      pendingScanRaf = requestAnimationFrame(() => {
+        pendingScanRaf = null;
+        if (!isSiteExcluded() && settings.pill) {
+          scanForMedia();
+        }
+      });
+    }, 120);
+  }
+
+  function nodeMightContainVideo(node) {
+    if (!node || node.nodeType !== 1) return false;
+    if (node.tagName === 'VIDEO') return true;
+    if (node.shadowRoot) return true;
+    if (typeof node.querySelector === 'function' && node.querySelector('video')) return true;
+    return false;
+  }
+
+  const observer = new MutationObserver((mutations) => {
+    if (isSiteExcluded() || !settings.pill) return;
+    let shouldScan = false;
+    for (let i = 0; i < mutations.length; i++) {
+      const m = mutations[i];
+      if (m.addedNodes) {
+        for (let j = 0; j < m.addedNodes.length; j++) {
+          if (nodeMightContainVideo(m.addedNodes[j])) {
+            shouldScan = true;
+            break;
+          }
+        }
+      }
+      if (shouldScan) break;
+      if (m.removedNodes && m.removedNodes.length > 0) {
+        for (let j = 0; j < m.removedNodes.length; j++) {
+          const r = m.removedNodes[j];
+          if (r && r.nodeType === 1 && (r.tagName === 'VIDEO' || (typeof r.querySelector === 'function' && r.querySelector('video, .tori-mp')))) {
+            shouldScan = true;
+            break;
+          }
+        }
+      }
+      if (shouldScan) break;
+    }
+    if (shouldScan) {
+      scheduleMediaScan();
     }
   });
 

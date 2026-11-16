@@ -1,149 +1,249 @@
 /**
- * TORI Download Manager — Content Overlay Styles (Design 2)
- * Faithful implementation of Design 2 (.pill, .ico, .chip, .panel, .head, .thumb, .meta, .seg, .list, .row, .btns, .foot)
+ * TORI Browser Companion — IDM-Style Media Overlay & Format Picker Styles
+ * Scoped under .tori-mp and #tori-page-toast to prevent host-page CSS leakage.
+ * Rules: zero backdrop-filter blur, zero infinite animations, 120ms UI micro-transitions only.
  */
 
-/* Media Overlay Host */
+/* Scoped Light Design Tokens (Default) */
+.tori-mp,
+#tori-page-toast {
+  --win: #f5f5f8;
+  --panel: #ffffff;
+  --pline: rgba(0, 0, 0, 0.08);
+  --txt: #1d1d1f;
+  --mut: #6e6e73;
+  --ttl: #3a3a3c;
+  --blue: #4f46e5;
+  --green: #1faa59;
+  --warn: #d97706;
+  --bad: #e5484d;
+  --field: #ffffff;
+  --fline: rgba(0, 0, 0, 0.16);
+  --b1: #ffffff;
+  --b2: #f7f7f9;
+  --bline: rgba(0, 0, 0, 0.14);
+  --sel: #5b5ef0;
+  --a1: #7679ff;
+  --a2: #4f46e5;
+  --a3: #6366f1;
+  --a4: #5b5ef0;
+  --a7: #4338ca;
+  --font: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, "Inter", Roboto, sans-serif;
+}
+
+/* Scoped Dark Mode Tokens */
+.tori-mp.tori-dark,
+#tori-page-toast.tori-dark {
+  --win: #232326;
+  --panel: #2b2b30;
+  --pline: rgba(255, 255, 255, 0.08);
+  --txt: #f2f2f4;
+  --mut: #98989f;
+  --ttl: #e5e5e7;
+  --blue: #a5a8ff;
+  --green: #32d74b;
+  --warn: #f59e0b;
+  --bad: #ff6b6b;
+  --field: #1c1c1f;
+  --fline: rgba(255, 255, 255, 0.15);
+  --b1: #4a4a50;
+  --b2: #3e3e43;
+  --bline: rgba(255, 255, 255, 0.13);
+}
+
+/* Scoped Accent Variants */
+.tori-mp[data-accent="ocean"],
+#tori-page-toast[data-accent="ocean"] {
+  --a1: #4fb3ff;
+  --a2: #0a6fd8;
+  --a3: #0a84ff;
+  --a4: #2f8cf5;
+  --a7: #075bb5;
+  --sel: #2f8cf5;
+  --blue: #0a6fd8;
+}
+
+.tori-mp.tori-dark[data-accent="ocean"],
+#tori-page-toast.tori-dark[data-accent="ocean"] {
+  --blue: #8fcbff;
+}
+
+.tori-mp[data-accent="emerald"],
+#tori-page-toast[data-accent="emerald"] {
+  --a1: #34d399;
+  --a2: #059669;
+  --a3: #10b981;
+  --a4: #22b57e;
+  --a7: #047857;
+  --sel: #22b57e;
+  --blue: #059669;
+}
+
+.tori-mp.tori-dark[data-accent="emerald"],
+#tori-page-toast.tori-dark[data-accent="emerald"] {
+  --blue: #6ee7b7;
+}
+
+.tori-mp[data-accent="rose"],
+#tori-page-toast[data-accent="rose"] {
+  --a1: #ff7ab0;
+  --a2: #e11d63;
+  --a3: #f43f78;
+  --a4: #ee4f86;
+  --a7: #be123c;
+  --sel: #ee4f86;
+  --blue: #e11d63;
+}
+
+.tori-mp.tori-dark[data-accent="rose"],
+#tori-page-toast.tori-dark[data-accent="rose"] {
+  --blue: #ffa3c2;
+}
+
+/* Media Overlay Container */
 .tori-mp {
   position: absolute;
   z-index: 2147483640;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.45;
-  color: #171a21;
+  gap: 8px;
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--txt);
   pointer-events: auto;
   user-select: none;
+  -webkit-user-select: none;
   width: max-content;
-  max-width: calc(100vw - 32px);
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tori-mp *,
+.tori-mp *::before,
+.tori-mp *::after {
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.tori-mp svg {
+  display: block;
 }
 
 .tori-mp.pos-top-right {
-  top: 14px;
-  right: 14px;
+  top: 12px;
+  right: 12px;
   align-items: flex-end;
 }
 
 .tori-mp.pos-top-left {
-  top: 14px;
-  left: 14px;
+  top: 12px;
+  left: 12px;
   align-items: flex-start;
 }
 
 .tori-mp.pos-bottom-right {
   bottom: 56px;
-  right: 14px;
+  right: 12px;
   align-items: flex-end;
 }
 
 .tori-mp.pos-bottom-left {
   bottom: 56px;
-  left: 14px;
+  left: 12px;
   align-items: flex-start;
 }
 
-/* Floating Video Download Button (.pill) */
+/* Compact Floating Video Overlay Pill (tori-app-idm.html #pill + IDM tokens) */
 .tori-pill,
 .tori-mp .pill {
   all: unset;
+  box-sizing: border-box;
   cursor: grab;
   touch-action: none;
-  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  gap: 9px;
-  padding: 5px 12px 5px 5px;
-  border-radius: 999px;
-  border: 0;
-  background: rgba(255, 255, 255, 0.96);
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px 0 4px;
+  border-radius: 15px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: linear-gradient(#52525b, #3f3f46);
+  color: #ffffff;
+  font-size: 12.5px;
   font-weight: 600;
-  font-size: 13px;
-  color: #171a21;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.38);
-  transition: transform 0.12s, box-shadow 0.12s;
+  opacity: 0.9;
+  box-shadow: 0 0 0 0.5px var(--bline), 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
-.tori-pill:hover,
-.tori-mp .pill:hover {
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+.tori-pill.on,
+.tori-mp.on .tori-pill,
+.tori-pill:hover {
+  background: linear-gradient(var(--a1), var(--a2));
+  border-color: var(--a7);
+  opacity: 1;
 }
 
-.tori-mp.tori-dragging {
-  user-select: none;
-  -webkit-user-select: none;
+.tori-pill:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
 }
 
 .tori-mp.tori-dragging .tori-pill,
 .tori-pill:active {
   cursor: grabbing !important;
-  transform: scale(0.98);
 }
 
 .tori-pill .ico,
 .tori-pill .tori-logo {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: #8b93a7;
+  background: rgba(255, 255, 255, 0.2);
   color: #ffffff;
   flex: none;
-  transition: background 0.3s;
-}
-
-.tori-pill.on .ico,
-.tori-pill.on .tori-logo,
-.tori-mp.on .ico,
-.tori-mp.on .tori-logo {
-  background: #5b5bf0;
 }
 
 .tori-pill .ico svg,
 .tori-pill .tori-logo svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   stroke: #ffffff;
   fill: none;
-  stroke-width: 2.6;
+  stroke-width: 2.3;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .tori-pill .chip,
 .tori-pill .tori-pill-tag {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: #fff3dd;
-  color: #d97706;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
   flex: none;
   font-style: normal;
+  white-space: nowrap;
 }
 
-.tori-pill .chip.hd,
-.tori-pill .tori-pill-tag.hd {
-  background: #eceafe;
-  color: #5b5bf0;
-}
-
-/* Floating Format Panel (.panel / .tori-pn) */
+/* Format Picker Panel (.tori-pn / .panel) matching tori-extension.html */
 .tori-pn,
 .tori-mp .panel {
   display: none;
-  width: 340px;
-  max-width: calc(100vw - 32px);
-  background: #ffffff;
-  border-radius: 18px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  width: 356px;
+  max-width: calc(100vw - 24px);
+  background: var(--win);
+  color: var(--txt);
+  border-radius: 10px;
   overflow: hidden;
-  color: #171a21;
-  box-sizing: border-box;
-  animation: tori-pop 0.16s ease-out;
+  box-shadow: 0 0 0 0.5px var(--bline), 0 4px 12px rgba(0, 0, 0, 0.25);
   text-align: left;
+  position: relative;
 }
 
 .tori-pn.on,
@@ -151,353 +251,523 @@
   display: block;
 }
 
-@keyframes tori-pop {
-  from {
-    opacity: 0;
-    transform: translateY(-6px) scale(0.98);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-/* Panel Header (.head / .tori-ph) */
+/* Panel Header (.ph) */
 .tori-ph,
 .tori-pn .head {
   display: flex;
-  gap: 10px;
-  padding: 12px 14px 10px;
   align-items: center;
+  gap: 9px;
+  padding: 10px 12px 8px;
 }
 
-.tori-pn .thumb {
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  background: #4b5563;
+.tori-pn .ft-video {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
   display: grid;
   place-items: center;
-  color: #ffffff;
   flex: none;
+  background: linear-gradient(#ff453a, #ad2f27);
 }
 
-.tori-pn .thumb svg {
-  width: 16px;
-  height: 16px;
-  fill: currentColor;
+.tori-pn .ft-video svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
+.tori-pn .t,
 .tori-pn .meta {
   min-width: 0;
   flex: 1;
 }
 
-.tori-pn .meta b,
-.tori-ph b {
+.tori-ph b,
+.tori-pn .meta b {
   display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--txt);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: #171a21;
 }
 
-.tori-pn .meta span,
-.tori-ph span {
-  color: #6b7280;
-  font-size: 12px;
+.tori-ph span,
+.tori-pn .meta span {
   display: block;
+  font-size: 11px;
+  color: var(--mut);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-top: 1px;
 }
 
 .tori-pn .x,
 .tori-pn .tori-x {
   all: unset;
-  border: 0;
-  background: none;
-  color: #6b7280;
-  font-size: 20px;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--mut);
+  font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
-  box-sizing: border-box;
+  flex: none;
 }
 
 .tori-pn .x:hover,
 .tori-pn .tori-x:hover {
-  background: #f0f1f5;
-  color: #171a21;
+  background: var(--bad);
+  color: #ffffff;
 }
 
-/* Segment Tabs (.seg / .tori-seg) */
+.tori-pn .x:focus-visible,
+.tori-pn .tori-x:focus-visible {
+  outline: 2px solid var(--a3);
+  outline-offset: 1px;
+}
+
+/* Playlist / Mix Banner (zero emojis, clean SVG icons) */
+.tori-pl-banner {
+  margin: 0 12px 6px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--pline);
+  background: var(--panel);
+}
+
+.tori-pl-banner.supported {
+  border-color: rgba(99, 102, 241, 0.3);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.tori-pl-banner.mix {
+  border-color: rgba(217, 119, 6, 0.35);
+  background: rgba(217, 119, 6, 0.1);
+}
+
+.tori-pl-info {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+}
+
+.tori-pl-info svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--blue);
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+
+.tori-pl-banner.mix .tori-pl-info svg {
+  stroke: var(--warn);
+}
+
+.tori-pl-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tori-pl-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--txt);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tori-pl-sub {
+  font-size: 10px;
+  color: var(--mut);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tori-pl-btn {
+  all: unset;
+  box-sizing: border-box;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: linear-gradient(var(--a1), var(--a2));
+  border: 1px solid var(--a7);
+  color: #ffffff;
+  cursor: pointer;
+  flex: none;
+  white-space: nowrap;
+}
+
+.tori-pl-btn.sec {
+  background: transparent;
+  border-color: var(--bline);
+  color: var(--txt);
+}
+
+.tori-pl-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* Segmented Tabs (.seg / .tori-seg) matching tori-extension.html */
 .tori-seg,
 .tori-pn .seg {
-  margin: 0 14px;
+  margin: 0 12px 6px;
+  height: 26px;
+  border-radius: 7px;
+  padding: 2px;
+  background: var(--pline);
   display: flex;
-  background: #f0f1f5;
-  border-radius: 10px;
-  padding: 3px;
   gap: 2px;
-  box-sizing: border-box;
 }
 
 .tori-seg button,
 .tori-pn .seg button {
   all: unset;
-  flex: 1;
-  border: 0;
-  background: none;
-  padding: 6px;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 13px;
-  color: #6b7280;
-  cursor: pointer;
-  text-align: center;
   box-sizing: border-box;
-  transition: background 0.12s, color 0.12s;
+  flex: 1;
+  text-align: center;
+  line-height: 22px;
+  border-radius: 5px;
+  font-weight: 500;
+  font-size: 11.5px;
+  color: var(--mut);
+  cursor: pointer;
 }
 
 .tori-seg button.on,
 .tori-seg button[aria-selected="true"],
 .tori-pn .seg button.on,
 .tori-pn .seg button[aria-selected="true"] {
-  background: #ffffff;
-  color: #171a21;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  background: var(--b1);
+  color: var(--txt);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 
-/* Format List (.list / .tori-fl) */
+.tori-seg button:focus-visible {
+  outline: 2px solid var(--a3);
+  outline-offset: -1px;
+}
+
+/* Format List (.fl / .tori-fl) */
 .tori-fl,
 .tori-pn .list {
-  padding: 10px 14px 2px;
+  padding: 0 6px;
+  max-height: 224px;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 240px;
-  overflow-y: auto;
-  box-sizing: border-box;
+  gap: 1px;
 }
 
-.tori-fl::-webkit-scrollbar,
-.tori-pn .list::-webkit-scrollbar {
-  width: 5px;
+.tori-fl::-webkit-scrollbar {
+  width: 6px;
 }
 
-.tori-fl::-webkit-scrollbar-thumb,
-.tori-pn .list::-webkit-scrollbar-thumb {
-  background: #e6e8ee;
+.tori-fl::-webkit-scrollbar-thumb {
+  background: var(--fline);
   border-radius: 3px;
 }
 
 .tori-fr,
 .tori-pn .row {
   all: unset;
+  box-sizing: border-box;
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 11px;
-  border: 1px solid #e6e8ee;
-  border-radius: 11px;
+  gap: 5px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--txt);
   cursor: pointer;
-  background: #ffffff;
-  text-align: left;
-  width: 100%;
-  box-sizing: border-box;
-  font: inherit;
-  color: inherit;
-  transition: border-color 0.12s, background 0.12s;
+  flex: none;
 }
 
 .tori-fr:hover,
 .tori-pn .row:hover {
-  background: #f8f9fc;
+  background: var(--pline);
 }
 
 .tori-fr.on,
 .tori-fr[aria-checked="true"],
 .tori-pn .row.on,
 .tori-pn .row[aria-checked="true"] {
-  border-color: #5b5bf0;
-  background: #eceafe;
+  background: var(--sel);
+  color: #ffffff;
 }
 
-.tori-fr b,
-.tori-pn .row b,
-.tori-q {
-  font-size: 14px;
+.tori-fr:focus-visible {
+  outline: 2px solid var(--a3);
+  outline-offset: -2px;
+}
+
+/* Radio Circle Indicator (.rd) */
+.tori-fr .rd {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--fline);
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.tori-fr.on .rd,
+.tori-fr[aria-checked="true"] .rd {
+  border-color: #ffffff;
+}
+
+.tori-fr.on .rd::after,
+.tori-fr[aria-checked="true"] .rd::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.tori-q,
+.tori-fr .q {
   font-weight: 600;
-  min-width: 54px;
-  color: #171a21;
+  min-width: 44px;
+  font-size: 12px;
+  white-space: nowrap;
+  flex: none;
 }
 
-.tori-fr.on b,
-.tori-fr[aria-checked="true"] b,
-.tori-pn .row.on b,
-.tori-pn .row[aria-checked="true"] b {
-  color: #5b5bf0;
+.tori-fr .tg {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: var(--pline);
+  color: var(--mut);
+  flex: none;
+  white-space: nowrap;
 }
 
-.tori-fr span,
-.tori-pn .row span,
+.tori-fr.on .tg,
+.tori-fr[aria-checked="true"] .tg {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
 .tori-cd {
-  color: #6b7280;
-  font-size: 12.5px;
+  font-size: 11px;
+  color: var(--mut);
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tori-fr.on .tori-cd,
+.tori-fr[aria-checked="true"] .tori-cd {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.tori-sz,
+.tori-fr .sz {
+  margin-left: auto;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  font-size: 11.5px;
+  flex: none;
+  white-space: nowrap;
+}
+
+/* State Box (Resolving / Error / Offline / DRM) */
+.tori-pn .state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 18px 14px;
+  text-align: center;
+  color: var(--mut);
+}
+
+.tori-pn .state b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--txt);
+}
+
+.tori-pn .state p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--mut);
+  line-height: 1.35;
+}
+
+.tori-pn .state .hint {
+  font-size: 10.5px;
+  color: var(--mut);
+  margin-bottom: 4px;
+}
+
+.tori-state-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.tori-retry-btn {
+  all: unset;
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: linear-gradient(var(--b1), var(--b2));
+  border: 1px solid var(--bline);
+  color: var(--txt);
+  cursor: pointer;
+}
+
+/* Footer (.pf / .tori-pf) */
+.tori-pf,
+.tori-pn .pf {
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--pline);
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--panel);
+}
+
+.tori-sv,
+.tori-pf .sv {
+  font-size: 10.5px;
+  color: var(--mut);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.tori-fr em,
-.tori-pn .row em,
-.tori-sz {
-  font-style: normal;
-  font-size: 12.5px;
-  color: #6b7280;
-  flex: none;
-  font-variant-numeric: tabular-nums;
+.tori-sv b,
+.tori-pf .sv b {
+  color: var(--txt);
+  font-weight: 500;
 }
 
-/* State Box (Offline / Resolving / Notices) */
-.tori-pn .state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 24px 14px;
-  font-weight: 600;
-  font-size: 14px;
-  color: #6b7280;
-  flex-direction: column;
-  text-align: center;
-  box-sizing: border-box;
-}
-
-.tori-pn .state i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #d97706;
-  margin-bottom: 2px;
-}
-
-.tori-pn .state p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  font-weight: 400;
-  color: #6b7280;
-}
-
-/* Action Buttons (.btns / .tori-ac) */
 .tori-ac,
-.tori-pn .btns {
+.tori-pf .ac {
   display: flex;
   gap: 8px;
-  padding: 12px 14px;
-  box-sizing: border-box;
 }
 
-.tori-pn .btns button,
-.tori-ac button {
+.tori-ac .tori-btn {
   all: unset;
-  border: 0;
-  border-radius: 10px;
-  padding: 10px;
-  font-weight: 600;
-  font-size: 13px;
-  background: #eceef3;
-  color: #9aa1af;
-  cursor: not-allowed;
-  display: flex;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 7px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  box-sizing: border-box;
-}
-
-.tori-mp.on .tori-pn .btns .go,
-.tori-pn .btns .go:not(:disabled),
-.tori-ac .tori-btn.primary:not(:disabled),
-.tori-ac .tori-btn.def:not(:disabled) {
-  background: #5b5bf0;
-  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  background: linear-gradient(var(--b1), var(--b2));
+  border: 1px solid var(--bline);
+  color: var(--txt);
   cursor: pointer;
 }
 
-.tori-mp.on .tori-pn .btns .go:hover,
-.tori-pn .btns .go:not(:disabled):hover,
-.tori-ac .tori-btn.primary:not(:disabled):hover,
-.tori-ac .tori-btn.def:not(:disabled):hover {
-  background: #4b4be0;
-}
-
-.tori-mp.on .tori-pn .btns .copy,
-.tori-pn .btns .copy:not(:disabled),
-.tori-ac .tori-btn.sq:not(:disabled) {
-  background: #ffffff;
-  border: 1px solid #e6e8ee;
-  color: #171a21;
-  cursor: pointer;
-}
-
-.tori-pn .btns .copy,
-.tori-ac .tori-btn.sq {
-  width: 40px;
+.tori-ac .tori-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   flex: none;
 }
 
-.tori-pn .btns .go,
-.tori-ac .tori-btn.primary,
+.tori-ac .tori-btn.sq {
+  width: 30px;
+  padding: 0;
+  flex: none;
+}
+
 .tori-ac .tori-btn.def {
   flex: 1;
+  background: linear-gradient(var(--a1), var(--a2));
+  border-color: var(--a7);
+  color: #ffffff;
 }
 
-/* Footer (.foot / .tori-pf) */
-.tori-pf,
-.tori-pn .foot {
-  padding: 10px 14px 14px;
-  border-top: 1px solid #e6e8ee;
-  font-size: 12px;
-  color: #6b7280;
-  box-sizing: border-box;
+.tori-ac .tori-btn.def.ok {
+  background: var(--green);
+  border-color: var(--green);
 }
 
-.tori-pf b,
-.tori-pn .foot b {
-  color: #171a21;
-  font-weight: 600;
+.tori-ac .tori-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
-/* Toast */
+.tori-ac .tori-btn:focus-visible {
+  outline: 2px solid var(--a3);
+  outline-offset: 2px;
+}
+
+/* Page Toast (#tori-page-toast — zero backdrop-filter blur) */
 #tori-page-toast {
   position: fixed;
   left: 50%;
-  bottom: 36px;
-  transform: translate(-50%, 16px);
+  bottom: 32px;
+  transform: translate(-50%, 8px);
   opacity: 0;
-  background: rgba(27, 28, 33, 0.95);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-radius: 20px;
-  padding: 8px 16px;
+  background: var(--panel);
+  color: var(--txt);
+  border: 1px solid var(--bline);
+  border-radius: 8px;
+  padding: 7px 14px 7px 10px;
+  font-family: var(--font);
   font-weight: 600;
   font-size: 12px;
   display: flex;
   gap: 8px;
   align-items: center;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  transition: opacity 0.22s, transform 0.22s;
+  box-shadow: 0 0 0 0.5px var(--bline), 0 4px 12px rgba(0, 0, 0, 0.25);
   z-index: 2147483647;
   pointer-events: none;
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 #tori-page-toast.on {
@@ -505,30 +775,22 @@
   transform: translate(-50%, 0);
 }
 
-/* Spinner */
-.tori-spin {
-  width: 18px;
-  height: 18px;
-  border: 2px solid #e6e8ee;
-  border-top-color: #5b5bf0;
-  border-radius: 50%;
-  animation: tori-rotate 0.8s linear infinite;
-  margin: 0 auto 8px;
+#tori-page-toast .tori-ft {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: linear-gradient(var(--c, #1faa59), color-mix(in srgb, var(--c, #1faa59) 68%, #000));
 }
 
-@keyframes tori-rotate {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  * {
-    transition: none !important;
-    animation: none !important;
-  }
+#tori-page-toast .tori-ft svg {
+  width: 12px;
+  height: 12px;
+  stroke: #ffffff;
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }

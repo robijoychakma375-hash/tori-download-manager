@@ -1,26 +1,513 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tori Extension – Options</title>
+  <meta name="color-scheme" content="light dark">
+  <title>Tori Browser Companion — Settings</title>
+  <link rel="stylesheet" href="../shared/tokens.css">
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
-  <div class="app">
-    <!-- Navigation Sidebar -->
-    <nav class="nav" id="nav"></nav>
+  <div class="opt">
+    <aside class="side">
+      <div class="brand">
+        <img src="../icons/icon-32.png" alt="Tori Download Manager" width="28" height="28">
+        <div class="brand-txt">
+          <div class="brand-name">Tori Companion</div>
+          <div class="brand-ver" id="nav-ver">v1.0.9</div>
+        </div>
+      </div>
 
-    <!-- Main Content Area -->
+      <nav class="nav" id="nav" role="tablist" aria-orientation="vertical" aria-label="Options sections">
+        <button type="button" class="ni on" role="tab" aria-selected="true" id="tab-conn" data-tab="conn" tabindex="0">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>
+          </svg>
+          <span>Connection</span>
+        </button>
+
+        <button type="button" class="ni" role="tab" aria-selected="false" id="tab-cap" data-tab="cap" tabindex="-1">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 4v10M8 10l4 4 4-4"/>
+            <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/>
+          </svg>
+          <span>Capture</span>
+        </button>
+
+        <button type="button" class="ni" role="tab" aria-selected="false" id="tab-media" data-tab="media" tabindex="-1">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="14" rx="3"/>
+            <path d="M10 9.5v5l4.5-2.5z" fill="currentColor" stroke="none"/>
+          </svg>
+          <span>Media</span>
+        </button>
+
+        <button type="button" class="ni" role="tab" aria-selected="false" id="tab-sites" data-tab="sites" tabindex="-1">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M5.6 5.6l12.8 12.8"/>
+          </svg>
+          <span>Sites</span>
+        </button>
+
+        <button type="button" class="ni" role="tab" aria-selected="false" id="tab-look" data-tab="look" tabindex="-1">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/>
+          </svg>
+          <span>Appearance</span>
+        </button>
+
+        <button type="button" class="ni" role="tab" aria-selected="false" id="tab-about" data-tab="about" tabindex="-1">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M12 11v6M12 7.5v.01"/>
+          </svg>
+          <span>About</span>
+        </button>
+      </nav>
+
+      <div class="side-foot">
+        <div class="side-stat" id="side-stat" title="Live Tori Desktop connection status">
+          <span class="dot wait" id="sdot" aria-hidden="true"></span>
+          <span class="side-stat-txt" id="stxt">Connecting…</span>
+        </div>
+      </div>
+    </aside>
+
     <main class="cont">
-      <div class="in" id="content"></div>
+      <!-- 1. CONNECTION -->
+      <section class="opt-panel" data-panel="conn" role="tabpanel" aria-labelledby="tab-conn">
+        <header class="sec-hd">
+          <h2>Desktop Connection</h2>
+          <p class="sub">Live bridge between Tori Browser Companion and the Tori Download Manager desktop engine.</p>
+        </header>
+
+        <div class="cd conn-card">
+          <div class="conn-top">
+            <div class="conn-state">
+              <span class="dot wait lg" id="cdot" aria-hidden="true"></span>
+              <div class="conn-txt">
+                <div class="conn-title" id="ctit">Connecting…</div>
+                <div class="conn-sub" id="csub">Checking local Tori Desktop service without launching background hosts…</div>
+              </div>
+            </div>
+            <div class="conn-acts">
+              <button type="button" class="btn" id="crec">Reconnect</button>
+              <button type="button" class="btn pri" id="copen">Open Tori</button>
+            </div>
+          </div>
+
+          <div class="diag-grid">
+            <div class="diag-cell">
+              <span class="diag-k">Endpoint</span>
+              <span class="diag-v mono" id="cd-end">127.0.0.1:6800</span>
+            </div>
+            <div class="diag-cell">
+              <span class="diag-k">Desktop Version</span>
+              <span class="diag-v mono" id="cd-ver">—</span>
+            </div>
+            <div class="diag-cell">
+              <span class="diag-k">Latency</span>
+              <span class="diag-v mono" id="cd-lat">—</span>
+            </div>
+            <div class="diag-cell">
+              <span class="diag-k">Native Messaging Host</span>
+              <span class="diag-v" id="cd-nat">Standby</span>
+            </div>
+          </div>
+          <div class="inline-note" id="conn-msg" role="status" hidden></div>
+        </div>
+
+        <div class="cd">
+          <div class="cd-h">Connection Settings</div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="auto">Connect automatically</label>
+              <div class="rw-sub">Automatically pair and sync with Tori Desktop when the browser starts.</div>
+            </div>
+            <label class="swl">
+              <input type="checkbox" id="auto" switch>
+              <span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="port">Server Port</label>
+              <div class="rw-sub">Local HTTP bridge port exposed by Tori Desktop (default 6800).</div>
+            </div>
+            <div class="rw-ctrl">
+              <input type="number" class="inp sm mono" id="port" min="1024" max="65535" step="1" value="6800">
+            </div>
+          </div>
+
+          <div class="rw col">
+            <div class="rw-top">
+              <div class="rw-info">
+                <label class="rw-lbl" for="key">Pairing API Key</label>
+                <div class="rw-sub">Shared authentication token from Tori Desktop for secure local handoff.</div>
+              </div>
+              <div class="rw-btns">
+                <button type="button" class="btn sm" id="toggle-key">Show</button>
+                <button type="button" class="btn sm" id="paste-btn">Paste</button>
+                <button type="button" class="btn sm pri" id="pair-btn">Auto-Pair</button>
+              </div>
+            </div>
+            <input type="password" class="inp full mono" id="key" placeholder="Click Auto-Pair or paste token from Tori Desktop Settings" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. CAPTURE -->
+      <section class="opt-panel" data-panel="cap" role="tabpanel" aria-labelledby="tab-cap" hidden>
+        <header class="sec-hd">
+          <h2>Download Capture</h2>
+          <p class="sub">Control which browser downloads are intercepted and forwarded to Tori Download Manager.</p>
+        </header>
+
+        <div class="cd">
+          <div class="cd-h">Interception Behavior</div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="cap">Capture browser downloads</label>
+              <div class="rw-sub">Intercept matching file downloads automatically and queue them in Tori.</div>
+            </div>
+            <label class="swl">
+              <input type="checkbox" id="cap" switch>
+              <span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="min">Minimum file size (MB)</label>
+              <div class="rw-sub">Files smaller than this threshold stay with the browser's built-in downloader (0 = capture all).</div>
+            </div>
+            <div class="rw-ctrl">
+              <input type="number" class="inp sm mono" id="min" min="0" max="10240" step="1" value="1">
+            </div>
+          </div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="ask">Ask before capturing downloads</label>
+              <div class="rw-sub">Bring up Tori's download confirmation dialog before starting captured files.</div>
+            </div>
+            <label class="swl">
+              <input type="checkbox" id="ask" switch>
+              <span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="alt">Hold Alt key to bypass capture</label>
+              <div class="rw-sub">Hold Alt while clicking a download link to let the browser handle that download directly.</div>
+            </div>
+            <label class="swl">
+              <input type="checkbox" id="alt" switch>
+              <span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="incog">Capture in Private / Incognito windows</label>
+              <div class="rw-sub">Also requires allowing the extension in Private/Incognito mode in browser extension settings.</div>
+            </div>
+            <label class="swl">
+              <input type="checkbox" id="incog" switch>
+              <span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="cd">
+          <div class="cd-h-row">
+            <div>
+              <div class="cd-h">Captured File Extensions</div>
+              <div class="rw-sub">Extensions captured automatically when interception is enabled.</div>
+            </div>
+            <button type="button" class="btn sm" id="ext-reset">Reset Defaults</button>
+          </div>
+
+          <form class="add-row" id="ext-form" novalidate>
+            <input type="text" class="inp flex mono" id="ext-input" placeholder=".mkv, .zip, tar.gz" aria-label="Add file extension">
+            <button type="submit" class="btn pri" id="ext-add">Add Extension</button>
+          </form>
+          <div class="field-err" id="ext-err" role="alert" hidden></div>
+          <div class="chips" id="exts" aria-label="Captured file extensions"></div>
+        </div>
+      </section>
+
+      <!-- 3. MEDIA -->
+      <section class="opt-panel" data-panel="media" role="tabpanel" aria-labelledby="tab-media" hidden>
+        <header class="sec-hd">
+          <h2>Media Overlay &amp; Detection</h2>
+          <p class="sub">Configure the floating Download Video overlay button and quality selector on streaming pages.</p>
+        </header>
+
+        <div class="cd">
+          <div class="cd-h">Player Overlay</div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="pill">Show floating Download Video button</label>
+              <div class="rw-sub">Attach the Tori download button on supported video players and media pages.</div>
+            </div>
+            <label class="swl">
+              <input type="checkbox" id="pill" switch>
+              <span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="pos">Default overlay corner</label>
+              <div class="rw-sub">Initial corner anchored inside video containers before manual dragging.</div>
+            </div>
+            <div class="rw-ctrl">
+              <select class="sel" id="pos">
+                <option value="Top right">Top right</option>
+                <option value="Top left">Top left</option>
+                <option value="Bottom right">Bottom right</option>
+                <option value="Bottom left">Bottom left</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="picker">Enable quality &amp; format picker</label>
+              <div class="rw-sub">Show the dropdown menu for selecting specific resolutions, codecs, or playlists.</div>
+            </div>
+            <label class="swl">
+              <input type="checkbox" id="picker" switch>
+              <span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <div class="rw-lbl">Custom dragged position</div>
+              <div class="rw-sub" id="pos-status">Using default corner anchor.</div>
+            </div>
+            <button type="button" class="btn sm" id="reset-pos">Reset Dragged Position</button>
+          </div>
+        </div>
+
+        <div class="cd">
+          <div class="cd-h">Preferred Stream Defaults</div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="kind">Default media mode</label>
+              <div class="rw-sub">Pre-select Video or Audio-only streams in the format picker.</div>
+            </div>
+            <div class="rw-ctrl">
+              <select class="sel" id="kind">
+                <option value="Video">Video</option>
+                <option value="Audio only">Audio only</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="fmt">Preferred video quality</label>
+              <div class="rw-sub">Target resolution selected by default when available in resolved streams.</div>
+            </div>
+            <div class="rw-ctrl">
+              <select class="sel" id="fmt">
+                <option value="Best available">Best available</option>
+                <option value="2160p">2160p (4K)</option>
+                <option value="1440p">1440p (2K)</option>
+                <option value="1080p">1080p (FHD)</option>
+                <option value="720p">720p (HD)</option>
+                <option value="480p">480p</option>
+                <option value="360p">360p</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="audio">Auto-merge best audio track</label>
+              <div class="rw-sub">Pair video-only high-resolution streams with the best audio track automatically in Tori.</div>
+            </div>
+            <label class="swl">
+              <input type="checkbox" id="audio" switch>
+              <span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. SITES -->
+      <section class="opt-panel" data-panel="sites" role="tabpanel" aria-labelledby="tab-sites" hidden>
+        <header class="sec-hd">
+          <h2>Excluded Sites</h2>
+          <p class="sub">Domains listed here will never trigger download capture or display the floating media overlay.</p>
+        </header>
+
+        <div class="cd">
+          <div class="cd-h">Add Domain Exclusion</div>
+          <form class="add-row" id="site-form" novalidate>
+            <input type="text" class="inp flex mono" id="site-input" placeholder="example.com" aria-label="Domain name to exclude">
+            <button type="submit" class="btn pri" id="site-add">Exclude Site</button>
+          </form>
+          <div class="field-err" id="site-err" role="alert" hidden></div>
+        </div>
+
+        <div class="cd">
+          <div class="cd-h-row">
+            <div>
+              <div class="cd-h">Active Exclusions</div>
+              <div class="rw-sub" id="site-count">0 domains excluded</div>
+            </div>
+          </div>
+          <div class="site-list" id="sites"></div>
+        </div>
+      </section>
+
+      <!-- 5. APPEARANCE -->
+      <section class="opt-panel" data-panel="look" role="tabpanel" aria-labelledby="tab-look" hidden>
+        <header class="sec-hd">
+          <h2>Appearance</h2>
+          <p class="sub">Customize the color theme, accent palette, and badge indicators across the extension UI.</p>
+        </header>
+
+        <div class="cd">
+          <div class="cd-h">Theme Mode</div>
+          <div class="seg-grid" id="theme-group" role="radiogroup" aria-label="Theme mode">
+            <button type="button" class="th-opt" role="radio" aria-checked="true" data-theme-val="light">
+              <span class="th-prev light" aria-hidden="true"></span>
+              <span class="th-lbl">Light</span>
+            </button>
+            <button type="button" class="th-opt" role="radio" aria-checked="false" data-theme-val="dark">
+              <span class="th-prev dark" aria-hidden="true"></span>
+              <span class="th-lbl">Dark</span>
+            </button>
+            <button type="button" class="th-opt" role="radio" aria-checked="false" data-theme-val="system">
+              <span class="th-prev system" aria-hidden="true"></span>
+              <span class="th-lbl">System</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="cd">
+          <div class="cd-h">Accent Color</div>
+          <div class="rw-sub ac-sub">Applies immediately to the Settings page, Toolbar Popup, and Video Overlay.</div>
+          <div class="ac-grid" id="accent-group" role="radiogroup" aria-label="Accent color">
+            <button type="button" class="ac-sw" role="radio" aria-checked="true" data-accent-val="indigo">
+              <span class="ac-dot indigo" aria-hidden="true"></span>
+              <span>Indigo</span>
+            </button>
+            <button type="button" class="ac-sw" role="radio" aria-checked="false" data-accent-val="ocean">
+              <span class="ac-dot ocean" aria-hidden="true"></span>
+              <span>Ocean</span>
+            </button>
+            <button type="button" class="ac-sw" role="radio" aria-checked="false" data-accent-val="emerald">
+              <span class="ac-dot emerald" aria-hidden="true"></span>
+              <span>Emerald</span>
+            </button>
+            <button type="button" class="ac-sw" role="radio" aria-checked="false" data-accent-val="rose">
+              <span class="ac-dot rose" aria-hidden="true"></span>
+              <span>Rose</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="cd">
+          <div class="cd-h">Toolbar Indicator</div>
+          <div class="rw">
+            <div class="rw-info">
+              <label class="rw-lbl" for="badge">Show badge count on toolbar icon</label>
+              <div class="rw-sub">Display active status and detected media count badge on the extension toolbar button.</div>
+            </div>
+            <label class="swl">
+              <input type="checkbox" id="badge" switch>
+              <span class="sw-track" aria-hidden="true"><span class="sw-knob"></span></span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6. ABOUT -->
+      <section class="opt-panel" data-panel="about" role="tabpanel" aria-labelledby="tab-about" hidden>
+        <header class="sec-hd">
+          <h2>About Tori Browser Companion</h2>
+          <p class="sub">Extension identity, protocol compatibility, and connection diagnostics.</p>
+        </header>
+
+        <div class="cd about-hero">
+          <div class="ab-id">
+            <img src="../icons/icon-48.png" alt="Tori Browser Companion icon" width="44" height="44">
+            <div>
+              <div class="ab-name">Tori Browser Companion</div>
+              <div class="ab-meta">
+                <span>Version <strong class="mono" id="ab-ver">1.0.9</strong></span>
+                <span aria-hidden="true">•</span>
+                <span>Bridge API <strong class="mono">v2.0.0</strong></span>
+              </div>
+            </div>
+          </div>
+          <div class="ab-acts">
+            <button type="button" class="btn pri" id="ab-open">Open Tori</button>
+            <button type="button" class="btn" id="ab-test">Test Connection</button>
+          </div>
+        </div>
+
+        <div class="cd">
+          <div class="cd-h">Runtime Details</div>
+          <div class="kv-list">
+            <div class="kv">
+              <span class="kv-k">Extension Version</span>
+              <span class="kv-v mono" id="ab-ver2">1.0.9</span>
+            </div>
+            <div class="kv">
+              <span class="kv-k">Desktop Status</span>
+              <span class="kv-v" id="ab-desk">Checking…</span>
+            </div>
+            <div class="kv">
+              <span class="kv-k">Native Host ID</span>
+              <span class="kv-v mono">com.tori.download_manager</span>
+            </div>
+            <div class="kv">
+              <span class="kv-k">Browser Engine</span>
+              <span class="kv-v" id="ab-browser">Chromium MV3</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="cd">
+          <div class="cd-h">Project &amp; Support</div>
+          <div class="link-row">
+            <a class="btn sm link-btn" href="https://github.com/robijoychakma375-hash/tori-download-manager" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+            <a class="btn sm link-btn" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases" target="_blank" rel="noopener noreferrer">Releases &amp; Downloads</a>
+            <a class="btn sm link-btn" href="https://github.com/robijoychakma375-hash/tori-download-manager/issues" target="_blank" rel="noopener noreferrer">Issues &amp; Feedback</a>
+          </div>
+        </div>
+
+        <div class="cd">
+          <div class="cd-h">Maintenance</div>
+          <div class="rw">
+            <div class="rw-info">
+              <div class="rw-lbl">Reset extension preferences</div>
+              <div class="rw-sub">Restore Capture, Media, Sites, and Appearance settings to factory defaults.</div>
+            </div>
+            <button type="button" class="btn bad" id="ab-reset-all">Restore Defaults</button>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 
-  <!-- Toast Notification -->
-  <div id="sv"></div>
-
+  <div id="sv" class="sv" role="status" aria-live="polite">Saved</div>
   <script src="options.js"></script>
 </body>
 </html>
-

@@ -1,208 +1,43 @@
 /**
- * TORI Download Manager — Extension Popup Controller (Design 1)
- * Integrates Design 1 UI with real Native Messaging engine communication.
+ * TORI Browser Companion — Toolbar Popup Controller
+ * Implements IDM popup layout (tori-extension.html) with live backend state checks,
+ * Open TORI handoff/launch, settings sync, and genuine page media quick download.
  */
 
-// Platform and transient stream helpers
-function isTransientCdnUrl(url) {
-  if (!url) return false;
-  const lower = url.toLowerCase();
-  return (
-    lower.includes('.fbcdn.net') ||
-    lower.includes('.cdninstagram.com') ||
-    lower.includes('.tiktokcdn.com') ||
-    lower.includes('.googlevideo.com') ||
-    lower.includes('video.twimg.com') ||
-    (lower.includes('oe=') && lower.includes('oh='))
-  );
-}
+const ACCENTS = ['indigo', 'ocean', 'emerald', 'rose'];
 
-function isManagedPlatform(urlOrHost) {
-  if (!urlOrHost) return false;
-  const lower = urlOrHost.toLowerCase();
-  return (
-    lower.includes('facebook.com') ||
-    lower.includes('fb.watch') ||
-    lower.includes('instagram.com') ||
-    lower.includes('tiktok.com') ||
-    lower.includes('youtube.com') ||
-    lower.includes('youtu.be') ||
-    lower.includes('twitter.com') ||
-    lower.includes('x.com') ||
-    lower.includes('reddit.com')
-  );
-}
-
-function normalizePlatformUrl(rawUrl) {
-  if (!rawUrl) return { url: '', videoId: '', isSpecific: false, platform: 'unknown' };
-  try {
-    const u = new URL(rawUrl);
-    const host = u.hostname.toLowerCase();
-    const path = u.pathname;
-
-    if (host.includes('facebook.com') || host.includes('fb.watch')) {
-      const v = u.searchParams.get('v');
-      if (v && /^\d+$/.test(v)) {
-        return {
-          url: `https://www.facebook.com/watch/?v=${v}`,
-          videoId: v,
-          isSpecific: true,
-          platform: 'facebook',
-        };
-      }
-
-      if (
-        path === '/' ||
-        path === '' ||
-        path === '/reel' ||
-        path === '/reel/' ||
-        path === '/reels' ||
-        path === '/reels/' ||
-        path === '/watch' ||
-        path === '/watch/'
-      ) {
-        return {
-          url: `https://www.facebook.com${path}`,
-          videoId: '',
-          isSpecific: false,
-          platform: 'facebook',
-        };
-      }
-
-      const reelMatch = path.match(/\/(?:reel|reels)\/([^/?#]+)/i);
-      if (reelMatch && reelMatch[1] && reelMatch[1] !== 'audio') {
-        return {
-          url: `https://www.facebook.com/reel/${reelMatch[1]}`,
-          videoId: reelMatch[1],
-          isSpecific: true,
-          platform: 'facebook',
-        };
-      }
-
-      const shareMatch = path.match(/\/share\/([rv])\/([^/?#]+)/i);
-      if (shareMatch && shareMatch[2]) {
-        const isReel = shareMatch[1].toLowerCase() === 'r';
-        return {
-          url: isReel
-            ? `https://www.facebook.com/reel/${shareMatch[2]}`
-            : `https://www.facebook.com/watch/?v=${shareMatch[2]}`,
-          videoId: shareMatch[2],
-          isSpecific: true,
-          platform: 'facebook',
-        };
-      }
-
-      const videoMatch = path.match(/\/(?:videos|watch|p)\/([^/?#]+)/i);
-      if (videoMatch && videoMatch[1]) {
-        return {
-          url: `https://www.facebook.com/watch/?v=${videoMatch[1]}`,
-          videoId: videoMatch[1],
-          isSpecific: true,
-          platform: 'facebook',
-        };
-      }
-
-      if (host.includes('fb.watch')) {
-        const watchId = path.replace(/^\//, '').split('/')[0];
-        if (watchId) {
-          return {
-            url: `https://fb.watch/${watchId}`,
-            videoId: watchId,
-            isSpecific: true,
-            platform: 'facebook',
-          };
-        }
-      }
-
-      return {
-        url: `${u.origin}${path}`,
-        videoId: '',
-        isSpecific: false,
-        platform: 'facebook',
-      };
-    }
-
-    if (host.includes('youtube.com')) {
-      const v = u.searchParams.get('v');
-      if (v) {
-        return {
-          url: `https://${u.hostname}/watch?v=${v}`,
-          videoId: v,
-          isSpecific: true,
-          platform: 'youtube',
-        };
-      }
-    } else if (host.includes('youtu.be')) {
-      const v = path.replace(/^\//, '').split('/')[0];
-      if (v) {
-        return {
-          url: `https://youtu.be/${v}`,
-          videoId: v,
-          isSpecific: true,
-          platform: 'youtube',
-        };
-      }
-    } else if (host.includes('instagram.com')) {
-      const match = path.match(/\/(?:reel|reels|p)\/([^/?#]+)/i);
-      if (match && match[1]) {
-        return {
-          url: `https://www.instagram.com/reel/${match[1]}/`,
-          videoId: match[1],
-          isSpecific: true,
-          platform: 'instagram',
-        };
-      }
-    } else if (host.includes('vimeo.com') && !host.includes('player.vimeo.com')) {
-      const segments = path.split('/').filter(Boolean);
-      const last = segments[segments.length - 1];
-      if (last && /^\d+$/.test(last)) {
-        return {
-          url: `https://player.vimeo.com/video/${last}`,
-          videoId: last,
-          isSpecific: true,
-          platform: 'vimeo',
-        };
-      }
-    }
-
-    return {
-      url: rawUrl,
-      videoId: rawUrl,
-      isSpecific: true,
-      platform: 'generic',
-    };
-  } catch (_) {
-    return { url: rawUrl, videoId: rawUrl, isSpecific: false, platform: 'unknown' };
-  }
-}
-
-function cleanMediaTitle(rawTitle, fallbackId = 'media') {
-  if (!rawTitle) return fallbackId;
-  let t = String(rawTitle).trim();
-  t = t.replace(/^\(\d+\)\s*/, '');
-  t = t.replace(/\s*[-—|•]\s*(?:YouTube|Vimeo|Facebook|Instagram|TikTok)$/i, '');
-  if (!t || t.toLowerCase() === 'facebook' || t.toLowerCase() === 'home') {
-    return fallbackId ? `Facebook Reel · ${fallbackId}` : 'Facebook Video';
-  }
-  return t;
-}
-
-const P = {
-  dl: 'M12 4v11m0 0l-4-4m4 4l4-4M5 20h14',
+const SVG_PATHS = {
   play: 'M9 6.5v11l9-5.5z',
   music: 'M9 18V6l10-2v12M7 20a2 2 0 100-4 2 2 0 000 4zM17 18a2 2 0 100-4 2 2 0 000 4z',
-  file: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z',
-  ck: 'M5 12l5 5 9-10',
+  dl: 'M12 4v10M8 10l4 4 4-4M5 19h14',
 };
 
-function chip(k) {
-  if (k === 'Music') {
-    return `<div class="fi" style="color:#f472b6"><svg viewBox="0 0 24 24"><path d="${P.music}"/></svg></div>`;
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function resolveTheme(themePref) {
+  if (themePref === 'dark') return 'dark';
+  if (themePref === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
-  if (k === 'Video') {
-    return `<div class="fi" style="color:var(--accent2)"><svg viewBox="0 0 24 24"><path d="${P.play}"/></svg></div>`;
+  return 'light';
+}
+
+function applyAppearance(settings) {
+  const root = document.documentElement;
+  const theme = resolveTheme(settings?.theme || 'light');
+  const accent = ACCENTS.includes(settings?.accent) ? settings.accent : 'indigo';
+  root.dataset.theme = theme;
+  if (accent === 'indigo') {
+    root.removeAttribute('data-accent');
+  } else {
+    root.dataset.accent = accent;
   }
-  return `<div class="fi" style="color:var(--mute)"><svg viewBox="0 0 24 24"><path d="${P.file}"/></svg></div>`;
 }
 
 function formatBytes(bytes) {
@@ -215,7 +50,8 @@ function formatBytes(bytes) {
     i++;
   }
   if (i === 0) return `${val} B`;
-  const formatted = val < 100 ? (val.toFixed(1).endsWith('.0') ? val.toFixed(0) : val.toFixed(1)) : val.toFixed(0);
+  const formatted =
+    val < 100 ? (val.toFixed(1).endsWith('.0') ? val.toFixed(0) : val.toFixed(1)) : val.toFixed(0);
   return `${formatted} ${units[i]}`;
 }
 
@@ -235,605 +71,466 @@ function formatFilesizeDisplay(fmt, durationSeconds) {
   const br = fmt.bitrate_kbps || 0;
   if (dur > 0 && br > 0) {
     const est = Math.round((dur * br * 1000) / 8);
-    if (est > 0) {
-      return `~${formatBytes(est)}`;
-    }
+    if (est > 0) return `~${formatBytes(est)}`;
   }
   return 'Size unknown';
 }
 
-function showToast(text, isError = false) {
-  const el = document.getElementById('toast');
-  if (!el) return;
-  el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${isError ? '#f87171' : '#34d399'}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="${P.ck}"/></svg><span>${escapeHtml(text)}</span>`;
-  el.classList.add('on');
-  clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => el.classList.remove('on'), 2200);
+function chipIcon(isAudio) {
+  const color = isAudio ? '#ff375f' : '#ff453a';
+  const path = isAudio ? SVG_PATHS.music : SVG_PATHS.play;
+  return `<span class="ft" style="--c:${color}" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="${path}"/></svg></span>`;
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
-  const main = document.getElementById('main');
-  const settings = document.getElementById('settings');
+document.addEventListener('DOMContentLoaded', () => {
+  const mainEl = document.getElementById('main');
   const statusPill = document.getElementById('statusPill');
   const stTxt = document.getElementById('stTxt');
   const capSwMain = document.getElementById('capSwMain');
-  const capSwSet = document.getElementById('capSwSet');
-  const pillSwSet = document.getElementById('pillSwSet');
-  const qualitySel = document.getElementById('qualitySel');
-  const minSizeSel = document.getElementById('minSizeSel');
-  const connVal = document.getElementById('connVal');
-  const openBtn = document.getElementById('open');
-  const gearBtn = document.getElementById('gear');
-  const backBtn = document.getElementById('back');
-  const doneBtn = document.getElementById('done');
+  const connBanner = document.getElementById('connBanner');
+  const connBannerTxt = document.getElementById('connBannerTxt');
+  const btnReconnect = document.getElementById('btnReconnect');
+  const mediaSection = document.getElementById('mediaSection');
   const mediaCountHeader = document.getElementById('mediaCountHeader');
   const mediaList = document.getElementById('mediaList');
-  const recentHeader = document.getElementById('recentHeader');
-  const recentList = document.getElementById('recentList');
+  const btnRefreshMedia = document.getElementById('btnRefreshMedia');
+  const popupNotice = document.getElementById('popupNotice');
+  const openBtn = document.getElementById('open');
+  const openLabel = document.getElementById('openLabel');
+  const gearBtn = document.getElementById('gear');
 
-  // Navigation handlers
-  const showView = (v) => {
-    main.hidden = v !== 'main';
-    settings.hidden = v !== 'settings';
-  };
-  gearBtn.addEventListener('click', () => showView('settings'));
-  backBtn.addEventListener('click', () => showView('main'));
-  doneBtn.addEventListener('click', () => showView('main'));
+  let currentSettings = { cap: true, theme: 'light', accent: 'indigo', port: 6800 };
+  let currentConnState = 'connecting';
+  let noticeTimer = null;
+  let openInFlight = false;
+  let checkInFlight = false;
 
-  // 1. Sync settings from storage
-  chrome.storage.local.get(['tori_settings'], (res) => {
-    const s = res?.tori_settings || {};
-    const cap = s.cap !== false;
-    const pill = s.pill !== false;
-    capSwMain.setAttribute('aria-checked', String(cap));
-    capSwSet.setAttribute('aria-checked', String(cap));
-    pillSwSet.setAttribute('aria-checked', String(pill));
+  function showNotice(text, kind = 'info', durationMs = 2600) {
+    if (!popupNotice) return;
+    if (!text) {
+      popupNotice.hidden = true;
+      popupNotice.textContent = '';
+      popupNotice.className = 'notice-bar';
+      return;
+    }
+    popupNotice.textContent = text;
+    popupNotice.className = `notice-bar ${kind === 'error' ? 'err' : kind === 'ok' ? 'ok' : ''}`.trim();
+    popupNotice.hidden = false;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => {
+      popupNotice.hidden = true;
+    }, durationMs);
+  }
 
-    if (s.fmt) qualitySel.value = s.fmt;
-    if (typeof s.min === 'number') minSizeSel.value = String(s.min);
-    if (s.port) connVal.textContent = `127.0.0.1:${s.port}`;
-  });
+  function setStatus(state, port, detailMsg) {
+    currentConnState = state;
+    statusPill.className = `st ${state}`;
+    mainEl.classList.toggle('on', state === 'connected');
 
-  // Switch helper
-  function updateSetting(key, val) {
-    chrome.storage.local.get(['tori_settings'], (res) => {
-      const s = res?.tori_settings || {};
-      s[key] = val;
-      chrome.storage.local.set({ tori_settings: s });
+    if (state === 'connected') {
+      stTxt.textContent = port ? `Connected · :${port}` : 'Connected';
+      statusPill.title = `Connected to TORI Desktop on 127.0.0.1:${port || currentSettings.port}`;
+      connBanner.hidden = true;
+    } else if (state === 'connecting') {
+      stTxt.textContent = 'Connecting…';
+      statusPill.title = 'Checking live TORI Desktop connection…';
+      connBanner.hidden = true;
+    } else if (state === 'reconnecting') {
+      stTxt.textContent = 'Reconnecting…';
+      statusPill.title = 'Reconnecting to TORI Desktop…';
+      connBanner.hidden = false;
+      connBannerTxt.textContent = 'Attempting to reach or pair with TORI Desktop…';
+      btnReconnect.disabled = true;
+    } else if (state === 'disconnected') {
+      stTxt.textContent = 'Disconnected';
+      statusPill.title = detailMsg || 'TORI Desktop is running but unpaired or disconnected.';
+      connBanner.hidden = false;
+      connBannerTxt.textContent = detailMsg || 'Pairing required to communicate with TORI.';
+      btnReconnect.disabled = false;
+      btnReconnect.textContent = 'Reconnect';
+    } else {
+      // Desktop unavailable
+      stTxt.textContent = 'Desktop unavailable';
+      statusPill.title = detailMsg || 'TORI Desktop is not running or unreachable.';
+      connBanner.hidden = false;
+      connBannerTxt.textContent = detailMsg || 'TORI Desktop is not responding on local port.';
+      btnReconnect.disabled = false;
+      btnReconnect.textContent = 'Reconnect';
+    }
+  }
+
+  // Never trust cached connection status on open — start in Connecting... and verify live.
+  setStatus('connecting');
+
+  function syncSettingsFromStorage() {
+    chrome.storage.local.get(['tori_settings', 'tori_theme', 'tori_accent'], (res) => {
+      const stored = res?.tori_settings || {};
+      currentSettings = {
+        ...currentSettings,
+        ...stored,
+        theme: stored.theme || res?.tori_theme || 'light',
+        accent: stored.accent || res?.tori_accent || 'indigo',
+      };
+      capSwMain.checked = currentSettings.cap !== false;
+      applyAppearance(currentSettings);
     });
   }
 
-  // Toggle Capture Downloads
-  const toggleCapture = () => {
-    const current = capSwMain.getAttribute('aria-checked') === 'true';
-    const next = !current;
-    capSwMain.setAttribute('aria-checked', String(next));
-    capSwSet.setAttribute('aria-checked', String(next));
-    updateSetting('cap', next);
-    showToast(next ? 'Capture enabled' : 'Capture disabled');
+  syncSettingsFromStorage();
+
+  const mqlDark = window.matchMedia('(prefers-color-scheme: dark)');
+  const onMqlChange = () => {
+    if (currentSettings.theme === 'system') applyAppearance(currentSettings);
   };
-  capSwMain.addEventListener('click', toggleCapture);
-  capSwSet.addEventListener('click', toggleCapture);
+  mqlDark.addEventListener('change', onMqlChange);
 
-  // Toggle Download Button on Videos
-  pillSwSet.addEventListener('click', () => {
-    const current = pillSwSet.getAttribute('aria-checked') === 'true';
-    const next = !current;
-    pillSwSet.setAttribute('aria-checked', String(next));
-    updateSetting('pill', next);
-    showToast(next ? 'Video button enabled' : 'Video button disabled');
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.tori_settings || changes.tori_theme || changes.tori_accent) {
+      syncSettingsFromStorage();
+    }
   });
 
-  // Default Quality select
-  qualitySel.addEventListener('change', () => {
-    updateSetting('fmt', qualitySel.value);
-    showToast(`Default quality: ${qualitySel.value}`);
+  // Capture Downloads toggle
+  capSwMain.addEventListener('change', () => {
+    const enabled = capSwMain.checked;
+    chrome.storage.local.get(['tori_settings'], (res) => {
+      const next = { ...(res?.tori_settings || {}), cap: enabled };
+      chrome.storage.local.set({ tori_settings: next }, () => {
+        showNotice(enabled ? 'Download capture enabled' : 'Download capture paused', 'ok');
+      });
+    });
   });
 
-  // Minimum Size select
-  minSizeSel.addEventListener('change', () => {
-    const size = parseInt(minSizeSel.value, 10) || 0;
-    updateSetting('min', size);
-    showToast(size > 0 ? `Skip files under ${size} MB` : 'Capture all sizes');
+  // Live Connectivity Verification
+  function checkLiveConnection() {
+    if (checkInFlight) return;
+    checkInFlight = true;
+
+    const timer = setTimeout(() => {
+      if (!checkInFlight) return;
+      checkInFlight = false;
+      setStatus('unavailable', currentSettings.port, 'Desktop health check timed out.');
+    }, 4500);
+
+    chrome.runtime.sendMessage({ action: 'PING_DESKTOP', passive: true }, (res) => {
+      clearTimeout(timer);
+      checkInFlight = false;
+      if (chrome.runtime.lastError || !res) {
+        setStatus('unavailable', currentSettings.port, 'Background worker unavailable.');
+        return;
+      }
+      if (res.status === 'ok' && res.authenticated) {
+        setStatus('connected', res.port || currentSettings.port);
+      } else if (res.status === 'unpaired' || res.status === 'disconnected') {
+        setStatus('disconnected', res.port || currentSettings.port, res.message);
+      } else {
+        setStatus('unavailable', res.port || currentSettings.port, res.message);
+      }
+    });
+  }
+
+  function triggerReconnect() {
+    if (checkInFlight) return;
+    checkInFlight = true;
+    setStatus('reconnecting', currentSettings.port);
+
+    const timer = setTimeout(() => {
+      if (!checkInFlight) return;
+      checkInFlight = false;
+      setStatus('unavailable', currentSettings.port, 'Reconnect timed out. Launch TORI Desktop and retry.');
+    }, 8000);
+
+    chrome.runtime.sendMessage({ action: 'RECONNECT_DESKTOP' }, (res) => {
+      clearTimeout(timer);
+      checkInFlight = false;
+      if (chrome.runtime.lastError || !res) {
+        setStatus('unavailable', currentSettings.port, 'Could not reach TORI Desktop.');
+        return;
+      }
+      if (res.status === 'ok' && res.authenticated) {
+        setStatus('connected', res.port || currentSettings.port);
+        showNotice('Connected to TORI Desktop', 'ok');
+        loadActiveTabMedia();
+      } else if (res.status === 'unpaired' || res.status === 'disconnected') {
+        setStatus('disconnected', res.port || currentSettings.port, res.message);
+        showNotice(res.message || 'Pairing required', 'error');
+      } else {
+        setStatus('unavailable', res.port || currentSettings.port, res.message);
+        showNotice(res.message || 'TORI Desktop is unavailable', 'error');
+      }
+    });
+  }
+
+  btnReconnect.addEventListener('click', triggerReconnect);
+  statusPill.addEventListener('click', () => {
+    if (currentConnState === 'disconnected' || currentConnState === 'unavailable') {
+      triggerReconnect();
+    } else {
+      setStatus('connecting', currentSettings.port);
+      checkLiveConnection();
+    }
   });
 
-  // Open Tori button handler
+  checkLiveConnection();
+  const statusPollTimer = setInterval(() => {
+    if (currentConnState !== 'reconnecting') {
+      checkLiveConnection();
+    }
+  }, 3500);
+
+  // Open TORI Desktop cleanly (restore if running, start via Native Messaging if closed, never duplicate)
   openBtn.addEventListener('click', () => {
-    showToast('Opening Tori…');
-    chrome.runtime.sendMessage({ action: 'SHOW_DESKTOP' }, () => {
+    if (openInFlight) return;
+    openInFlight = true;
+    openBtn.disabled = true;
+    openLabel.textContent = 'Opening…';
+
+    let settled = false;
+    const resetOpenUi = () => {
+      openInFlight = false;
+      openBtn.disabled = false;
+      openLabel.textContent = 'Open Tori';
+    };
+
+    const timeoutGuard = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resetOpenUi();
+      showNotice('Timed out waiting for TORI Desktop. Make sure TORI is installed.', 'error', 4000);
+    }, 10000);
+
+    chrome.runtime.sendMessage({ action: 'SHOW_DESKTOP' }, (res) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutGuard);
+      resetOpenUi();
+
+      const err = chrome.runtime.lastError;
+      if (err) {
+        showNotice(err.message || 'Could not reach background extension worker.', 'error', 4000);
+        return;
+      }
+      if (res && res.status === 'ok') {
+        checkLiveConnection();
+        window.close();
+      } else {
+        const msg = res?.message || res?.error || 'Could not launch or reach TORI Desktop.';
+        setStatus('unavailable', currentSettings.port, msg);
+        showNotice(msg, 'error', 4500);
+      }
+    });
+  });
+
+  // Settings action -> opens Options page cleanly
+  gearBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ action: 'OPEN_OPTIONS' }, () => {
       window.close();
     });
   });
 
-  // Desktop Connection Status
-  function setStatus(state, port, latency) {
-    statusPill.className = 'status';
-    if (state === 'connected') {
-      main.classList.add('on');
-      statusPill.classList.add('on');
-      stTxt.textContent = 'Connected';
-      if (port) connVal.textContent = `127.0.0.1:${port}`;
-    } else if (state === 'unpaired') {
-      main.classList.remove('on');
-      statusPill.classList.add('wait');
-      stTxt.textContent = 'Pairing Required (Click)';
-    } else if (state === 'connecting') {
-      main.classList.remove('on');
-      statusPill.classList.add('conn');
-      stTxt.textContent = 'Connecting…';
-    } else {
-      main.classList.remove('on');
-      statusPill.classList.add('bad');
-      stTxt.textContent = 'Disconnected';
-    }
-  }
+  // Genuine active-tab media inspection (shown ONLY when real media exists)
+  function sendDownloadWithTimeout(payload, btn, onDoneLabel) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    const prevText = btn.textContent;
+    btn.textContent = 'Sending…';
 
-  function updateConnectionStatus() {
-    chrome.runtime.sendMessage({ action: 'PING_DESKTOP' }, (res) => {
-      if (
-        chrome.runtime.lastError ||
-        !res ||
-        res.status === 'disconnected' ||
-        res.status === 'error' ||
-        res.status === 'none'
-      ) {
-        setStatus('disconnected', res?.port);
-      } else if (res.status === 'unpaired') {
-        setStatus('unpaired', res.port);
-      } else if (res.status === 'ok' && res.authenticated) {
-        setStatus('connected', res.port, res.latency);
-      } else {
-        setStatus('disconnected', res?.port);
-      }
-    });
-  }
-
-  // Set initial Connecting status immediately upon popup open
-  setStatus('connecting');
-  updateConnectionStatus();
-
-  // Bounded status polling while popup is open
-  const statusPollTimer = setInterval(updateConnectionStatus, 3000);
-  window.addEventListener('unload', () => clearInterval(statusPollTimer));
-
-  statusPill.addEventListener('click', () => {
-    if (statusPill.classList.contains('wait') || statusPill.classList.contains('bad')) {
-      setStatus('connecting');
-      showToast('Connecting / Pairing with Tori…');
-      chrome.runtime.sendMessage({ action: 'INITIATE_PAIRING' }, (res) => {
-        if (res && res.ok) {
-          showToast('Paired with Tori!');
-          updateConnectionStatus();
-        } else {
-          showToast(res?.error || 'Could not pair. Make sure Tori is running.', true);
-          updateConnectionStatus();
-        }
-      });
-    }
-  });
-
-  // Query media on current tab
-  let resolutionPollTimer = null;
-  let resolutionPollCount = 0;
-
-  function stopResolutionPolling() {
-    if (resolutionPollTimer) {
-      clearInterval(resolutionPollTimer);
-      resolutionPollTimer = null;
-    }
-  }
-
-  function startResolutionPolling(tab) {
-    if (resolutionPollTimer) return;
-    resolutionPollCount = 0;
-    resolutionPollTimer = setInterval(() => {
-      resolutionPollCount++;
-      if (resolutionPollCount > 20) {
-        stopResolutionPolling();
-        renderResolutionError('Resolution timed out after 20 seconds. Platform took too long to respond.', tab);
-        return;
-      }
-      chrome.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_MEDIA_INFO' }, (info) => {
-        if (!chrome.runtime.lastError && info && info.ok) {
-          if (!info.isResolving) {
-            stopResolutionPolling();
-            if (info.resolvedMeta && Array.isArray(info.resolvedMeta.formats) && info.resolvedMeta.formats.length > 0) {
-              renderResolvedFormats(info.resolvedMeta, tab);
-            } else if (info.resolveError) {
-              renderResolutionError(info.resolveError, tab);
-            } else {
-              loadActiveTabMedia();
-            }
-          }
-        }
-      });
-    }, 1000);
-  }
-
-  function getDisplayCandidates(items) {
-    if (!Array.isArray(items) || items.length === 0) return [];
-    return items.filter((c) => !c.is_segment && c.type !== 'segment');
-  }
-
-  function renderResolutionError(errMsg, tab) {
-    stopResolutionPolling();
-    chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
-      const rawItems = res?.media || [];
-      const items = getDisplayCandidates(rawItems);
-      if (items.length > 0) {
-        mediaCountHeader.textContent = `Captured Streams · ${items.length}`;
-        renderDirectItems(items, tab);
-        return;
-      }
-
-      mediaCountHeader.textContent = 'Media Unavailable';
-      mediaList.innerHTML = `
-        <div class="empty" style="padding:16px 12px;text-align:center">
-          <div style="font-weight:600;margin-bottom:4px;color:#f87171">Resolution Failed</div>
-          <div style="font-size:11px;color:var(--mute);line-height:1.4;margin-bottom:12px">${escapeHtml(errMsg)}</div>
-          <button class="btn primary" id="btnRetryResolution" style="padding:6px 14px;font-size:12px;margin:0 auto">
-            Retry Resolution
-          </button>
-        </div>`;
-      const btnRetry = document.getElementById('btnRetryResolution');
-      if (btnRetry) {
-        btnRetry.addEventListener('click', () => {
-          triggerManualResolve(tab);
-        });
-      }
-    });
-  }
-
-  function triggerManualResolve(tab, forceRefresh = false) {
-    stopResolutionPolling();
-    mediaCountHeader.textContent = forceRefresh ? 'Refreshing media formats…' : 'Resolving media on page…';
-    mediaList.innerHTML = `
-      <div class="empty" style="padding:20px 12px;text-align:center">
-        <div class="tori-spin"></div>
-        <div style="font-weight:600;margin-bottom:4px">${forceRefresh ? 'Refreshing media formats…' : 'Resolving media formats…'}</div>
-        <div style="font-size:11px;color:var(--mute);line-height:1.4">Extracting genuine quality streams and formats</div>
-      </div>`;
-
-    chrome.tabs.sendMessage(tab.id, { action: 'TRIGGER_RESOLVE_MEDIA', force_refresh: forceRefresh }, () => {
-      if (chrome.runtime.lastError) {}
-    });
-
-    const isPlatform = isManagedPlatform(tab.url);
-    const timeoutMs = isPlatform ? 25000 : 13000;
-
-    let timedOut = false;
+    let settled = false;
     const timer = setTimeout(() => {
-      timedOut = true;
-      renderResolutionError(`Media resolution timed out (${Math.round(timeoutMs / 1000)}s). Remote host took too long to respond.`, tab);
-    }, timeoutMs);
+      if (settled) return;
+      settled = true;
+      btn.disabled = false;
+      btn.textContent = 'Retry';
+      showNotice('Download request timed out waiting for TORI.', 'error', 3500);
+    }, 15000);
 
-    const norm = normalizePlatformUrl(tab.url);
-    const targetUrl = norm.url || tab.url;
-
-    chrome.runtime.sendMessage({ action: 'RESOLVE_MEDIA', url: targetUrl, tabId: tab.id, force_refresh: forceRefresh }, (rRes) => {
+    chrome.runtime.sendMessage(payload, (dlRes) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      if (timedOut) return;
-      if (rRes && rRes.status === 'ok' && rRes.metadata && Array.isArray(rRes.metadata.formats) && rRes.metadata.formats.length > 0) {
-        renderResolvedFormats(rRes.metadata, tab);
+
+      const err = chrome.runtime.lastError;
+      if (err) {
+        btn.disabled = false;
+        btn.textContent = prevText;
+        showNotice(err.message || 'Extension communication failed', 'error', 3500);
+        return;
+      }
+
+      if (dlRes && dlRes.status === 'ok' && dlRes.job_id) {
+        btn.textContent = onDoneLabel;
+        btn.classList.add('ok');
+        showNotice(`Queued in TORI (${dlRes.filename || payload.filename || 'media'})`, 'ok');
+      } else if (dlRes && dlRes.status === 'already_exists') {
+        btn.disabled = false;
+        btn.textContent = 'Active';
+        showNotice('Already in TORI download queue', 'info');
       } else {
-        const errMsg = rRes?.message || 'Media resolution failed. Remote stream unavailable or restricted.';
-        renderResolutionError(errMsg, tab);
+        btn.disabled = false;
+        btn.textContent = 'Retry';
+        showNotice(dlRes?.message || dlRes?.error || 'Download failed', 'error', 3500);
       }
     });
   }
 
-  async function loadActiveTabMedia() {
-    try {
-      let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab || !tab.id) return;
-
-      if (tab.url && (tab.url.startsWith('moz-extension://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge-extension://'))) {
-        const contentTabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
-        if (contentTabs && contentTabs.length > 0) {
-          tab = contentTabs[contentTabs.length - 1];
-        }
-      }
-
-      if (tab.url && tab.url.toLowerCase().includes('plex.tv')) {
-        mediaCountHeader.textContent = 'Protected Content';
-        mediaList.innerHTML = `
-          <div class="empty" style="padding:16px 12px;text-align:center">
-            <div style="font-weight:600;margin-bottom:4px;color:#f87171">DRM-Protected Content</div>
-            <div style="font-size:11px;color:var(--mute);line-height:1.4">watch.plex.tv content is DRM-protected and not licensed for offline download.</div>
-          </div>`;
-        return;
-      }
-
-      chrome.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_MEDIA_INFO' }, (info) => {
-        if (!chrome.runtime.lastError && info && info.ok) {
-          if (info.isResolving && !info.hasAnyCandidates) {
-            mediaCountHeader.textContent = 'Resolving media on page…';
-            mediaList.innerHTML = `
-              <div class="empty" style="padding:20px 12px;text-align:center">
-                <div class="tori-spin"></div>
-                <div style="font-weight:600;margin-bottom:4px">Resolving media on page…</div>
-                <div style="font-size:11px;color:var(--mute);line-height:1.4">Extracting genuine quality streams and formats</div>
-              </div>`;
-            startResolutionPolling(tab);
-            return;
-          }
-
-          if (info.resolveError) {
-            renderResolutionError(info.resolveError, tab);
-            return;
-          }
-
-          if (info.resolvedMeta && Array.isArray(info.resolvedMeta.formats) && info.resolvedMeta.formats.length > 0) {
-            stopResolutionPolling();
-            renderResolvedFormats(info.resolvedMeta, tab);
-            return;
-          }
-        }
-
-        chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
-          const rawItems = res?.media || [];
-          const items = getDisplayCandidates(rawItems);
-          mediaCountHeader.textContent = `Media on this page · ${items.length}`;
-
-          if (items.length === 0) {
-            const isPlatform = isManagedPlatform(tab.url);
-            mediaList.innerHTML = `
-              <div class="empty" style="padding:16px 12px;text-align:center">
-                <div style="font-weight:600;margin-bottom:4px">${isPlatform ? 'Streaming Media Detected' : 'No direct media detected'}</div>
-                <div style="font-size:11px;color:var(--mute);line-height:1.4">${isPlatform ? 'Click below to extract high-definition formats using TORI Resolver.' : 'Play the video or click below to resolve.'}</div>
-                <button class="btn primary" id="btnResolveTabMedia" style="margin:12px auto 0;padding:6px 14px;font-size:12px">
-                  Resolve Media on Page
-                </button>
-              </div>`;
-
-            const btnResolve = document.getElementById('btnResolveTabMedia');
-            if (btnResolve) {
-              btnResolve.addEventListener('click', () => {
-                triggerManualResolve(tab);
-              });
-            }
-          } else {
-            renderDirectItems(items, tab);
-          }
-        });
-      });
-    } catch (err) {
-      console.warn('Failed to query current tab media:', err);
+  function renderResolvedItems(meta, tab) {
+    const formats = Array.isArray(meta?.formats) ? meta.formats : [];
+    if (formats.length === 0) {
+      mediaSection.hidden = true;
+      return;
     }
-  }
+    mediaSection.hidden = false;
+    mediaCountHeader.textContent = `Detected formats · ${formats.length}`;
+    const topFormats = formats.slice(0, 4);
 
-  function renderResolvedFormats(meta, tab) {
-    const rawTitle = meta.title || '';
-    const fallbackId = meta.id || (tab.url.match(/\/(?:reel|reels)\/([^/?#]+)/i) || [])[1] || 'Facebook Reel';
-    const displayTitle = cleanMediaTitle(rawTitle, fallbackId);
-
-    const isCached = meta.is_cached === true;
-    mediaCountHeader.innerHTML = `<span>Resolved Formats${isCached ? ' <span style="font-size:10px;padding:1px 5px;border-radius:4px;background:var(--raise);color:var(--mute)">Cached</span>' : ''} · ${meta.formats.length}</span><a href="#" id="lnkRefreshFormats" style="font-size:11px;color:var(--accent2);text-decoration:none">Refresh</a>`;
-    showToast(isCached ? `Loaded ${meta.formats.length} formats from cache` : `Found ${meta.formats.length} formats`);
-
-    const lnkRefresh = document.getElementById('lnkRefreshFormats');
-    if (lnkRefresh) {
-      lnkRefresh.addEventListener('click', (e) => {
-        e.preventDefault();
-        triggerManualResolve(tab, true);
-      });
-    }
-
-    mediaList.innerHTML = meta.formats
+    mediaList.innerHTML = topFormats
       .map((fmt, idx) => {
         const isAudio = !fmt.has_video && fmt.has_audio;
-        const cat = isAudio ? 'Music' : 'Video';
-        const sizeText = formatFilesizeDisplay(fmt, meta.duration_seconds);
-        const sub = `${(fmt.container || 'mp4').toUpperCase()} · ${sizeText}`;
-
+        const sizeTxt = formatFilesizeDisplay(fmt, meta.duration_seconds);
+        const sub = `${(fmt.container || 'mp4').toUpperCase()} · ${sizeTxt}`;
         return `
-        <div class="dl">
-          ${chip(cat)}
-          <div class="n">
-            <b>${escapeHtml(fmt.resolution_label || 'Media')}</b>
-            <small>${escapeHtml(displayTitle.substring(0, 36))} · ${escapeHtml(sub)}</small>
+        <div class="row">
+          ${chipIcon(isAudio)}
+          <div class="t">
+            <b>${escapeHtml(fmt.resolution_label || meta.title || 'Media')}</b>
+            <span class="s">${escapeHtml(sub)}</span>
           </div>
-          <button class="btn-dl" data-fidx="${idx}">Download</button>
+          <button type="button" class="btn mb" data-fidx="${idx}">Download</button>
         </div>`;
       })
       .join('');
 
-    mediaList.querySelectorAll('button[data-fidx]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const fidx = parseInt(b.dataset.fidx, 10);
-        const selected = meta.formats[fidx];
-        if (!selected) return;
-
-        b.textContent = 'Sending…';
-        b.disabled = true;
-        const correlationId = 'tori_pop_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
-        const safeFilename = `${displayTitle.replace(/[\\/:*?"<>|]/g, '') || 'media'}.${selected.container || 'mp4'}`;
-        const directUrl = selected.direct_stream_url || null;
-        const sourceUrl = directUrl || meta.source_url || tab.url;
-
-        chrome.runtime.sendMessage(
+    mediaList.querySelectorAll('button[data-fidx]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.fidx, 10);
+        const sel = topFormats[idx];
+        if (!sel) return;
+        const safeTitle = String(meta.title || 'media').replace(/[\\/:*?"<>|]/g, '').trim() || 'media';
+        sendDownloadWithTimeout(
           {
             action: 'START_MEDIA_DOWNLOAD',
-            url: sourceUrl,
-            direct_stream_url: directUrl,
-            format_id: selected.format_id,
-            filename: safeFilename,
+            url: meta.source_url || tab.url,
+            direct_stream_url: sel.direct_stream_url || null,
+            format_id: sel.format_id,
+            filename: `${safeTitle}.${sel.container || 'mp4'}`,
             priority: 'high',
-            correlation_id: correlationId,
             page_url: tab.url,
             thumbnail_url: meta.thumbnail_url || null,
             user_agent: navigator.userAgent,
           },
-          (dlRes) => {
-            b.disabled = false;
-            if (dlRes && dlRes.status === 'ok' && dlRes.job_id) {
-              b.textContent = 'Queued';
-              b.classList.add('ok');
-              showToast(`Queued in Tori (${dlRes.filename || 'media'})`);
-              loadRecentDownloads();
-            } else {
-              b.textContent = 'Retry';
-              showToast(dlRes?.message || 'Download failed', true);
-            }
-          }
+          btn,
+          'Queued'
         );
       });
     });
   }
 
-  function renderDirectItems(items, tab) {
-    mediaList.innerHTML = items
+  function renderDirectCandidates(items, tab) {
+    const usable = (items || []).filter((c) => c && !c.is_segment && c.type !== 'segment' && c.url);
+    if (usable.length === 0) {
+      mediaSection.hidden = true;
+      return;
+    }
+    mediaSection.hidden = false;
+    mediaCountHeader.textContent = `Media on this page · ${usable.length}`;
+    const topItems = usable.slice(0, 4);
+
+    mediaList.innerHTML = topItems
       .map((item, idx) => {
         const isAudio =
-          item.type === 'audio' ||
-          (item.content_type && item.content_type.startsWith('audio/'));
-        const cat = isAudio ? 'Music' : 'Video';
+          item.type === 'audio' || (item.content_type && item.content_type.startsWith('audio/'));
         const sizeStr = item.size_bytes ? ` · ${formatBytes(item.size_bytes)}` : '';
-        const formatStr = item.format || 'MP4';
-        const sub = `${formatStr}${sizeStr}`;
-
         return `
-        <div class="dl">
-          ${chip(cat)}
-          <div class="n">
+        <div class="row">
+          ${chipIcon(isAudio)}
+          <div class="t">
             <b>${escapeHtml(item.filename || 'media_video')}</b>
-            <small>${escapeHtml(sub)}</small>
+            <span class="s">${escapeHtml((item.format || 'MP4') + sizeStr)}</span>
           </div>
-          <button class="btn-dl" data-idx="${idx}">Download</button>
+          <button type="button" class="btn mb" data-idx="${idx}">Download</button>
         </div>`;
       })
       .join('');
 
     mediaList.querySelectorAll('button[data-idx]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        if (btn.disabled) return;
         const idx = parseInt(btn.dataset.idx, 10);
-        const target = items[idx];
+        const target = topItems[idx];
         if (!target) return;
-
-        btn.disabled = true;
-        btn.textContent = 'Sending…';
-        const currentUrl = (tab && tab.url) || window.location.href;
-        const reqPayload = {
-          action: 'START_DOWNLOAD',
-          url: target.url,
-          filename: target.filename,
-          priority: 'high',
-          page_url: currentUrl,
-          thumbnail_url: target.thumbnail_url || null,
-          user_agent: navigator.userAgent,
-        };
-
-        chrome.runtime.sendMessage(
-          reqPayload,
-          (dlRes) => {
-            if (dlRes && dlRes.status === 'ok') {
-              btn.textContent = 'Sent';
-              btn.classList.add('ok');
-              showToast('Sent to Tori');
-              loadRecentDownloads();
-            } else if (dlRes && dlRes.status === 'already_exists') {
-              btn.textContent = 'Active';
-              showToast('Already in download queue');
-            } else {
-              btn.disabled = false;
-              btn.textContent = 'Retry';
-              showToast(dlRes?.message || 'Download failed', true);
-            }
-          }
+        sendDownloadWithTimeout(
+          {
+            action: 'START_DOWNLOAD',
+            url: target.url,
+            filename: target.filename,
+            priority: 'high',
+            page_url: tab?.url || '',
+            thumbnail_url: target.thumbnail_url || null,
+            user_agent: navigator.userAgent,
+          },
+          btn,
+          'Queued'
         );
       });
     });
   }
 
-  loadActiveTabMedia();
-
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.action === 'MEDIA_NAVIGATED' || msg.action === 'TAB_MEDIA_UPDATED') {
-      stopResolutionPolling();
-      loadActiveTabMedia();
-    } else if (msg.action === 'MEDIA_RESOLVED') {
-      stopResolutionPolling();
-      if (msg.metadata) {
-        chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-          if (tab) renderResolvedFormats(msg.metadata, tab);
-        });
-      }
-    } else if (msg.action === 'MEDIA_RESOLUTION_FAILED') {
-      stopResolutionPolling();
-      chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-        if (tab) renderResolutionError(msg.message || 'Media resolution failed', tab);
-      });
+  async function resolveActiveTab() {
+    const qp = new URLSearchParams(window.location.search).get('tabId');
+    if (qp && /^\d+$/.test(qp)) {
+      try {
+        const targetTab = await chrome.tabs.get(parseInt(qp, 10));
+        if (targetTab && targetTab.url && targetTab.url.startsWith('http')) {
+          return targetTab;
+        }
+      } catch (_) {}
     }
-  });
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab;
+  }
 
-  // Recent Downloads
-  function loadRecentDownloads() {
-    chrome.runtime.sendMessage({ action: 'GET_DOWNLOADS' }, (res) => {
-      const jobs = res?.jobs || [];
-      if (jobs.length === 0) {
-        recentList.innerHTML = '<div class="empty">No recent downloads</div>';
+  async function loadActiveTabMedia() {
+    try {
+      const tab = await resolveActiveTab();
+      if (!tab || !tab.id || !tab.url || !tab.url.startsWith('http')) {
+        mediaSection.hidden = true;
         return;
       }
 
-      const recent = jobs.slice(0, 3);
-      recentList.innerHTML = recent
-        .map((j) => {
-          const total = j.total_bytes || 0;
-          const downloaded = j.downloaded_bytes || 0;
-          const percent =
-            total > 0
-              ? Math.min(100, Math.floor((downloaded / total) * 100))
-              : j.state === 'completed'
-              ? 100
-              : 0;
-          const isComplete = j.state === 'completed';
-          const isPaused = j.state === 'paused';
-          const isFailed = j.state === 'failed';
-
-          let statusLabel = `${percent}%`;
-          let barClass = '';
-          if (isComplete) {
-            statusLabel = 'Done';
-            barClass = 'dn';
-          } else if (isPaused) {
-            statusLabel = 'Paused';
-            barClass = 'pz';
-          } else if (isFailed) {
-            statusLabel = 'Failed';
-            barClass = 'pz';
+      chrome.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_MEDIA_INFO' }, (info) => {
+        if (!chrome.runtime.lastError && info?.ok && info.resolvedMeta?.formats?.length > 0) {
+          renderResolvedItems(info.resolvedMeta, tab);
+          return;
+        }
+        chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: tab.id }, (res) => {
+          if (chrome.runtime.lastError || !res) {
+            mediaSection.hidden = true;
+            return;
           }
-
-          const cat = j.job_type === 'Torrent' ? 'Other' : 'Video';
-
-          return `
-          <div class="dl">
-            ${chip(cat)}
-            <div class="n">
-              <b>${escapeHtml(j.filename || 'download')}</b>
-              <div class="pr"><i class="${barClass}" style="width:${percent}%"></i></div>
-            </div>
-            <small style="font-size:11px;font-weight:600;min-width:38px;text-align:right;color:${
-              isComplete ? 'var(--ok)' : isFailed ? 'var(--bad)' : 'var(--mute)'
-            }">${statusLabel}</small>
-          </div>`;
-        })
-        .join('');
-    });
+          renderDirectCandidates(res.media || [], tab);
+        });
+      });
+    } catch {
+      mediaSection.hidden = true;
+    }
   }
 
-  loadRecentDownloads();
-  const pollTimer = setInterval(loadRecentDownloads, 2000);
-  window.addEventListener('unload', () => {
-    clearInterval(pollTimer);
-    stopResolutionPolling();
+  btnRefreshMedia.addEventListener('click', async () => {
+    const tab = await resolveActiveTab().catch(() => null);
+    if (tab?.id) {
+      chrome.tabs.sendMessage(tab.id, { action: 'TRIGGER_RESOLVE_MEDIA', force_refresh: true }, () => {
+        if (chrome.runtime.lastError) {
+          /* content script may not be on restricted page */
+        }
+      });
+      setTimeout(loadActiveTabMedia, 400);
+    }
+  });
+
+  loadActiveTabMedia();
+
+  window.addEventListener('pagehide', () => {
+    clearInterval(statusPollTimer);
+    clearTimeout(noticeTimer);
+    mqlDark.removeEventListener('change', onMqlChange);
   });
 });
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
