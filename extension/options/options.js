@@ -742,7 +742,6 @@
 
       populateForm();
       bindInputs();
-      document.documentElement.dataset.toriReady = '1';
       refreshConnection(true);
     });
   }

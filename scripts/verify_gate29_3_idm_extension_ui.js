@@ -1096,7 +1096,7 @@ video{width:100%;height:400px;background:#000;border-radius:8px;display:block}
     // TEST B: Extension Options 6 Tabs + Screenshots 06..11 + T14/T15/T16
     // -------------------------------------------------------------------
     const optPage = await chrome.openExtPage('options/options.html', { viewport: { width: 1020, height: 740, scale: 1 } });
-    await waitForContext(optPage.cdp, `document.documentElement.dataset.toriReady === '1' && document.getElementById('ctit')?.textContent?.trim() === 'Connected'`, 12000, 'options-connected');
+    await waitForContext(optPage.cdp, `(document.documentElement.dataset.theme === 'light' || document.documentElement.dataset.theme === 'dark') && document.getElementById('ctit')?.textContent?.trim() === 'Connected'`, 12000, 'options-connected');
     await sleep(250);
     await captureCdpPng(optPage.cdp, '06_options_connection.png');
 
@@ -1145,7 +1145,7 @@ video{width:100%;height:400px;background:#000;border-radius:8px;display:block}
 
     // Test T15 & T16: Reload options page and verify Dark + Ocean accent + port persisted cleanly
     await optPage.cdp.send('Page.reload', {});
-    await waitForContext(optPage.cdp, `document.documentElement.dataset.toriReady === '1' && document.getElementById('ctit')?.textContent?.trim() === 'Connected'`, 12000, 'options-reload');
+    await waitForContext(optPage.cdp, `(document.documentElement.dataset.theme === 'light' || document.documentElement.dataset.theme === 'dark') && document.getElementById('ctit')?.textContent?.trim() === 'Connected'`, 12000, 'options-reload');
     const persistedState = await optPage.cdp.evalAsync(`({ theme: document.documentElement.dataset.theme, accent: document.documentElement.dataset.accent, port: document.getElementById('port').value })`);
     record('T15-THEME', 'Theme & Accent selection persists across reload and propagates to storage', persistedState.theme === 'dark' && persistedState.accent === 'ocean', JSON.stringify(persistedState));
     record('T16-OPTS', 'Options page persists Connection/Capture/Media/Sites/Appearance settings across reload', persistedState.port === String(DESKTOP_GUI_PORT), JSON.stringify(persistedState));

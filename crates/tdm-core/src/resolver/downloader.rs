@@ -266,11 +266,20 @@ pub async fn download_managed_media(
         return Err(EngineError::Other(user_err));
     }
 
-    // Verify output file existence (handle cases where container format changed, e.g. .mkv / .webm)
+    // Verify output file existence and sync final extension (e.g. .webm.mkv -> .mkv)
     let final_path = locate_actual_output_file(&job.target_path);
     if let Some(found_path) = final_path {
         let meta = fs::metadata(&found_path)?;
         let final_size = meta.len();
+
+        if found_path != Path::new(&job.target_path) {
+            if let (Some(fname), Some(fpath)) = (
+                found_path.file_name().and_then(|n| n.to_str()),
+                found_path.to_str(),
+            ) {
+                let _ = db.update_job_location(&job.id, fname, fpath);
+            }
+        }
 
         let _ = db.update_downloaded_bytes(&job.id, final_size);
         db.update_job_state(&job.id, JobState::Completed, None)?;
@@ -426,18 +435,21 @@ fn locate_actual_output_file(target_str: &str) -> Option<PathBuf> {
     let parent = p.parent()?;
     let stem = p.file_stem().and_then(|s| s.to_str())?;
 
-    // Try common alternate extensions directly:
+    // Normalize double extensions emitted by yt-dlp muxing (e.g. .webm.mkv, .mp4.mkv) before fallback probing
+    let orig_name = p.file_name().and_then(|n| n.to_str());
     for ext in ["mp4", "mkv", "webm", "m4a", "opus", "mp3"] {
         let alt = parent.join(format!("{}.{}", stem, ext));
+        if let Some(full_name) = orig_name {
+            let alt_double = parent.join(format!("{}.{}", full_name, ext));
+            if alt_double.exists() && alt_double != alt {
+                if !alt.exists() && fs::rename(&alt_double, &alt).is_ok() {
+                    return Some(alt);
+                }
+                return Some(alt_double);
+            }
+        }
         if alt.exists() {
             return Some(alt);
-        }
-        let alt_double = parent.join(format!("{}.mp4.{}", stem, ext));
-        if alt_double.exists() {
-            if fs::rename(&alt_double, &alt).is_ok() {
-                return Some(alt);
-            }
-            return Some(alt_double);
         }
     }
 
@@ -578,5 +590,34 @@ mod tests {
         assert_eq!(build_format_selector("default"), None);
         assert_eq!(build_format_selector(""), None);
         assert_eq!(build_format_selector("   "), None);
+    }
+
+    #[test]
+    fn test_locate_actual_output_file_normalizes_double_extension_safely() {
+        let dir = std::env::temp_dir().join(format!("tori_dl_ext_test_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let requested = dir.join("Sample Video.webm");
+        let double_ext = dir.join("Sample Video.webm.mkv");
+        fs::write(&double_ext, b"mkvbytes").unwrap();
+
+        let found = locate_actual_output_file(requested.to_str().unwrap()).unwrap();
+        let clean = dir.join("Sample Video.mkv");
+        assert_eq!(found, clean);
+        assert!(clean.exists());
+        assert!(!double_ext.exists());
+
+        // Pre-existing clean target must never be clobbered by rename
+        let req2 = dir.join("Occupied.webm");
+        let occupied_mkv = dir.join("Occupied.mkv");
+        let double2 = dir.join("Occupied.webm.mkv");
+        fs::write(&occupied_mkv, b"existing").unwrap();
+        fs::write(&double2, b"new_muxed").unwrap();
+
+        let found2 = locate_actual_output_file(req2.to_str().unwrap()).unwrap();
+        assert_eq!(found2, double2);
+        assert_eq!(fs::read(&occupied_mkv).unwrap(), b"existing");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

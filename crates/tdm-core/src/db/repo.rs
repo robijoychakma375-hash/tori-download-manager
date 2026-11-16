@@ -80,6 +80,22 @@ impl Database {
         Ok(())
     }
 
+    /// Synchronize filename and target_path when post-processing/muxing changes container extension.
+    pub fn update_job_location(
+        &self,
+        id: &str,
+        filename: &str,
+        target_path: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE downloads SET filename = ?1, target_path = ?2, updated_at = ?3 WHERE id = ?4",
+            params![filename, target_path, now, id],
+        )?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn update_probe_metadata(
         &self,
