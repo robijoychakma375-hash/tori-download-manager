@@ -65,6 +65,17 @@ impl MediaResolver {
         raw_url: &str,
         force_refresh: bool,
     ) -> Result<MediaMetadata> {
+        self.resolve_with_options_budget(raw_url, force_refresh, None)
+            .await
+    }
+
+    /// Resolves media metadata with optional cache bypass and an explicit remaining budget.
+    pub async fn resolve_with_options_budget(
+        &self,
+        raw_url: &str,
+        force_refresh: bool,
+        budget: Option<Duration>,
+    ) -> Result<MediaMetadata> {
         let safe_url = validate_safe_media_url(raw_url).await?;
         let url_str = safe_url.as_str();
 
@@ -99,35 +110,56 @@ impl MediaResolver {
 
         // 4. Normalize platform media URLs for universal extractor (e.g. Facebook /reels/<id> -> /reel/<id>)
         let target_url = normalize_platform_media_url(url_str)?;
+        let redacted_target = crate::resolver::orchestrator::redact_url_for_log(&target_url);
 
         // Cache Check: If caching is available and force_refresh is false, check SQLite cache first
         let cache_id = crate::resolver::cache::normalize_cache_key(&target_url);
         if !force_refresh {
             if let (Some(ref db), Some(ref cid)) = (&self.db, &cache_id) {
                 if let Ok(Some(cached_meta)) = db.get_format_cache(&cid.cache_key) {
-                    tracing::info!(
-                        "[FormatCache] Hit for {} (key: {})",
-                        target_url,
+                    if crate::resolver::cache::is_valid_cached_metadata(&cached_meta) {
+                        tracing::info!(
+                            "[FormatCache] Hit for {} (key: {})",
+                            redacted_target,
+                            cid.cache_key
+                        );
+                        return Ok(cached_meta);
+                    }
+                    tracing::warn!(
+                        "[FormatCache] Evicting incomplete/incompatible entry for {} (key: {})",
+                        redacted_target,
                         cid.cache_key
                     );
-                    return Ok(cached_meta);
+                    let _ = db.invalidate_format_cache(&cid.cache_key);
                 }
             }
         }
 
-        // 5. Universal Platform Extraction via yt-dlp with adaptive timeouts
+        // 5. Universal Platform Extraction via yt-dlp with adaptive and bounded timeouts
         let is_platform = is_known_platform_domain(&target_url);
-        let timeout = if is_platform {
+        let default_timeout = if is_platform {
             DEFAULT_RESOLVER_TIMEOUT
         } else {
             GENERIC_RESOLVER_TIMEOUT
         };
+        let timeout = match budget {
+            Some(b) if b.is_zero() => {
+                return Err(EngineError::Other(
+                    "Media resolution timed out before extractor could run.".to_string(),
+                ));
+            }
+            Some(b) => default_timeout.min(b),
+            None => default_timeout,
+        };
+
         match execute_yt_dlp_dump(&target_url, Some(timeout)).await {
             Ok(json_val) => {
                 let parsed = self.parse_ytdlp_metadata(&target_url, &json_val)?;
                 // Cache Store: If eligible, persist sanitized metadata with standard TTL
                 if let (Some(ref db), Some(ref cid)) = (&self.db, &cache_id) {
-                    if crate::resolver::cache::is_cacheable(&parsed) {
+                    if crate::resolver::cache::is_cacheable(&parsed)
+                        && crate::resolver::cache::is_valid_cached_metadata(&parsed)
+                    {
                         let _ = db.set_format_cache(
                             &cid.cache_key,
                             &cid.platform,
@@ -138,7 +170,7 @@ impl MediaResolver {
                         );
                         tracing::info!(
                             "[FormatCache] Stored {} (key: {})",
-                            target_url,
+                            redacted_target,
                             cid.cache_key
                         );
                     }
@@ -146,8 +178,13 @@ impl MediaResolver {
                 Ok(parsed)
             }
             Err(e) => {
-                // Fallback: If yt-dlp fails (e.g. Unsupported URL or generic extractor failure),
-                // try probing the target URL directly as a media stream or manifest before failing.
+                // Preserve platform extractor errors instead of masking them with HTML probe errors
+                if is_platform
+                    && crate::resolver::orchestrator::is_definitive_platform_error(&e.to_string())
+                {
+                    return Err(e);
+                }
+                // Fallback for generic URLs or direct media hosted cleanly: try probing as direct stream
                 if let Ok(direct_meta) = self.probe_direct_media(url_str).await {
                     return Ok(direct_meta);
                 }
@@ -206,7 +243,13 @@ impl MediaResolver {
                 .map_err(EngineError::Http)?,
         };
 
-        let _status = resp.status();
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(EngineError::InvalidUrl(format!(
+                "Target returned non-success HTTP status {}",
+                status
+            )));
+        }
         let headers = resp.headers().clone();
 
         let content_type = headers
@@ -356,6 +399,12 @@ impl MediaResolver {
             .await
             .map_err(EngineError::Http)?;
 
+        if !resp.status().is_success() {
+            return Err(EngineError::InvalidUrl(format!(
+                "HLS probe returned HTTP status {}",
+                resp.status()
+            )));
+        }
         let body = resp.text().await.map_err(EngineError::Http)?;
         if !body.contains("#EXTM3U") {
             return Err(EngineError::InvalidUrl(
@@ -459,6 +508,12 @@ impl MediaResolver {
             .await
             .map_err(EngineError::Http)?;
 
+        if !resp.status().is_success() {
+            return Err(EngineError::InvalidUrl(format!(
+                "DASH probe returned HTTP status {}",
+                resp.status()
+            )));
+        }
         let body = resp.text().await.map_err(EngineError::Http)?;
         let mpd = crate::dash::parser::parse_mpd_manifest(&body, url)?;
 
@@ -1508,28 +1563,37 @@ pub fn normalize_platform_media_url(raw_url: &str) -> Result<String> {
     Ok(raw_url.to_string())
 }
 
+fn host_matches_domain(host: &str, domain: &str) -> bool {
+    host == domain || host.ends_with(&format!(".{}", domain))
+}
+
 /// Identifies whether a URL belongs to a dedicated video platform extractor vs an arbitrary webpage.
 pub fn is_known_platform_domain(url_str: &str) -> bool {
-    let lower = url_str.to_lowercase();
-    if let Ok(parsed) = url::Url::parse(&lower) {
+    const KNOWN_DOMAINS: &[&str] = &[
+        "youtube.com",
+        "youtu.be",
+        "youtube-nocookie.com",
+        "facebook.com",
+        "fb.watch",
+        "instagram.com",
+        "tiktok.com",
+        "twitter.com",
+        "x.com",
+        "reddit.com",
+        "vimeo.com",
+        "dailymotion.com",
+        "twitch.tv",
+        "soundcloud.com",
+        "bilibili.com",
+        "rumble.com",
+        "streamable.com",
+    ];
+
+    if let Ok(parsed) = url::Url::parse(url_str.trim()) {
         if let Some(host) = parsed.host_str() {
-            let h = host.trim_start_matches("www.");
-            return h.contains("youtube.com")
-                || h.contains("youtu.be")
-                || h.contains("facebook.com")
-                || h.contains("fb.watch")
-                || h.contains("instagram.com")
-                || h.contains("tiktok.com")
-                || h.contains("twitter.com")
-                || h.contains("x.com")
-                || h.contains("reddit.com")
-                || h.contains("vimeo.com")
-                || h.contains("dailymotion.com")
-                || h.contains("twitch.tv")
-                || h.contains("soundcloud.com")
-                || h.contains("bilibili.com")
-                || h.contains("rumble.com")
-                || h.contains("streamable.com");
+            let h = host.to_lowercase();
+            let h = h.trim_end_matches('.');
+            return KNOWN_DOMAINS.iter().any(|d| host_matches_domain(h, d));
         }
     }
     false

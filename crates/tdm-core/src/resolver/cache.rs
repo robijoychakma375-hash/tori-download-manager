@@ -314,3 +314,22 @@ pub fn is_cacheable(meta: &MediaMetadata) -> bool {
 
     true
 }
+
+/// Validates that a deserialized cached MediaMetadata record is complete and schema-compatible.
+/// Incomplete, empty, or direct-media cache records are treated as misses and evicted.
+pub fn is_valid_cached_metadata(meta: &MediaMetadata) -> bool {
+    if meta.is_direct_media
+        || meta.formats.is_empty()
+        || meta.title.trim().is_empty()
+        || meta.extractor.trim().is_empty()
+    {
+        return false;
+    }
+
+    meta.formats.iter().any(|f| {
+        !f.format_id.trim().is_empty()
+            && !f.container.trim().is_empty()
+            && !f.resolution_label.trim().is_empty()
+            && (f.has_video || f.has_audio)
+    })
+}

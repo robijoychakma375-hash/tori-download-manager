@@ -8,8 +8,8 @@ pub mod pipeline;
 pub mod ssrf;
 
 pub use cache::{
-    is_cacheable, normalize_cache_key, sanitize_for_cache, CacheIdentity, DEFAULT_CACHE_TTL_SECS,
-    MAX_CACHE_ENTRIES,
+    is_cacheable, is_valid_cached_metadata, normalize_cache_key, sanitize_for_cache, CacheIdentity,
+    DEFAULT_CACHE_TTL_SECS, MAX_CACHE_ENTRIES,
 };
 
 pub use discovery::{
@@ -23,12 +23,15 @@ pub use models::{
     PlaylistItem, PlaylistMetadata, ResolveRequest, ResolvedMediaFormat, ResolverStatus,
 };
 pub use orchestrator::{
-    deduplicate_and_rank_formats, extract_html_media_candidates, probe_streamlink,
-    DiscoveryOrchestrator, HtmlScrapedMetadata,
+    deduplicate_and_rank_formats, extract_html_media_candidates, is_definitive_platform_error,
+    probe_streamlink, redact_url_for_log, sanitize_candidate_urls, CandidateFilterReport,
+    DiscoveryOrchestrator, HtmlScrapedMetadata, CANDIDATE_PROBE_TIMEOUT, CANDIDATE_SWEEP_BUDGET,
+    MAX_CANDIDATE_CONCURRENCY, MAX_DISCOVERY_CANDIDATES, TOTAL_GENERIC_RESOLVE_BUDGET,
+    TOTAL_PLATFORM_RESOLVE_BUDGET,
 };
 pub use pipeline::{
-    extract_bitrate_kbps_from_url, normalize_platform_media_url, parse_single_format,
-    parse_ytdlp_playlist_metadata, select_compatible_audio_and_container, MediaResolver,
-    ParsedRawFormat,
+    extract_bitrate_kbps_from_url, is_known_platform_domain, normalize_platform_media_url,
+    parse_single_format, parse_ytdlp_playlist_metadata, select_compatible_audio_and_container,
+    MediaResolver, ParsedRawFormat,
 };
 pub use ssrf::validate_safe_media_url;

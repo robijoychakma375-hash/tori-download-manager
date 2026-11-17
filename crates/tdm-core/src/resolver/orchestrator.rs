@@ -1,16 +1,209 @@
+use futures_util::stream::{self, StreamExt};
 use sha2::Digest;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+use tokio::process::Command;
 use url::Url;
 
 use crate::error::{EngineError, Result};
-use crate::hls::muxer::silent_command;
 use crate::resolver::discovery::find_streamlink;
 use crate::resolver::models::{
     DownloadCapability, FilesizeType, MediaMetadata, ResolveRequest, ResolvedMediaFormat,
 };
-use crate::resolver::pipeline::MediaResolver;
+use crate::resolver::pipeline::{is_known_platform_domain, MediaResolver};
+use crate::resolver::ssrf::validate_safe_media_url;
+
+/// Overall wall-clock budget for resolving known video platforms (well inside the 32s browser extension timeout).
+pub const TOTAL_PLATFORM_RESOLVE_BUDGET: Duration = Duration::from_secs(26);
+/// Overall wall-clock budget for resolving generic webpages and candidate streams.
+pub const TOTAL_GENERIC_RESOLVE_BUDGET: Duration = Duration::from_secs(22);
+/// Maximum budget allotted to the bounded browser candidate sweep.
+pub const CANDIDATE_SWEEP_BUDGET: Duration = Duration::from_secs(8);
+/// Per-candidate HTTP HEAD/GET/manifest probe timeout.
+pub const CANDIDATE_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
+/// Maximum time allowed for downloading HTML during webpage scraping fallback.
+pub const HTML_FETCH_TIMEOUT: Duration = Duration::from_secs(6);
+/// Maximum unique sanitized candidates probed per resolve request.
+pub const MAX_DISCOVERY_CANDIDATES: usize = 8;
+/// Maximum concurrent candidate probes in flight.
+pub const MAX_CANDIDATE_CONCURRENCY: usize = 3;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CandidateFilterReport {
+    pub kept: Vec<String>,
+    pub dropped_non_url: usize,
+    pub dropped_duplicate: usize,
+    pub dropped_segment_or_embed: usize,
+    pub dropped_over_limit: usize,
+}
+
+impl CandidateFilterReport {
+    pub fn total_dropped(&self) -> usize {
+        self.dropped_non_url
+            + self.dropped_duplicate
+            + self.dropped_segment_or_embed
+            + self.dropped_over_limit
+    }
+}
+
+/// Redacts query parameter values and non-URL fragments for diagnostic logging without leaking tokens.
+pub fn redact_url_for_log(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Ok(parsed) = Url::parse(trimmed) {
+        let scheme = parsed.scheme();
+        if (scheme == "http" || scheme == "https") && parsed.host_str().is_some() {
+            let host = parsed.host_str().unwrap_or("");
+            let port_str = parsed
+                .port()
+                .map(|p| format!(":{}", p))
+                .unwrap_or_default();
+            let path = parsed.path();
+            let q_count = parsed.query_pairs().count();
+            if q_count > 0 {
+                return format!("{}://{}{}{}?[{}q]", scheme, host, port_str, path, q_count);
+            }
+            return format!("{}://{}{}{}", scheme, host, port_str, path);
+        }
+    }
+    format!("<non-url:len={}>", trimmed.len())
+}
+
+fn has_direct_media_or_manifest_ext(path_lower: &str) -> bool {
+    const MEDIA_EXTS: &[&str] = &[
+        ".mp4", ".m4v", ".webm", ".mkv", ".mov", ".avi", ".flv", ".wmv", ".ts", ".3gp", ".ogv",
+        ".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus", ".weba", ".wma", ".m3u8", ".mpd",
+    ];
+    MEDIA_EXTS.iter().any(|ext| path_lower.ends_with(ext))
+}
+
+fn is_transient_or_unusable_candidate(parsed: &Url, exclude_platform_pages: bool) -> bool {
+    let host_lower = parsed.host_str().unwrap_or("").to_lowercase();
+    let path_lower = parsed.path().to_lowercase();
+
+    const IGNORED_ASSET_EXTS: &[&str] = &[
+        ".m4s", ".cmfv", ".cmfa", ".init", ".vtt", ".srt", ".ttml", ".dfxp", ".jpg", ".jpeg",
+        ".png", ".webp", ".gif", ".svg", ".ico", ".css", ".js", ".json", ".xml", ".woff", ".woff2",
+        ".ttf", ".otf", ".pdf", ".zip", ".html", ".htm",
+    ];
+    if IGNORED_ASSET_EXTS.iter().any(|ext| path_lower.ends_with(ext)) {
+        return true;
+    }
+
+    if path_lower.contains("/frag-")
+        || path_lower.contains("/segment-")
+        || path_lower.contains("/chunk-")
+        || path_lower.contains("/init-")
+    {
+        return true;
+    }
+
+    // Ephemeral YouTube/Google CDN playback chunks lack muxed audio/video metadata and belong to the platform extractor
+    if (host_lower == "googlevideo.com" || host_lower.ends_with(".googlevideo.com"))
+        && path_lower.contains("videoplayback")
+    {
+        return true;
+    }
+
+    // Byte-range segment requests captured during MSE playback
+    if parsed
+        .query_pairs()
+        .any(|(k, _)| k.eq_ignore_ascii_case("range") || k.eq_ignore_ascii_case("bytestart"))
+    {
+        return true;
+    }
+
+    // Skip non-direct platform URLs (e.g. YouTube /embed/ iframe meta tags) during raw candidate sweeps
+    if exclude_platform_pages
+        && is_known_platform_domain(parsed.as_str())
+        && !has_direct_media_or_manifest_ext(&path_lower)
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Filters, deduplicates, and caps extension or HTML-discovered media candidates before network probing.
+pub fn sanitize_candidate_urls(
+    raw_candidates: &[String],
+    primary_url: &str,
+    max_count: usize,
+    exclude_platform_pages: bool,
+) -> CandidateFilterReport {
+    let mut report = CandidateFilterReport::default();
+    let mut seen = HashSet::new();
+    let primary_trim = primary_url.trim();
+    if !primary_trim.is_empty() {
+        seen.insert(primary_trim.to_string());
+    }
+
+    for raw in raw_candidates {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            report.dropped_non_url += 1;
+            continue;
+        }
+
+        let parsed = match Url::parse(trimmed) {
+            Ok(u) if (u.scheme() == "http" || u.scheme() == "https") && u.host_str().is_some() => {
+                u
+            }
+            _ => {
+                report.dropped_non_url += 1;
+                continue;
+            }
+        };
+
+        if !seen.insert(trimmed.to_string()) {
+            report.dropped_duplicate += 1;
+            continue;
+        }
+
+        if is_transient_or_unusable_candidate(&parsed, exclude_platform_pages) {
+            report.dropped_segment_or_embed += 1;
+            continue;
+        }
+
+        if report.kept.len() >= max_count {
+            report.dropped_over_limit += 1;
+            continue;
+        }
+
+        report.kept.push(trimmed.to_string());
+    }
+
+    report
+}
+
+/// Identifies definitive platform extractor failures (auth/DRM/unavailable/rate-limit/timeout)
+/// that should be returned directly instead of being masked by generic HTML fallback errors.
+pub fn is_definitive_platform_error(err_msg: &str) -> bool {
+    let lower = err_msg.to_lowercase();
+    lower.contains("drm")
+        || lower.contains("protected")
+        || lower.contains("plex.tv")
+        || lower.contains("private video")
+        || lower.contains("this video is private")
+        || lower.contains("sign in")
+        || lower.contains("login required")
+        || lower.contains("requires authentication")
+        || lower.contains("members-only")
+        || lower.contains("age-restricted")
+        || lower.contains("forbidden")
+        || lower.contains("http error 403")
+        || lower.contains("rate limit")
+        || lower.contains("too many requests")
+        || lower.contains("429")
+        || lower.contains("video unavailable")
+        || lower.contains("unavailable")
+        || lower.contains("does not exist")
+        || lower.contains("has been removed")
+        || lower.contains("copyright")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct HtmlScrapedMetadata {
@@ -359,18 +552,27 @@ pub async fn probe_streamlink(
         },
     };
 
-    let url_owned = url.to_string();
-    let output_res = tokio::time::timeout(
-        timeout,
-        tokio::task::spawn_blocking(move || {
-            silent_command(bin).arg("--json").arg(&url_owned).output()
-        }),
-    )
-    .await
-    .map_err(|_| EngineError::Other("Streamlink probe timed out".to_string()))?
-    .map_err(|e| EngineError::Other(format!("Streamlink process failure: {}", e)))?;
+    let mut cmd = Command::new(&bin);
+    cmd.arg("--json")
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
 
-    let output = output_res.map_err(EngineError::Io)?;
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| EngineError::Other(format!("Streamlink process failure: {}", e)))?;
+
+    let output = tokio::time::timeout(timeout, child.wait_with_output())
+        .await
+        .map_err(|_| EngineError::Other("Streamlink probe timed out".to_string()))?
+        .map_err(EngineError::Io)?;
     if !output.status.success() {
         return Ok(vec![]);
     }
@@ -505,6 +707,92 @@ impl Default for DiscoveryOrchestrator {
     }
 }
 
+async fn probe_single_candidate(
+    resolver: &MediaResolver,
+    cand_url: String,
+    probe_timeout: Duration,
+    allow_platform_subresolve: bool,
+) -> Option<MediaMetadata> {
+    if probe_timeout.is_zero() {
+        return None;
+    }
+
+    let safe_url = validate_safe_media_url(&cand_url).await.ok()?;
+    let safe_str = safe_url.as_str();
+    let lower = safe_str.to_lowercase();
+
+    let probe_fut = async {
+        if lower.contains(".m3u8") {
+            resolver.probe_direct_hls(safe_str).await
+        } else if lower.contains(".mpd") {
+            resolver.probe_direct_dash(safe_str).await
+        } else {
+            match resolver.probe_direct_media(safe_str).await {
+                Ok(m) => Ok(m),
+                Err(e) if allow_platform_subresolve && is_known_platform_domain(safe_str) => {
+                    resolver
+                        .resolve_with_options_budget(safe_str, false, Some(probe_timeout))
+                        .await
+                        .map_err(|_| e)
+                }
+                Err(e) => Err(e),
+            }
+        }
+    };
+
+    match tokio::time::timeout(probe_timeout, probe_fut).await {
+        Ok(Ok(meta)) if !meta.formats.is_empty() => Some(meta),
+        _ => None,
+    }
+}
+
+async fn probe_candidates_bounded(
+    resolver: &MediaResolver,
+    candidates: Vec<String>,
+    sweep_budget: Duration,
+    per_probe_timeout: Duration,
+    allow_platform_subresolve: bool,
+) -> Vec<MediaMetadata> {
+    if candidates.is_empty() || sweep_budget.is_zero() {
+        return Vec::new();
+    }
+
+    let effective_probe = per_probe_timeout.min(sweep_budget);
+    let mut results = Vec::new();
+    let collect_fut = async {
+        let mut stream = stream::iter(candidates.into_iter().map(|cand| {
+            probe_single_candidate(resolver, cand, effective_probe, allow_platform_subresolve)
+        }))
+        .buffer_unordered(MAX_CANDIDATE_CONCURRENCY);
+
+        while let Some(item) = stream.next().await {
+            if let Some(meta) = item {
+                results.push(meta);
+            }
+        }
+    };
+
+    let _ = tokio::time::timeout(sweep_budget, collect_fut).await;
+    results
+}
+
+fn merge_discovered_metadata(
+    metas: Vec<MediaMetadata>,
+    discovered_title: &mut Option<String>,
+    discovered_thumb: &mut Option<String>,
+    discovered_formats: &mut Vec<ResolvedMediaFormat>,
+) {
+    for meta in metas {
+        if discovered_title.is_none() && !meta.title.is_empty() && meta.title != "Direct Download" {
+            *discovered_title = Some(meta.title);
+        }
+        if discovered_thumb.is_none() && meta.thumbnail_url.is_some() {
+            *discovered_thumb = meta.thumbnail_url;
+        }
+        discovered_formats.extend(meta.formats);
+    }
+}
+
 impl DiscoveryOrchestrator {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
@@ -515,54 +803,175 @@ impl DiscoveryOrchestrator {
         Self { client }
     }
 
-    /// Resolves media across multiple discovery strategies with bounded concurrency.
+    /// Resolves media across multiple discovery strategies with platform-first prioritization,
+    /// bounded candidate probing, SSRF enforcement, and overall deadline enforcement.
     pub async fn resolve_multi_strategy(
         &self,
         resolver: &MediaResolver,
         req: &ResolveRequest,
     ) -> Result<MediaMetadata> {
-        let raw_url = req.url.trim();
-        let safe_url = crate::resolver::ssrf::validate_safe_media_url(raw_url).await?;
-        let raw_url = safe_url.as_str();
+        self.resolve_multi_strategy_with_budget(resolver, req, None)
+            .await
+    }
 
-        // 1. If explicit browser candidates were provided (from DOM or network request interception),
-        // probe them first before falling back to heavy scraping!
+    /// Resolves media with an explicit total deadline override (useful for deterministic budget tests).
+    pub async fn resolve_multi_strategy_with_budget(
+        &self,
+        resolver: &MediaResolver,
+        req: &ResolveRequest,
+        total_budget_override: Option<Duration>,
+    ) -> Result<MediaMetadata> {
+        let request_start = Instant::now();
+        let raw_url = req.url.trim();
+        let safe_url = validate_safe_media_url(raw_url).await?;
+        let raw_url = safe_url.as_str();
+        let redacted_url = redact_url_for_log(raw_url);
+
+        let is_platform = is_known_platform_domain(raw_url);
+        let default_budget = if is_platform {
+            TOTAL_PLATFORM_RESOLVE_BUDGET
+        } else {
+            TOTAL_GENERIC_RESOLVE_BUDGET
+        };
+        let total_budget = total_budget_override.unwrap_or(default_budget);
+        let remaining_budget = || total_budget.saturating_sub(request_start.elapsed());
+
         let mut discovered_formats = Vec::new();
         let mut discovered_title = req.page_title.clone();
         let mut discovered_thumb = req.thumbnail_url.clone();
+        let mut platform_err: Option<EngineError> = None;
 
-        for cand_url in &req.candidates {
-            let cand_trim = cand_url.trim();
-            if cand_trim.is_empty() || cand_trim.starts_with("blob:") {
-                continue;
+        // Stage timings for structured diagnostic logs
+        let mut platform_ms: u128 = 0;
+        let mut candidate_ms: u128 = 0;
+        let mut html_ms: u128 = 0;
+        let mut generic_ytdlp_ms: u128 = 0;
+        let mut streamlink_ms: u128 = 0;
+        let mut candidate_report = CandidateFilterReport::default();
+
+        // 1. Platform-first resolution: check cache + canonical platform extractor BEFORE probing
+        //    browser DOM/network candidates, so slow/embed/segment candidates cannot starve platform resolution.
+        if is_platform {
+            let budget = remaining_budget();
+            if budget.is_zero() {
+                tracing::warn!(
+                    url = %redacted_url,
+                    path = "platform",
+                    timeout_source = "total_budget_before_platform",
+                    total_ms = request_start.elapsed().as_millis() as u64,
+                    "Media resolution timed out before platform extractor start"
+                );
+                return Err(EngineError::Other(format!(
+                    "Media resolution timed out after {} seconds.",
+                    total_budget.as_secs()
+                )));
             }
-            let res = if cand_trim.contains(".m3u8") {
-                resolver.probe_direct_hls(cand_trim).await
-            } else if cand_trim.contains(".mpd") {
-                resolver.probe_direct_dash(cand_trim).await
-            } else {
-                match resolver.probe_direct_media(cand_trim).await {
-                    Ok(m) => Ok(m),
-                    Err(_) => resolver.resolve(cand_trim).await,
+
+            let stage_start = Instant::now();
+            let res = tokio::time::timeout(
+                budget,
+                resolver.resolve_with_options_budget(raw_url, req.force_refresh, Some(budget)),
+            )
+            .await;
+            platform_ms = stage_start.elapsed().as_millis();
+
+            match res {
+                Ok(Ok(meta)) => {
+                    tracing::info!(
+                        url = %redacted_url,
+                        path = "platform",
+                        cache_hit = meta.is_cached.unwrap_or(false),
+                        candidates_total = req.candidates.len(),
+                        formats = meta.formats.len(),
+                        platform_ms = platform_ms as u64,
+                        total_ms = request_start.elapsed().as_millis() as u64,
+                        "Media resolution completed via platform pipeline"
+                    );
+                    return Ok(meta);
                 }
-            };
-            if let Ok(meta) = res {
-                if discovered_title.is_none()
-                    && !meta.title.is_empty()
-                    && meta.title != "Direct Download"
-                {
-                    discovered_title = Some(meta.title);
+                Err(_) => {
+                    tracing::warn!(
+                        url = %redacted_url,
+                        path = "platform",
+                        cache_hit = false,
+                        candidates_total = req.candidates.len(),
+                        platform_ms = platform_ms as u64,
+                        total_ms = request_start.elapsed().as_millis() as u64,
+                        timeout_source = "platform_overall_deadline",
+                        "Platform resolution exceeded overall budget"
+                    );
+                    return Err(EngineError::Other(format!(
+                        "Media resolution timed out after {} seconds.",
+                        total_budget.as_secs()
+                    )));
                 }
-                if discovered_thumb.is_none() && meta.thumbnail_url.is_some() {
-                    discovered_thumb = meta.thumbnail_url;
+                Ok(Err(e)) => {
+                    let err_msg = e.to_string();
+                    if is_definitive_platform_error(&err_msg)
+                        || remaining_budget() < Duration::from_secs(3)
+                    {
+                        tracing::warn!(
+                            url = %redacted_url,
+                            path = "platform",
+                            cache_hit = false,
+                            candidates_total = req.candidates.len(),
+                            platform_ms = platform_ms as u64,
+                            total_ms = request_start.elapsed().as_millis() as u64,
+                            error = %err_msg,
+                            "Platform resolution returned definitive error"
+                        );
+                        return Err(e);
+                    }
+                    platform_err = Some(e);
                 }
-                discovered_formats.extend(meta.formats);
             }
         }
 
-        // 2. If we already found playable formats from passed candidates, synthesize and return!
+        // 2. Bounded candidate probing for generic webpages (or bounded non-definitive platform fallback)
+        if !req.candidates.is_empty() && remaining_budget() >= Duration::from_millis(500) {
+            candidate_report = sanitize_candidate_urls(
+                &req.candidates,
+                raw_url,
+                MAX_DISCOVERY_CANDIDATES,
+                true,
+            );
+
+            if !candidate_report.kept.is_empty() {
+                let sweep_budget = remaining_budget().min(CANDIDATE_SWEEP_BUDGET);
+                let stage_start = Instant::now();
+                let probed = probe_candidates_bounded(
+                    resolver,
+                    candidate_report.kept.clone(),
+                    sweep_budget,
+                    CANDIDATE_PROBE_TIMEOUT,
+                    false,
+                )
+                .await;
+                candidate_ms = stage_start.elapsed().as_millis();
+
+                merge_discovered_metadata(
+                    probed,
+                    &mut discovered_title,
+                    &mut discovered_thumb,
+                    &mut discovered_formats,
+                );
+            }
+        }
+
         if !discovered_formats.is_empty() {
             let ranked = deduplicate_and_rank_formats(discovered_formats);
+            tracing::info!(
+                url = %redacted_url,
+                path = if is_platform { "platform_fallback_candidates" } else { "generic_candidates" },
+                candidates_total = req.candidates.len(),
+                candidates_kept = candidate_report.kept.len(),
+                candidates_dropped = candidate_report.total_dropped(),
+                formats = ranked.len(),
+                platform_ms = platform_ms as u64,
+                candidate_ms = candidate_ms as u64,
+                total_ms = request_start.elapsed().as_millis() as u64,
+                "Media resolution completed via bounded candidate discovery"
+            );
             return Ok(MediaMetadata {
                 source_url: raw_url.to_string(),
                 webpage_url: raw_url.to_string(),
@@ -578,97 +987,134 @@ impl DiscoveryOrchestrator {
             });
         }
 
-        let is_platform = crate::resolver::pipeline::is_known_platform_domain(raw_url);
+        // 3. Generic webpage strategies: HTML scraping -> generic yt-dlp -> bounded Streamlink
+        if !is_platform && (raw_url.starts_with("http://") || raw_url.starts_with("https://")) {
+            let rem = remaining_budget();
+            if rem >= Duration::from_secs(2) {
+                let stage_start = Instant::now();
+                let fetch_budget = rem.min(HTML_FETCH_TIMEOUT);
+                let fetch_fut = self
+                    .client
+                    .get(raw_url)
+                    .header(
+                        "User-Agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TORI/2.0",
+                    )
+                    .send();
 
-        // 3. For known platform domains (YouTube, TikTok, Facebook, etc.), try standard platform resolver pipeline first
-        if is_platform {
-            match resolver
-                .resolve_with_options(raw_url, req.force_refresh)
-                .await
-            {
-                Ok(meta) => return Ok(meta),
-                Err(e) => {
-                    // If it's a DRM protected platform, do not attempt generic bypasses
-                    let err_msg = e.to_string();
-                    if err_msg.contains("DRM")
-                        || err_msg.contains("protected")
-                        || err_msg.contains("plex.tv")
+                if let Ok(Ok(resp)) = tokio::time::timeout(fetch_budget, fetch_fut).await {
+                    if let Ok(html) = tokio::time::timeout(
+                        remaining_budget().min(HTML_FETCH_TIMEOUT),
+                        resp.text(),
+                    )
+                    .await
+                    .unwrap_or(Ok(String::new()))
                     {
-                        return Err(e);
-                    }
-                }
-            }
-        }
-
-        // 4. Try HTML metadata extraction if raw_url is an HTTP/HTTPS webpage
-        if raw_url.starts_with("http://") || raw_url.starts_with("https://") {
-            if let Ok(resp) = self
-                .client
-                .get(raw_url)
-                .header(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TORI/2.0",
-                )
-                .send()
-                .await
-            {
-                if let Ok(html) = resp.text().await {
-                    let scraped = extract_html_media_candidates(&html, raw_url);
-                    if discovered_title.is_none() {
-                        discovered_title = scraped.title;
-                    }
-                    if discovered_thumb.is_none() {
-                        discovered_thumb = scraped.thumbnail_url;
-                    }
-
-                    for media_url in scraped.media_urls {
-                        let res = if media_url.contains(".m3u8") {
-                            resolver.probe_direct_hls(&media_url).await
-                        } else if media_url.contains(".mpd") {
-                            resolver.probe_direct_dash(&media_url).await
-                        } else {
-                            match resolver.probe_direct_media(&media_url).await {
-                                Ok(m) => Ok(m),
-                                Err(_) => resolver.resolve(&media_url).await,
+                        if !html.is_empty() {
+                            let scraped = extract_html_media_candidates(&html, raw_url);
+                            if discovered_title.is_none() {
+                                discovered_title = scraped.title;
                             }
-                        };
-                        if let Ok(meta) = res {
-                            discovered_formats.extend(meta.formats);
+                            if discovered_thumb.is_none() {
+                                discovered_thumb = scraped.thumbnail_url;
+                            }
+
+                            let html_report = sanitize_candidate_urls(
+                                &scraped.media_urls,
+                                raw_url,
+                                MAX_DISCOVERY_CANDIDATES,
+                                false,
+                            );
+                            if !html_report.kept.is_empty()
+                                && remaining_budget() >= Duration::from_millis(500)
+                            {
+                                let sweep_budget = remaining_budget().min(CANDIDATE_SWEEP_BUDGET);
+                                let probed = probe_candidates_bounded(
+                                    resolver,
+                                    html_report.kept,
+                                    sweep_budget,
+                                    CANDIDATE_PROBE_TIMEOUT,
+                                    true,
+                                )
+                                .await;
+                                merge_discovered_metadata(
+                                    probed,
+                                    &mut discovered_title,
+                                    &mut discovered_thumb,
+                                    &mut discovered_formats,
+                                );
+                            }
                         }
                     }
                 }
+                html_ms = stage_start.elapsed().as_millis();
             }
         }
 
-        // 5. If not a platform domain and HTML scraping found no direct media, fall back to yt-dlp
-        if !is_platform && discovered_formats.is_empty() {
-            match resolver
-                .resolve_with_options(raw_url, req.force_refresh)
-                .await
-            {
-                Ok(meta) => return Ok(meta),
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    if err_msg.contains("DRM")
-                        || err_msg.contains("protected")
-                        || err_msg.contains("plex.tv")
-                    {
-                        return Err(e);
-                    }
+        if !is_platform
+            && discovered_formats.is_empty()
+            && remaining_budget() >= Duration::from_secs(2)
+        {
+            let stage_start = Instant::now();
+            let rem = remaining_budget();
+            let ytdlp_res = tokio::time::timeout(
+                rem,
+                resolver.resolve_with_options_budget(raw_url, req.force_refresh, Some(rem)),
+            )
+            .await;
+            generic_ytdlp_ms = stage_start.elapsed().as_millis();
+
+            if let Ok(Ok(meta)) = ytdlp_res {
+                tracing::info!(
+                    url = %redacted_url,
+                    path = "generic_ytdlp",
+                    cache_hit = meta.is_cached.unwrap_or(false),
+                    candidates_total = req.candidates.len(),
+                    candidates_kept = candidate_report.kept.len(),
+                    candidates_dropped = candidate_report.total_dropped(),
+                    candidate_ms = candidate_ms as u64,
+                    html_ms = html_ms as u64,
+                    generic_ytdlp_ms = generic_ytdlp_ms as u64,
+                    total_ms = request_start.elapsed().as_millis() as u64,
+                    "Media resolution completed via generic extractor fallback"
+                );
+                return Ok(meta);
+            } else if let Ok(Err(e)) = ytdlp_res {
+                let err_msg = e.to_string();
+                if err_msg.contains("DRM") || err_msg.contains("protected") || err_msg.contains("plex.tv") {
+                    return Err(e);
                 }
             }
         }
 
-        // 5. Try optional Streamlink probe if installed
-        if let Ok(streamlink_formats) =
-            probe_streamlink(raw_url, None, Duration::from_secs(6)).await
+        if !is_platform
+            && discovered_formats.is_empty()
+            && remaining_budget() >= Duration::from_secs(2)
         {
-            discovered_formats.extend(streamlink_formats);
+            let stage_start = Instant::now();
+            let sl_budget = remaining_budget().min(Duration::from_secs(4));
+            if let Ok(streamlink_formats) = probe_streamlink(raw_url, None, sl_budget).await {
+                discovered_formats.extend(streamlink_formats);
+            }
+            streamlink_ms = stage_start.elapsed().as_millis();
         }
 
-        // 6. If any formats were discovered across the multi-strategy sweep, synthesize results!
         if !discovered_formats.is_empty() {
             let ranked = deduplicate_and_rank_formats(discovered_formats);
+            tracing::info!(
+                url = %redacted_url,
+                path = "generic_html_or_streamlink",
+                candidates_total = req.candidates.len(),
+                candidates_kept = candidate_report.kept.len(),
+                candidates_dropped = candidate_report.total_dropped(),
+                candidate_ms = candidate_ms as u64,
+                html_ms = html_ms as u64,
+                generic_ytdlp_ms = generic_ytdlp_ms as u64,
+                streamlink_ms = streamlink_ms as u64,
+                total_ms = request_start.elapsed().as_millis() as u64,
+                formats = ranked.len(),
+                "Media resolution completed via generic discovery fallback"
+            );
             return Ok(MediaMetadata {
                 source_url: raw_url.to_string(),
                 webpage_url: raw_url.to_string(),
@@ -684,7 +1130,34 @@ impl DiscoveryOrchestrator {
             });
         }
 
-        // 7. Terminal classification
+        let timed_out = remaining_budget().is_zero();
+        tracing::warn!(
+            url = %redacted_url,
+            path = if is_platform { "platform" } else { "generic" },
+            candidates_total = req.candidates.len(),
+            candidates_kept = candidate_report.kept.len(),
+            candidates_dropped = candidate_report.total_dropped(),
+            platform_ms = platform_ms as u64,
+            candidate_ms = candidate_ms as u64,
+            html_ms = html_ms as u64,
+            generic_ytdlp_ms = generic_ytdlp_ms as u64,
+            streamlink_ms = streamlink_ms as u64,
+            total_ms = request_start.elapsed().as_millis() as u64,
+            timeout_source = if timed_out { "overall_request_budget" } else { "none" },
+            "Media resolution completed without playable formats"
+        );
+
+        if timed_out {
+            return Err(EngineError::Other(format!(
+                "Media resolution timed out after {} seconds.",
+                total_budget.as_secs()
+            )));
+        }
+
+        if let Some(err) = platform_err {
+            return Err(err);
+        }
+
         Err(EngineError::Other(
             "No supported media stream, HTML5 source, or platform extractor found for this webpage."
                 .to_string(),
