@@ -1469,28 +1469,66 @@ exit 1
     const ffMkvOk = Boolean(ffMkvJob && String(ffMkvJob.target_path).toLowerCase().includes('video') && sha256File(ffMkvJob.target_path) === sha.ffMkv6m);
     record('G294-FF-MKV', 'Firefox built v1.0.9 captures extensionless Content-Disposition MKV into Video/ with exact SHA-256', ffMkvOk, JSON.stringify({ path: ffMkvJob?.target_path }));
 
-    // Firefox Playlist Handoff + PlaylistModal download (non-blocking navigation + bounded poll)
-    await mar.send('WebDriver:ExecuteScript', { script: `window.location.href = arguments[0];`, args: [WATCH_PLAYLIST_URL] });
-    for (let i = 0; i < 60; i++) {
-      await sleep(500);
+    // Firefox Playlist Handoff + PlaylistModal download (wait for YouTube index/themeRefresh settle before atomic click)
+    await mar.send('WebDriver:Navigate', { url: WATCH_PLAYLIST_URL }, 30000);
+    let settledHref = null;
+    let settledAt = 0;
+    let clickedPl = null;
+    const ffPlDeadline = Date.now() + 45000;
+    while (Date.now() < ffPlDeadline) {
+      await sleep(450);
       try {
-        const ready = (await mar.send('WebDriver:ExecuteScript', {
+        const snap = (await mar.send('WebDriver:ExecuteScript', {
           script: `
             const pn = document.querySelector('.tori-mp .tori-pn');
             const pill = document.querySelector('.tori-mp .tori-pill');
             if (pill && (!pn || !pn.classList.contains('on'))) pill.click();
-            return !!document.querySelector('.tori-mp [data-act="open-playlist"]');
+            const btn = document.querySelector('.tori-mp [data-act="open-playlist"]');
+            return {
+              href: location.href,
+              readyState: document.readyState,
+              hasOpenBtn: !!(btn && !btn.disabled),
+            };
           `,
           args: [],
         }, 5000))?.value;
-        if (ready) break;
-      } catch {}
+        if (!snap || snap.readyState !== 'complete' || !snap.hasOpenBtn) {
+          settledHref = null;
+          settledAt = 0;
+          continue;
+        }
+        if (settledHref !== snap.href) {
+          settledHref = snap.href;
+          settledAt = Date.now();
+          continue;
+        }
+        if (Date.now() - settledAt < 900) {
+          continue;
+        }
+        const clickRes = (await mar.send('WebDriver:ExecuteScript', {
+          script: `
+            const btn = document.querySelector('.tori-mp [data-act="open-playlist"]');
+            if (!btn || btn.disabled) return { clicked: false };
+            btn.click();
+            return { clicked: true, href: location.href };
+          `,
+          args: [],
+        }, 5000))?.value;
+        if (clickRes?.clicked) {
+          clickedPl = clickRes;
+          break;
+        }
+        settledHref = null;
+        settledAt = 0;
+      } catch {
+        settledHref = null;
+        settledAt = 0;
+      }
     }
-    await mar.send('WebDriver:ExecuteScript', {
-      script: `document.querySelector('.tori-mp [data-act="open-playlist"]')?.click();`,
-      args: [],
-    });
-    await waitForContext(engBoot.mainCdp, `Boolean(document.getElementById('playlist-modal') && document.querySelectorAll('#playlist-modal input[type="checkbox"]').length >= 3)`, 35000, 'ff-playlist-modal');
+    if (!clickedPl?.clicked) {
+      throw new Error(`Firefox Download Playlist button did not settle/click cleanly (lastHref=${settledHref})`);
+    }
+    await waitForContext(engBoot.mainCdp, `Boolean(document.getElementById('playlist-modal') && document.querySelectorAll('#playlist-modal input[type="checkbox"]').length >= 3)`, 45000, 'ff-playlist-modal');
 
     const beforePl = new Set(((await httpJson({ port: ENG_PORT, reqPath: '/api/v1/downloads', headers: { 'X-Tori-Token': ENG_TOKEN } })).data?.jobs || []).map((j) => j.id));
     await engBoot.mainCdp.evalAsync(`(async () => {
