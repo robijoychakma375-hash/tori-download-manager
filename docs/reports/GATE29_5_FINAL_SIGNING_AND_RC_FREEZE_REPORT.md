@@ -2,8 +2,9 @@
 
 - **Project:** `F:\TORI\final tori download manager`
 - **Target Releases:** Desktop `v1.0.5` (Windows x64), Browser Companion `v1.0.9`
-- **Overall Gate 29.5 Status:** **`PARTIAL READY — SIGNING OR CLEAN-MACHINE VALIDATION PENDING`**
-- **Frozen RC Classification:** **`PARTIAL FREEZE — FIREFOX SIGNING PENDING`**
+- **Gate 29.5 Baseline Status (`checkpoint-gate29_5-partial`):** `PARTIAL READY — SIGNING OR CLEAN-MACHINE VALIDATION PENDING`
+- **Gate 29.5.1 Updated Status:** **`PARTIAL — SIGNED FIREFOX v1.0.9 XPI INTEGRATED; LIVE YOUTUBE FORMAT PICKER BUG (FF109-YT-FMT-01) & CLEAN VM PENDING`**
+- **Frozen RC Classification:** `SIGNED FIREFOX v1.0.9 XPI INTEGRATED — LIVE YOUTUBE FORMAT PICKER FIX & CLEAN VM PENDING`
 - **Publication Actions Taken:** **NONE** (no Git pushes, no GitHub Releases created/modified, public `latest.json` untouched at `1.0.4`, `toridownload.xyz` untouched, no browser store/AMO submissions)
 
 ---
@@ -52,14 +53,14 @@
 - **Signing Workflow Discovery:**
   - Inspected `scripts/integrate_signed_firefox_v1_0_3.js` and environment (`AMO`, `WEB_EXT`, `MOZILLA`, `JWT` variables): no automated AMO API signing credentials are configured; Firefox XPI signing follows a manual operator AMO Developer Hub workflow.
   - Checked `%USERPROFILE%\Downloads`: only historical signed XPIs `1.0.2` through `1.0.7` exist; no signed `v1.0.9` XPI exists.
-  - **Phase 3 Signing Workflow Status:** **`SIGNING READY — AUTHORIZATION REQUIRED`**. Zero AMO uploads attempted.
+  - **Phase 3 Signing Workflow Status:** **Signed by Mozilla AMO** (updated in Gate 29.5.1 after operator-supplied `a70ed17e183648a9bcf4-1.0.9.xpi`).
 - **Pre-Signing Local Validation of Frozen Firefox `v1.0.9` ZIP (`release/v1.0.5-v1.0.9-final-rc/Extensions/tori-companion-v1.0.9-firefox.zip`):**
   - `npx --no-install web-ext lint --source-dir release\v1.0.5-v1.0.9-final-rc\Extensions\tori-companion-v1.0.9-firefox.zip --output json`: **0 errors, 0 notices, 7 pre-existing non-blocking warnings** (5 `UNSAFE_VAR_ASSIGNMENT` on escaped template renders in `popup/popup.js` and `content.js`; 2 `UNSUPPORTED_API` for Chromium-guarded `downloads.onDeterminingFilename` in `background.js`).
   - Archive integrity: `zipfile.testzip() == None`, 42 POSIX forward-slash entries (`\` count = 0), version `1.0.9`, Gecko ID `tori-download-manager@toridm.org`, `strict_min_version: 142.0`, zero `preview.html`/test artifacts, zero `eval`/`Function`/`ghp_`/private keys/remote `<script>` tags.
-- **Phase 4 Signed Firefox `v1.0.9` XPI Verification:** **`NOT TESTED`** (signed `v1.0.9` XPI not yet obtained from Mozilla AMO; zero ZIP-to-XPI faking performed).
+- **Phase 4 Signed Firefox `v1.0.9` XPI Verification (Updated in Gate 29.5.1 — see Section 12):** **`9 PASS, 1 FAIL, 0 TIMEOUT, 0 NOT TESTED`** (`FF109-PKG-01` & `FF109-SIG-01` PASS; `FF109-YT-FMT-01` FAIL due to Desktop/Extension YouTube `googlevideo.com` candidate timeout).
 - **Historical Signed Firefox `v1.0.7` XPI Preserved Untouched:**
   - Path: `release/v1.0.7-extension-rc/a70ed17e183648a9bcf4-1.0.7.xpi` (`90,326` bytes)
-  - Verified SHA-256 before, during, and after Gate 29.5: `b082c8f2f4c8b4ed035fab77d9569622737defb3e02279f20073d3404dda4fa0`
+  - Verified SHA-256 before, during, and after Gate 29.5 & Gate 29.5.1: `b082c8f2f4c8b4ed035fab77d9569622737defb3e02279f20073d3404dda4fa0`
 
 ---
 
@@ -142,10 +143,11 @@ All files verified byte-identical after final cleanup against `release/v1.0.5-v1
 ### `Extensions/`
 - `tori-companion-v1.0.9-chromium.zip` (`85,049` B): `dbc345b513795506c30c8300683d99fe1bd4b14d14c012663808bf7a406089ac`
 - `tori-companion-v1.0.9-firefox.zip` (`85,800` B): `b38468444094aa15ee1a7fef16022399550bafbba9d46c915d5beb2c2d02632d`
-- *(Signed `v1.0.9` `.xpi` intentionally absent pending AMO submission. Preserved `release/v1.0.7-extension-rc/a70ed17e183648a9bcf4-1.0.7.xpi` intact: `b082c8f2f4c8b4ed035fab77d9569622737defb3e02279f20073d3404dda4fa0`.)*
+- `a70ed17e183648a9bcf4-1.0.9.xpi` (`101,231` B, Mozilla AMO-signed): `d4e8d6e585ba6dfaf841eb6b37f2ee27beae1cec55badbbe0dd12960ad5943ec`
+- *(Historical signed `release/v1.0.7-extension-rc/a70ed17e183648a9bcf4-1.0.7.xpi` preserved intact: `b082c8f2f4c8b4ed035fab77d9569622737defb3e02279f20073d3404dda4fa0`.)*
 
 ### `Metadata/`
-- `FREEZE_STATUS.txt` (`PARTIAL FREEZE — FIREFOX SIGNING PENDING`)
+- `FREEZE_STATUS.txt` (`SIGNED FIREFOX v1.0.9 XPI INTEGRATED — LIVE YOUTUBE FORMAT PICKER FIX & CLEAN VM PENDING`)
 - `SHA256SUMS.txt`
 - `RELEASE_MANIFEST.json`
 - `BUILD_METADATA.json`
@@ -175,12 +177,13 @@ All files verified byte-identical after final cleanup against `release/v1.0.5-v1
 
 ## 10. Blockers & Operator Steps Before Gate 30 Publication
 
-1. **Firefox Companion `v1.0.9` AMO Signing (Required Blocker):**
-   - Authorize and submit `release/v1.0.5-v1.0.9-final-rc/Extensions/tori-companion-v1.0.9-firefox.zip` (SHA-256 `b38468444094aa15ee1a7fef16022399550bafbba9d46c915d5beb2c2d02632d`) via Mozilla Add-ons Developer Hub under add-on ID `tori-download-manager@toridm.org` (full guide in `release/v1.0.5-v1.0.9-final-rc/Metadata/FIREFOX_AMO_SIGNING_INSTRUCTIONS.md`).
-   - Verify the returned signed `.xpi` (`META-INF/mozilla.rsa`, `version === "1.0.9"`) and install-test it permanently in Firefox under `xpinstall.signatures.required = true`.
-2. **Independent Clean Windows VM Validation (Pending Host VM):**
-   - Execute the manual clean Windows 10/11 x64 VM verification pass against frozen Desktop `v1.0.5` + Chromium/signed Firefox `v1.0.9`.
-3. **Optional Commercial Windows Authenticode Signing:**
+1. **Firefox Companion `v1.0.9` AMO Signing (Completed in Gate 29.5.1):**
+   - Mozilla AMO-signed `a70ed17e183648a9bcf4-1.0.9.xpi` (`d4e8d6e585ba6dfaf841eb6b37f2ee27beae1cec55badbbe0dd12960ad5943ec`) verified and integrated into `release/v1.0.5-v1.0.9-final-rc/Extensions/`.
+2. **Resolve Live YouTube Firefox Format Picker Resolution Timeout (`FF109-YT-FMT-01` Failure):**
+   - Fix `crates/tdm-core/src/resolver/orchestrator.rs#L534-L589` so `is_known_platform_domain` (`yt-dlp` + `format_metadata_cache`) executes **before** sequential `req.candidates` (`googlevideo.com`) fallback probing (and re-run the release build + Minisign `.sig` if updating Desktop binaries).
+3. **Independent Clean Windows VM Validation (Pending Host VM):**
+   - Execute the manual clean Windows 10/11 x64 VM verification pass against Desktop `v1.0.5` + Chromium/`a70ed17e183648a9bcf4-1.0.9.xpi`.
+4. **Optional Commercial Windows Authenticode Signing:**
    - Apply OV/EV Authenticode signing before Gate 30 public distribution if SmartScreen warning suppression is desired (note: signing `.exe` alters its hash and requires re-signing `.sig` + updating `latest.v1.0.5.draft.json` and `SHA256SUMS.txt`).
 
 ---
@@ -193,4 +196,44 @@ All files verified byte-identical after final cleanup against `release/v1.0.5-v1
 - `scripts/verify_gate27_8_playlist_e2e.js#L43,L50-L53,L642-L646,L1456-L1489`: Pointed at `v1.0.9` RC dir, bumped `loadUnpacked` timeout to `25000ms`, updated ports to `2492x`, cleaned Step 6 tab focus & added `!btn` diagnostics.
 - `scripts/verify_gate27_8_large_mkv_and_classification.js#L42-L46,L999-L1011`: Updated ports to `2491x` and guarded Edge `PING_DESKTOP` readiness.
 - `scripts/verify_gate29_1_idm_desktop_ui.js#L29-L31`, `scripts/verify_gate29_2_idm_progress_window.js#L33-L35,L1010-L1016`, `scripts/verify_gate29_3_idm_extension_ui.js#L43-L47`, `scripts/verify_gate29_4_final_integration.js#L67-L74`: Shifted loopback test ports out of WinNAT excluded range `19915..20214` into `249xx`; spaced `c1.click()`/`c2.click()` in Gate 29.2 by `120ms`.
-- `docs/reports/GATE29_5_FINAL_SIGNING_AND_RC_FREEZE_REPORT.md`: This Gate 29.5 acceptance report.
+- `docs/reports/GATE29_5_FINAL_SIGNING_AND_RC_FREEZE_REPORT.md`: This Gate 29.5 & Gate 29.5.1 acceptance report.
+- `scripts/verify_gate29_5_1_firefox_signed_v1_0_9.js`: Signed Firefox `v1.0.9` XPI strict enforcement verification & E2E integration script.
+
+---
+
+## 12. Gate 29.5.1 Addendum — Mozilla-Signed Firefox `v1.0.9` XPI Integration (`a70ed17e183648a9bcf4-1.0.9.xpi`)
+
+### Package & Parity Verification
+- **Supplied Paths Verified:**
+  - `.user_uploaded/media_1794909783314_186e51ad.xpi` and `%USERPROFILE%\Downloads\a70ed17e183648a9bcf4-1.0.9.xpi` (`101,231` bytes)
+  - Integrated into `release/v1.0.5-v1.0.9-final-rc/Extensions/a70ed17e183648a9bcf4-1.0.9.xpi`
+  - **SHA-256 Match:** `d4e8d6e585ba6dfaf841eb6b37f2ee27beae1cec55badbbe0dd12960ad5943ec` (`PASS`)
+- **ZIP Integrity, Metadata & Signature Files:**
+  - `zipfile.testzip()` = `None` (0 corrupt entries)
+  - `version`: `"1.0.9"`, `manifest_version`: `3`, `browser_specific_settings.gecko.id`: `"tori-download-manager@toridm.org"`, `strict_min_version`: `"142.0"`
+  - Mozilla AMO `META-INF` signature files present: `META-INF/cose.manifest`, `META-INF/cose.sig`, `META-INF/manifest.mf`, `META-INF/mozilla.rsa`, `META-INF/mozilla.sf`
+- **Content Comparison vs Frozen Unsigned `tori-companion-v1.0.9-firefox.zip` (`META-INF/` excluded):**
+  - `35` application files in both archives (`0` missing, `0` extra).
+  - **`34/35` files 100% byte-for-byte identical**.
+  - **Difference Investigation (`manifest.json`):** `1,584` bytes (signed) vs `1,538` bytes (unsigned); `json.loads(signed) == json.loads(unsigned)` is **`True`** (difference consists solely of Mozilla AMO serialization escaping the em-dash as `\u2014` and pretty-printing single-line `"scripts"`, `"js"`, and `"css"` arrays cleanly across lines). Zero unexpected code or permission deltas.
+
+### Clean Firefox Verification Suite (`node scripts/verify_gate29_5_1_firefox_signed_v1_0_9.js`)
+
+| Check ID | Description | Result | Observed Evidence |
+| :--- | :--- | :--- | :--- |
+| `FF109-PKG-01` | SHA-256, ZIP integrity, `META-INF` signatures, Gecko ID, 34/35 parity + identical parsed manifest | **PASS** | `sha256=d4e8d6e5...943ec`, `v107Sha=b082c8f2...fa0`, `identicalAppFiles=34`, `manifestParsedEqual=true` |
+| `FF109-SIG-01` | Permanent XPI install (`temporary: false`) in clean Firefox profile with `xpinstall.signatures.required=true` | **PASS** | `sigRequiredPref=true`, `version="1.0.9"`, `isActive=true`, `temporarilyInstalled=false`, `signedState=2` (`SIGNEDSTATE_SIGNED`) |
+| `FF109-NATIVE-01` | Native Messaging `INITIATE_PAIRING` & `RECONNECT_DESKTOP` authentication | **PASS** | `pairRes.ok=true`, `nativeHost=true`, paired QA token authenticated |
+| `FF109-CONN-01` | Firefox Popup `Connected` & Options `1.0.9` UI connection | **PASS** | `popConnected=true`, `optVer109=true`, `optPort="24980"` |
+| `FF109-HTTP-01` | HTTP fallback when Firefox `NativeMessagingHosts` manifest points to nonexistent host | **PASS** | `ping.status="ok"`, `mode="http"`, `reconn.status="ok"` |
+| `FF109-PICKER-01` | HTML5 `<video>` overlay detection, IDM Format Picker UI & real MP4 download | **PASS** | `panelOpen=true`, `rowCount=1`, completed MP4 on disk matching SHA-256 |
+| `FF109-MKV-01` | Extensionless `Content-Disposition` MKV interception & `Video/` folder classification | **PASS** | `Firefox_Signed_v109_Acceptance.mkv`, `8,388,608` bytes, exact SHA-256 |
+| `FF109-YT-FMT-01` | Live YouTube watch page quality format resolution in Firefox signed `v1.0.9` | **FAIL** | `"Media resolution timed out (32s)"` on cold & retry; direct `POST /api/v1/media/resolve` with `candidates=[]` succeeded with `status=200`, `fmtCount=24` |
+| `FF109-PLAYLIST-01` | YouTube `Download Playlist` -> Desktop tray restore -> `#playlist-modal` -> real download + Mix rejection | **PASS** | `WING IT! - Blender Open Movie.mkv` (`10,677,366` B, `ffprobe` valid), Mix UI banner `hasMixBanner=true` (`9ms`), Mix API `422` |
+| `FF109-SAFE-01` | Preserved signed `v1.0.7` XPI & OEM SQLite user data untouched | **PASS** | `v107Sha=b082c8f2...fa0`, `oemDownloads=31` unchanged before/after run |
+| *(Clean VM)* | Independent clean Windows 10/11 x64 VM acceptance pass | **NOT TESTED** | No Hyper-V/VirtualBox/VMware/QEMU VM present on host |
+
+### Root-Cause Analysis of `FF109-YT-FMT-01` Failure
+- In [extension/background.js#L2318-L2323](file:///F:/TORI/final%20tori%20download%20manager/extension/background.js#L2318-L2323), `RESOLVE_MEDIA` appends intercepted `tabMediaCache` URLs (`*.googlevideo.com/videoplayback?...` DASH streams captured by Firefox `webRequest` during YouTube autoplay) into `resolvePayload.candidates`.
+- In Desktop `v1.0.5-rc` ([crates/tdm-core/src/resolver/orchestrator.rs#L534-L589](file:///F:/TORI/final%20tori%20download%20manager/crates/tdm-core/src/resolver/orchestrator.rs#L534-L589)), `DiscoveryOrchestrator::resolve_multi_strategy` sequentially probes every `req.candidates` entry (`probe_direct_media` + `resolver.resolve`) **before** evaluating `is_known_platform_domain(raw_url)` (`#L584`) and before querying the SQLite format cache (`pipeline.rs#L106`). This exhausts `background.js`'s 32s HTTP timeout on live YouTube tabs with active DASH streaming.
+- **Checkpoint Decision:** Because `FF109-YT-FMT-01` failed (`9 PASS, 1 FAIL`) and independent clean-machine VM validation remains `NOT TESTED`, Gate 29.5.1 local integration changes are committed cleanly **without** minting a `-verified` tag (`checkpoint-gate29_5_1-verified` withheld pending resolution of `orchestrator.rs` candidate ordering / Desktop `v1.0.5` rebuild-or-hotfix and clean VM test).
