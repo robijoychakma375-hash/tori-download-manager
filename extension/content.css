@@ -100,10 +100,26 @@
   --blue: #ffa3c2;
 }
 
+/* Top-level viewport-synced anchor wrapper (never intercepts clicks outside pill/panel) */
+.tori-anchor-frame {
+  position: fixed !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  overflow: visible !important;
+  pointer-events: none !important;
+  box-sizing: border-box !important;
+  z-index: 1 !important;
+  transform: none !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
 /* Media Overlay Container */
 .tori-mp {
-  position: absolute;
-  z-index: 2147483640;
+  position: absolute !important;
+  z-index: 2147483640 !important;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -111,7 +127,7 @@
   font-size: 13px;
   line-height: 1.3;
   color: var(--txt);
-  pointer-events: auto;
+  pointer-events: none !important;
   user-select: none;
   -webkit-user-select: none;
   width: max-content;
@@ -160,6 +176,7 @@
 .tori-mp .pill {
   all: unset;
   box-sizing: border-box;
+  pointer-events: auto !important;
   cursor: grab;
   touch-action: none;
   display: inline-flex;
@@ -188,6 +205,7 @@
 .tori-pill:focus-visible {
   outline: 2px solid #ffffff;
   outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
 .tori-mp.tori-dragging .tori-pill,
@@ -235,6 +253,7 @@
 .tori-pn,
 .tori-mp .panel {
   display: none;
+  pointer-events: none;
   width: 356px;
   max-width: calc(100vw - 24px);
   background: var(--win);
@@ -249,6 +268,7 @@
 .tori-pn.on,
 .tori-mp .panel.on {
   display: block;
+  pointer-events: auto !important;
 }
 
 /* Panel Header (.ph) */

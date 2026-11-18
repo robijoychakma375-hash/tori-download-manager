@@ -543,15 +543,24 @@ function normalizePlatformUrl(rawUrl) {
         };
       }
     } else if (host.includes('instagram.com')) {
-      const match = path.match(/\/(?:reel|reels|p)\/([^/?#]+)/i);
-      if (match && match[1]) {
+      const match = path.match(/\/(?:[a-zA-Z0-9._]+\/)?(reel|reels|p|tv)\/([^/?#]+)/i);
+      const reserved = new Set(['audio', 'effects', 'videos', 'explore', 'reels', 'reel', 'p', 'tv']);
+      if (match && match[2] && !reserved.has(match[2].toLowerCase())) {
+        const rawKind = match[1].toLowerCase();
+        const kind = rawKind === 'p' ? 'p' : rawKind === 'tv' ? 'tv' : 'reel';
         return {
-          url: `https://www.instagram.com/reel/${match[1]}/`,
-          videoId: match[1],
+          url: `https://www.instagram.com/${kind}/${match[2]}/`,
+          videoId: match[2],
           isSpecific: true,
           platform: 'instagram',
         };
       }
+      return {
+        url: `${u.origin}${path}`,
+        videoId: '',
+        isSpecific: false,
+        platform: 'instagram',
+      };
     } else if (host.includes('vimeo.com') && !host.includes('player.vimeo.com')) {
       const segments = path.split('/').filter(Boolean);
       const last = segments[segments.length - 1];
@@ -775,7 +784,7 @@ async function callDesktopApi(
       } else {
         errorMsg = `Request timed out after ${Math.round(timeoutDuration / 1000)}s`;
       }
-    } else if (err.message && err.message.includes('Failed to fetch')) {
+    } else if (err && (err.name === 'TypeError' || (err.message && (err.message.includes('Failed to fetch') || err.message.includes('NetworkError'))))) {
       // Auto-recovery: if connection failed on the default/configured port, try candidate ports or auto-launch
       if (!isRetry && !customPort) {
         const now = Date.now();
@@ -2274,18 +2283,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     const norm = normalizePlatformUrl(rawUrl);
-    if (norm.platform === 'facebook' && !norm.isSpecific) {
+    const tabIdInitial = sender.tab?.id || message.tabId;
+    const preCachedStreams = tabIdInitial ? (tabMediaCache.get(tabIdInitial) || []) : [];
+    const hasPreCandidates =
+      (Array.isArray(message.candidates) && message.candidates.length > 0) ||
+      preCachedStreams.some((c) => c && c.url && !c.url.startsWith('blob:') && !c.url.startsWith('data:'));
+
+    if ((norm.platform === 'facebook' || norm.platform === 'instagram') && !norm.isSpecific && !hasPreCandidates) {
+      const platName = norm.platform === 'instagram' ? 'Instagram' : 'Facebook';
+      const exampleHint = norm.platform === 'instagram' ? 'instagram.com/reel/<id>' : 'facebook.com/reel/<id>';
       sendResponse({
         status: 'error',
         code: 'SPECIFIC_MEDIA_REQUIRED',
-        message: 'Facebook feed or homepage does not contain a specific Reel ID. Please provide a direct Reel or Video URL (e.g. facebook.com/reel/<id>).',
+        message: `${platName} feed or homepage does not expose a specific media ID. Open the specific Reel or Post (${exampleHint}) or play the video to capture its direct stream.`,
         generation,
       });
       return false;
     }
 
     const targetUrl = norm.url || rawUrl;
-    const isPlatform = isManagedPlatform(targetUrl) || norm.platform !== 'generic';
+    const isSpecificSocial = (norm.platform === 'facebook' || norm.platform === 'instagram') ? norm.isSpecific : true;
+    const isPlatform = (isSpecificSocial && isManagedPlatform(targetUrl)) || (norm.platform !== 'generic' && norm.isSpecific);
     const correlationId = message.correlation_id || ('req_res_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
     const customTimeout = isPlatform ? 32000 : 12000;
     const startTime = Date.now();

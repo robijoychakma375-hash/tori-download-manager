@@ -427,7 +427,7 @@
   }
 
   function populateForm() {
-    const manifestVer = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.0.9';
+    const manifestVer = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.0.10';
     if ($('nav-ver')) $('nav-ver').textContent = `v${manifestVer}`;
     if ($('ab-ver')) $('ab-ver').textContent = manifestVer;
     if ($('ab-ver2')) $('ab-ver2').textContent = manifestVer;

@@ -249,15 +249,24 @@ function normalizePlatformUrl(rawUrl) {
         };
       }
     } else if (host.includes('instagram.com')) {
-      const match = path.match(/\/(?:reel|reels|p)\/([^/?#]+)/i);
-      if (match && match[1]) {
+      const match = path.match(/\/(?:[a-zA-Z0-9._]+\/)?(reel|reels|p|tv)\/([^/?#]+)/i);
+      const reserved = new Set(['audio', 'effects', 'videos', 'explore', 'reels', 'reel', 'p', 'tv']);
+      if (match && match[2] && !reserved.has(match[2].toLowerCase())) {
+        const rawKind = match[1].toLowerCase();
+        const kind = rawKind === 'p' ? 'p' : rawKind === 'tv' ? 'tv' : 'reel';
         return {
-          url: `https://www.instagram.com/reel/${match[1]}/`,
-          videoId: match[1],
+          url: `https://www.instagram.com/${kind}/${match[2]}/`,
+          videoId: match[2],
           isSpecific: true,
           platform: 'instagram',
         };
       }
+      return {
+        url: `${u.origin}${path}`,
+        videoId: '',
+        isSpecific: false,
+        platform: 'instagram',
+      };
     } else if (host.includes('vimeo.com') && !host.includes('player.vimeo.com')) {
       const segments = path.split('/').filter(Boolean);
       const last = segments[segments.length - 1];
@@ -398,41 +407,48 @@ function normalizePlatformUrl(rawUrl) {
     if (videoEl && videoEl.title) return cleanMediaTitle(videoEl.title, fallbackId);
     if (videoEl && videoEl.getAttribute('aria-label')) return cleanMediaTitle(videoEl.getAttribute('aria-label'), fallbackId);
 
-    // Look for caption in enclosing article or reel container
-    const container = videoEl?.closest?.('[role="article"], [data-pagelet*="Reel"], [data-pagelet*="FeedUnit"], .html5-video-player');
+    // Look for caption in enclosing article, dialog, or reel container
+    const container = videoEl?.closest?.('article, [role="article"], [role="dialog"], [data-pagelet*="Reel"], [data-pagelet*="FeedUnit"], .html5-video-player');
     if (container) {
       const heading = container.querySelector('h1, h2, span[dir="auto"]');
       if (heading && heading.textContent.trim()) {
         const text = heading.textContent.trim();
-        if (text.length > 3 && !/^Facebook\b/i.test(text)) {
+        if (text.length > 3 && !/^(Facebook|Instagram)\b/i.test(text)) {
           return cleanMediaTitle(text, fallbackId);
         }
       }
     }
 
     const h1 = document.querySelector('h1');
-    if (h1 && h1.textContent.trim() && !/^Facebook\b/i.test(h1.textContent.trim())) {
+    if (h1 && h1.textContent.trim() && !/^(Facebook|Instagram)\b/i.test(h1.textContent.trim())) {
       return cleanMediaTitle(h1.textContent.trim(), fallbackId);
     }
 
     if (document.title) {
       return cleanMediaTitle(document.title, fallbackId);
     }
-    return fallbackId ? `Facebook Reel · ${fallbackId}` : 'Video Media';
+    const isIg = window.location.hostname.toLowerCase().includes('instagram.com');
+    const fallbackPrefix = isIg ? 'Instagram Reel' : 'Facebook Reel';
+    return fallbackId ? `${fallbackPrefix} · ${fallbackId}` : 'Video Media';
   }
 
   function cleanMediaTitle(rawTitle, fallbackId = '') {
-    if (!rawTitle) return fallbackId ? `Facebook Reel · ${fallbackId}` : 'Video Media';
+    const isIg = window.location.hostname.toLowerCase().includes('instagram.com');
+    const fallbackPrefix = isIg ? 'Instagram Reel' : 'Facebook Reel';
+    if (!rawTitle) return fallbackId ? `${fallbackPrefix} · ${fallbackId}` : 'Video Media';
     let t = rawTitle.trim();
-    // Remove notification badges: (1) Facebook, (9+) Facebook, etc.
+    // Remove notification badges: (1) Facebook, (9+) Instagram, etc.
     t = t.replace(/^\(\d+\+?\)\s*/, '');
-    // If title is generic "Facebook", "Facebook - Log In or Sign Up", etc.
+    // If title is generic "Facebook" / "Instagram"
     if (/^Facebook\s*([·\-|]|$)/i.test(t) || t.toLowerCase() === 'facebook') {
       return fallbackId ? `Facebook Reel · ${fallbackId}` : 'Facebook Reel';
     }
+    if (/^Instagram(\s*([·\-|•]|$)|.*photos and videos)/i.test(t) || t.toLowerCase() === 'instagram') {
+      return fallbackId ? `Instagram Reel · ${fallbackId}` : 'Instagram Reel';
+    }
     // Remove video platform suffixes
-    t = t.replace(/ - YouTube$| - Vimeo$| \| Facebook$/i, '').trim();
-    return t || (fallbackId ? `Facebook Reel · ${fallbackId}` : 'Video Media');
+    t = t.replace(/ - YouTube$| - Vimeo$| \| Facebook$| [•|] Instagram$/i, '').trim();
+    return t || (fallbackId ? `${fallbackPrefix} · ${fallbackId}` : 'Video Media');
   }
 
   // Extract clean filename from URL or title
@@ -649,22 +665,27 @@ function normalizePlatformUrl(rawUrl) {
     const normalized = normalizePlatformUrl(rawUrl);
     const thumbUrl = extractPageThumbnail(videoEl);
 
-    // If on Facebook/Instagram and current page URL is generic feed/home, check video element container
-    if (videoEl && !normalized.isSpecific && (window.location.hostname.includes('facebook.com') || window.location.hostname.includes('fb.watch'))) {
-      const container = videoEl.closest?.('[data-pagelet*="Reel"], [role="article"], [data-pagelet*="FeedUnit"], div[data-video-id], .x1lliihq, [role="main"]');
+    // On Facebook/Instagram, when URL is a feed/profile/explore view (or video is inside a feed article/modal), inspect container links
+    const hostLower = window.location.hostname.toLowerCase();
+    const isFbHost = hostLower.includes('facebook.com') || hostLower.includes('fb.watch');
+    const isIgHost = hostLower.includes('instagram.com');
+    if (videoEl && (isFbHost || isIgHost) && (!normalized.isSpecific || videoEl.closest?.('article, [role="dialog"]'))) {
+      const container = videoEl.closest?.('article, [role="dialog"], [data-pagelet*="Reel"], [role="article"], [data-pagelet*="FeedUnit"], div[data-video-id], [role="main"]');
       if (container) {
-        const anchor = container.querySelector('a[href*="/reel/"], a[href*="/reels/"], a[href*="/watch"], a[href*="/videos/"]');
-        if (anchor && anchor.href) {
-          const domNormalized = normalizePlatformUrl(anchor.href);
-          if (domNormalized.isSpecific) {
-            return {
-              rawUrl,
-              canonicalUrl: domNormalized.url,
-              videoId: domNormalized.videoId,
-              isSpecific: true,
-              platform: domNormalized.platform,
-              thumbnailUrl: thumbUrl,
-            };
+        const anchors = container.querySelectorAll('a[href*="/reel/"], a[href*="/reels/"], a[href*="/p/"], a[href*="/tv/"], a[href*="/watch"], a[href*="/videos/"]');
+        for (const anchor of anchors) {
+          if (anchor && anchor.href) {
+            const domNormalized = normalizePlatformUrl(anchor.href);
+            if (domNormalized.isSpecific) {
+              return {
+                rawUrl,
+                canonicalUrl: domNormalized.url,
+                videoId: domNormalized.videoId,
+                isSpecific: true,
+                platform: domNormalized.platform,
+                thumbnailUrl: thumbUrl,
+              };
+            }
           }
         }
       }
@@ -695,15 +716,22 @@ function normalizePlatformUrl(rawUrl) {
     );
   }
 
-  // Transient in-page toast feedback
+  // Transient in-page toast feedback (reparents smoothly during fullscreen)
   function showToast(text, isError = false, durationMs = 2200) {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    const mountParent =
+      fsEl && fsEl.tagName !== 'VIDEO'
+        ? fsEl
+        : document.body || document.documentElement;
     let toast = document.getElementById('tori-page-toast');
     if (!toast) {
       toast = document.createElement('div');
       toast.id = 'tori-page-toast';
       toast.setAttribute('role', 'status');
       toast.setAttribute('aria-live', 'polite');
-      document.body.appendChild(toast);
+    }
+    if (mountParent && toast.parentElement !== mountParent) {
+      mountParent.appendChild(toast);
     }
     applyThemeToElement(toast);
     toast.innerHTML = `
@@ -717,6 +745,252 @@ function normalizePlatformUrl(rawUrl) {
     showToast.timer = setTimeout(() => toast.classList.remove('on'), durationMs);
   }
 
+  // Track active overlays for O(1) lookup, duplicate prevention, and portal synchronization
+  const activeOverlays = new Set();
+  const videoOverlayMap = new WeakMap();
+  let portalSyncRaf = null;
+
+  function getPortalMountTarget(preferredVideo = null) {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fsEl && fsEl.tagName !== 'VIDEO') {
+      if (!preferredVideo || fsEl.contains(preferredVideo)) {
+        return fsEl;
+      }
+      for (const ctx of activeOverlays) {
+        if (ctx.videoEl && fsEl.contains(ctx.videoEl)) {
+          return fsEl;
+        }
+      }
+    }
+    return document.documentElement || document.body;
+  }
+
+  function reparentPreservingState(parent, node) {
+    if (!parent || !node || node.parentElement === parent) return;
+    if (typeof parent.moveBefore === 'function') {
+      try {
+        parent.moveBefore(node, null);
+        return;
+      } catch (_) {}
+    }
+    parent.appendChild(node);
+  }
+
+  // Isolated top-level portal host using open Shadow DOM + <slot> so overlay escapes all host
+  // z-index: 0 stacking contexts, overflow: hidden wrappers, and React delegation roots while
+  // keeping .tori-mp queryable and styled consistently.
+  function ensureOverlayPortal(preferredVideo = null) {
+    const mountTarget = getPortalMountTarget(preferredVideo);
+    if (!mountTarget) return null;
+
+    let host = document.getElementById('tori-overlay-portal-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'tori-overlay-portal-host';
+      host.setAttribute('data-tori-portal', 'true');
+      const sr = host.attachShadow({ mode: 'open' });
+      const styleEl = document.createElement('style');
+      styleEl.textContent = `
+        :host {
+          all: initial !important;
+          position: fixed !important;
+          inset: 0 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          border: 0 !important;
+          background: transparent !important;
+          overflow: visible !important;
+          pointer-events: none !important;
+          z-index: 2147483645 !important;
+          display: block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          transform: none !important;
+          clip-path: none !important;
+          isolation: isolate !important;
+        }
+      `;
+      sr.appendChild(styleEl);
+      sr.appendChild(document.createElement('slot'));
+    }
+
+    reparentPreservingState(mountTarget, host);
+    return host;
+  }
+
+  function removePortalIfEmpty() {
+    if (activeOverlays.size === 0) {
+      const host = document.getElementById('tori-overlay-portal-host');
+      if (host && host.childElementCount === 0) {
+        host.remove();
+      }
+    }
+  }
+
+  function isElementNearViewport(el, marginPx = 220) {
+    if (!el || !el.isConnected) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 120 || r.height < 90) return false;
+    const vw = window.innerWidth || document.documentElement.clientWidth || 1280;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+    return r.bottom > -marginPx && r.top < vh + marginPx && r.right > -marginPx && r.left < vw + marginPx;
+  }
+
+  function computePlayerAnchor(videoEl) {
+    const knownAnchor =
+      videoEl.closest('.html5-video-player') ||
+      videoEl.closest('.video-stream-container') ||
+      videoEl.closest('.player-container') ||
+      videoEl.closest('.jwplayer') ||
+      videoEl.closest('.video-js') ||
+      videoEl.closest('.vjs-tech')?.parentElement ||
+      videoEl.closest('.dmp_VideoPlayer') ||
+      videoEl.closest('[data-player-root]');
+    if (knownAnchor) return knownAnchor;
+
+    const vRect = videoEl.getBoundingClientRect();
+    const wildcardAnchor = videoEl.closest('[class*="player"]') || videoEl.closest('[class*="Player"]');
+    if (wildcardAnchor && wildcardAnchor !== document.documentElement && wildcardAnchor !== document.body) {
+      const wRect = wildcardAnchor.getBoundingClientRect();
+      if (
+        wRect.width >= vRect.width * 0.9 &&
+        wRect.height >= vRect.height * 0.9 &&
+        wRect.width <= Math.max(vRect.width * 2.5, vRect.width + 200) &&
+        wRect.height <= Math.max(vRect.height * 2.5, vRect.height + 200)
+      ) {
+        return wildcardAnchor;
+      }
+    }
+    return videoEl.parentElement;
+  }
+
+  function computeVisibleOverlayBounds(anchor, videoEl) {
+    const vRect = videoEl.getBoundingClientRect();
+    const aRect = anchor.getBoundingClientRect();
+    const baseRect = aRect.width >= 120 && aRect.height >= 90 ? aRect : vRect;
+
+    if (vRect.width < 120 || vRect.height < 90) {
+      return { hidden: true, scrollClipped: false, rect: baseRect };
+    }
+
+    const vStyle = window.getComputedStyle(videoEl);
+    if (vStyle.display === 'none' || vStyle.visibility === 'hidden' || parseFloat(vStyle.opacity) === 0) {
+      return { hidden: true, scrollClipped: false, rect: baseRect };
+    }
+
+    const vw = window.innerWidth || document.documentElement.clientWidth || 1280;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+    let clipLeft = 0;
+    let clipTop = 0;
+    let clipRight = vw;
+    let clipBottom = vh;
+    let hasInnerScrollClip = false;
+
+    let cur = videoEl.parentElement;
+    let depth = 0;
+    while (cur && cur !== document.documentElement && cur !== document.body && depth < 24) {
+      const cs = window.getComputedStyle(cur);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) {
+        return { hidden: true, scrollClipped: false, rect: baseRect };
+      }
+      if (
+        cs.overflowY === 'auto' ||
+        cs.overflowY === 'scroll' ||
+        cs.overflowY === 'hidden' ||
+        cs.overflowY === 'clip' ||
+        cs.overflowX === 'auto' ||
+        cs.overflowX === 'scroll' ||
+        cs.overflowX === 'hidden' ||
+        cs.overflowX === 'clip'
+      ) {
+        const cr = cur.getBoundingClientRect();
+        if (cr.width > 0 && cr.height > 0) {
+          if (cr.top > 0 || cr.bottom < vh || cr.left > 0 || cr.right < vw) {
+            hasInnerScrollClip = true;
+          }
+          clipLeft = Math.max(clipLeft, cr.left);
+          clipTop = Math.max(clipTop, cr.top);
+          clipRight = Math.min(clipRight, cr.right);
+          clipBottom = Math.min(clipBottom, cr.bottom);
+        }
+      }
+      cur = cur.parentElement;
+      depth++;
+    }
+
+    const visW = Math.min(clipRight, vRect.right) - Math.max(clipLeft, vRect.left);
+    const visH = Math.min(clipBottom, vRect.bottom) - Math.max(clipTop, vRect.top);
+    const scrollClipped = hasInnerScrollClip && (visW < 40 || visH < 40);
+
+    // Hide overlay only if an unrelated foreground modal ACTUALLY occludes the video center pixel
+    let coveredByUnrelatedModal = false;
+    const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"], dialog[open]');
+    if (dialogs.length > 0 && visW >= 40 && visH >= 40) {
+      const cx = Math.max(0, Math.min(vw - 1, vRect.left + vRect.width / 2));
+      const cy = Math.max(0, Math.min(vh - 1, vRect.top + vRect.height / 2));
+      const hitAtCenter = typeof document.elementFromPoint === 'function' ? document.elementFromPoint(cx, cy) : null;
+      if (hitAtCenter) {
+        for (const dlg of dialogs) {
+          if (!dlg.contains(videoEl) && !videoEl.contains(dlg) && dlg.contains(hitAtCenter)) {
+            const ds = window.getComputedStyle(dlg);
+            if (ds.display !== 'none' && ds.visibility !== 'hidden') {
+              coveredByUnrelatedModal = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      hidden: coveredByUnrelatedModal,
+      scrollClipped,
+      rect: baseRect,
+      inViewport: visW >= 40 && visH >= 40,
+    };
+  }
+
+  function syncAllPortalsNow() {
+    portalSyncRaf = null;
+    if (activeOverlays.size === 0) return;
+
+    let needPortalHost = false;
+    for (const ctx of activeOverlays) {
+      if (!ctx.inShadowDom) {
+        needPortalHost = true;
+        break;
+      }
+    }
+    if (needPortalHost) {
+      ensureOverlayPortal();
+    }
+
+    for (const ctx of Array.from(activeOverlays)) {
+      if (!ctx.videoEl.isConnected || !ctx.anchor.isConnected) {
+        destroyOverlay(ctx.mp);
+        continue;
+      }
+      if (typeof ctx.syncFrame === 'function') {
+        ctx.syncFrame();
+      }
+      if (typeof ctx.onViewportSync === 'function') {
+        ctx.onViewportSync();
+      }
+    }
+  }
+
+  function schedulePortalSync() {
+    if (portalSyncRaf !== null) return;
+    portalSyncRaf = requestAnimationFrame(syncAllPortalsNow);
+  }
+
+  window.addEventListener('scroll', schedulePortalSync, { capture: true, passive: true });
+  window.addEventListener('resize', schedulePortalSync, { passive: true });
+  document.addEventListener('fullscreenchange', syncAllPortalsNow);
+  document.addEventListener('webkitfullscreenchange', syncAllPortalsNow);
+
   // Remove all overlays and tear down listeners
   function destroyOverlay(mp) {
     if (!mp) return;
@@ -725,14 +999,23 @@ function normalizePlatformUrl(rawUrl) {
         mp.__toriDestroy();
       } catch (_) {}
     }
+    if (mp.__toriPortalFrame) {
+      mp.__toriPortalFrame.remove();
+    }
     mp.remove();
+    removePortalIfEmpty();
   }
 
   function removeAllOverlays() {
+    for (const ctx of Array.from(activeOverlays)) {
+      destroyOverlay(ctx.mp);
+    }
     document.querySelectorAll('.tori-mp').forEach((el) => destroyOverlay(el));
+    document.querySelectorAll('.tori-anchor-frame').forEach((el) => el.remove());
     document.querySelectorAll('[data-tori-attached]').forEach((el) => {
       el.removeAttribute('data-tori-attached');
     });
+    removePortalIfEmpty();
   }
 
   // Position class mapper
@@ -751,7 +1034,15 @@ function normalizePlatformUrl(rawUrl) {
 
   // Attach overlay to HTML5 video element
   function attachVideoOverlay(videoEl) {
-    if (!videoEl || videoEl.hasAttribute('data-tori-attached')) return;
+    if (!videoEl) return;
+    const existingCtx = videoOverlayMap.get(videoEl);
+    if (existingCtx && existingCtx.mp.isConnected && existingCtx.anchor.isConnected) {
+      return;
+    }
+    if (existingCtx) {
+      destroyOverlay(existingCtx.mp);
+    }
+    videoEl.removeAttribute('data-tori-attached');
     if (isSiteExcluded() || !settings.pill) return;
 
     // In embedded iframes, skip tiny frames like ad widgets (< 160x120)
@@ -776,6 +1067,7 @@ function normalizePlatformUrl(rawUrl) {
               videoEl.__toriResizeObs.disconnect();
               delete videoEl.__toriResizeObs;
             }
+            delete videoEl.__toriResizeObserved;
             attachVideoOverlay(videoEl);
           }
         };
@@ -791,40 +1083,25 @@ function normalizePlatformUrl(rawUrl) {
       return;
     }
 
-    // Anchor to player container if available to avoid stacking context clipping
-    const anchor = videoEl.closest('.html5-video-player') ||
-                   videoEl.closest('.video-stream-container') ||
-                   videoEl.closest('.player-container') ||
-                   videoEl.closest('.jwplayer') ||
-                   videoEl.closest('.video-js') ||
-                   videoEl.closest('.vjs-tech')?.parentElement ||
-                   videoEl.closest('.dmp_VideoPlayer') ||
-                   videoEl.closest('[data-player-root]') ||
-                   videoEl.closest('[class*="player"]') ||
-                   videoEl.closest('[class*="Player"]') ||
-                   videoEl.parentElement;
+    const anchor = computePlayerAnchor(videoEl);
     if (!anchor) return;
 
     // Prevent duplicate overlays for this specific video element or dedicated player anchor
-    const existingMps = anchor.querySelectorAll(':scope > .tori-mp');
-    for (const em of existingMps) {
-      if (em.__toriVideoEl === videoEl) return;
-    }
-    if (anchor !== videoEl.parentElement && existingMps.length > 0) {
-      return;
+    for (const ctx of activeOverlays) {
+      if (ctx.videoEl === videoEl && ctx.mp.isConnected) return;
+      if (anchor !== videoEl.parentElement && ctx.anchor === anchor && ctx.mp.isConnected) return;
     }
 
     videoEl.setAttribute('data-tori-attached', 'true');
 
-    const style = window.getComputedStyle(anchor);
-    if (style.position === 'static') {
-      anchor.style.position = 'relative';
-    }
+    const videoRoot = typeof videoEl.getRootNode === 'function' ? videoEl.getRootNode() : document;
+    const inShadowDom = typeof ShadowRoot !== 'undefined' && videoRoot instanceof ShadowRoot;
 
     // Create container
     const mp = document.createElement('div');
     mp.className = `tori-mp ${getPosClass(settings.pos)}`;
     mp.__toriVideoEl = videoEl;
+    mp.__toriAnchorEl = anchor;
     applyThemeToElement(mp);
 
     // Create compact pill button
@@ -832,6 +1109,7 @@ function normalizePlatformUrl(rawUrl) {
     pill.className = 'tori-pill pill';
     pill.type = 'button';
     pill.setAttribute('aria-expanded', 'false');
+    pill.setAttribute('aria-haspopup', 'dialog');
     pill.setAttribute('aria-label', 'Open TORI Video Format Picker');
     pill.innerHTML = `
       <span class="ico tori-logo" aria-hidden="true">
@@ -851,20 +1129,115 @@ function normalizePlatformUrl(rawUrl) {
 
     mp.appendChild(pill);
     mp.appendChild(pn);
-    anchor.appendChild(mp);
 
-    // Isolate ALL mouse, touch, and click events so video player controls never intercept
+    let frame = null;
+    if (inShadowDom) {
+      const style = window.getComputedStyle(anchor);
+      if (style.position === 'static') {
+        anchor.style.position = 'relative';
+      }
+      anchor.appendChild(mp);
+    } else {
+      const portalHost = ensureOverlayPortal(videoEl);
+      frame = document.createElement('div');
+      frame.className = 'tori-anchor-frame';
+      frame.appendChild(mp);
+      portalHost.appendChild(frame);
+      mp.__toriPortalFrame = frame;
+    }
+
+    let lastSyncedRect = null;
+    const syncFrameNow = () => {
+      if (!frame || !videoEl.isConnected || !anchor.isConnected) return;
+      const bounds = computeVisibleOverlayBounds(anchor, videoEl);
+      const r = bounds.rect;
+      if (bounds.hidden || (!pn.classList.contains('on') && bounds.scrollClipped)) {
+        if (frame.style.display !== 'none') {
+          frame.style.display = 'none';
+        }
+        return;
+      }
+      if (frame.style.display === 'none') {
+        frame.style.display = 'block';
+      }
+      const l = Math.round(r.left * 10) / 10;
+      const t = Math.round(r.top * 10) / 10;
+      const w = Math.round(r.width * 10) / 10;
+      const h = Math.round(r.height * 10) / 10;
+      if (
+        !lastSyncedRect ||
+        lastSyncedRect.l !== l ||
+        lastSyncedRect.t !== t ||
+        lastSyncedRect.w !== w ||
+        lastSyncedRect.h !== h
+      ) {
+        lastSyncedRect = { l, t, w, h };
+        frame.style.left = `${l}px`;
+        frame.style.top = `${t}px`;
+        frame.style.width = `${w}px`;
+        frame.style.height = `${h}px`;
+      }
+      if (pn.classList.contains('on')) {
+        positionPanelWithinViewport();
+      }
+    };
+
+    if (frame) {
+      syncFrameNow();
+    }
+
+    // Isolate ALL pointer, mouse, touch, click, and focused keyboard events inside TORI UI so
+    // underlying video players (Instagram React/StyleX overlays, YouTube, etc.) never intercept.
     const isolateEvents = (el) => {
-      ['mousedown', 'mouseup', 'click', 'dblclick', 'touchstart', 'touchend', 'contextmenu'].forEach((evt) => {
+      [
+        'pointerdown',
+        'pointerup',
+        'pointermove',
+        'gotpointercapture',
+        'lostpointercapture',
+        'mousedown',
+        'mouseup',
+        'click',
+        'dblclick',
+        'auxclick',
+        'touchstart',
+        'touchmove',
+        'touchend',
+        'touchcancel',
+        'contextmenu',
+      ].forEach((evt) => {
         el.addEventListener(evt, (e) => {
           e.stopPropagation();
         });
       });
     };
 
+    if (frame) isolateEvents(frame);
     isolateEvents(mp);
     isolateEvents(pill);
     isolateEvents(pn);
+
+    // Keyboard isolation & accessibility when focus is inside TORI overlay
+    const onOverlayKeyDown = (e) => {
+      if (e.key === 'Escape' && pn.classList.contains('on')) {
+        e.preventDefault();
+        e.stopPropagation();
+        pn.classList.remove('on');
+        pill.setAttribute('aria-expanded', 'false');
+        pill.focus({ preventScroll: true });
+        return;
+      }
+      if (e.key === ' ' || e.key === 'Spacebar' || e.key === 'Enter') {
+        e.stopPropagation();
+      }
+    };
+    const onOverlayKeyUp = (e) => {
+      if (e.key === 'Escape' || e.key === ' ' || e.key === 'Spacebar' || e.key === 'Enter') {
+        e.stopPropagation();
+      }
+    };
+    mp.addEventListener('keydown', onOverlayKeyDown);
+    mp.addEventListener('keyup', onOverlayKeyUp);
 
     // Draggable Overlay Implementation
     let isPointerDown = false;
@@ -1028,9 +1401,14 @@ function normalizePlatformUrl(rawUrl) {
     pill.addEventListener('pointerdown', (e) => {
       // Only primary mouse button can initiate mouse dragging
       if (e.button !== 0) return;
+      e.stopPropagation();
 
       if (isPointerDown || isDragging) {
         endDrag(e, false);
+      }
+
+      if (frame) {
+        syncFrameNow();
       }
 
       isPointerDown = true;
@@ -1057,13 +1435,16 @@ function normalizePlatformUrl(rawUrl) {
     });
 
     const onResizeClamp = () => {
+      if (frame) {
+        syncFrameNow();
+      }
       if (mp.style.left && mp.style.left !== 'auto') {
         const aRect = anchor.getBoundingClientRect();
         if (aRect.width > 0 && aRect.height > 0) {
           let curL = parseFloat(mp.style.left) || 4;
           let curT = parseFloat(mp.style.top) || 4;
-          const maxL = Math.max(4, aRect.width - (mp.offsetWidth || 160) - 4);
-          const maxT = Math.max(4, aRect.height - (mp.offsetHeight || 36) - 4);
+          const maxL = Math.max(4, aRect.width - (pill.offsetWidth || mp.offsetWidth || 160) - 4);
+          const maxT = Math.max(4, aRect.height - (pill.offsetHeight || mp.offsetHeight || 36) - 4);
           mp.style.left = `${Math.min(Math.max(4, curL), maxL)}px`;
           mp.style.top = `${Math.min(Math.max(4, curT), maxT)}px`;
         }
@@ -1073,6 +1454,17 @@ function normalizePlatformUrl(rawUrl) {
       }
     };
     window.addEventListener('resize', onResizeClamp);
+
+    let frameResizeObs = null;
+    if (typeof ResizeObserver === 'function') {
+      frameResizeObs = new ResizeObserver(() => {
+        if (frame) syncFrameNow();
+      });
+      frameResizeObs.observe(anchor);
+      if (videoEl !== anchor) {
+        frameResizeObs.observe(videoEl);
+      }
+    }
 
     function positionPanelWithinViewport() {
       if (!pn.classList.contains('on')) return;
@@ -1124,25 +1516,51 @@ function normalizePlatformUrl(rawUrl) {
     let selectedIdx = 0;
     let selectedUserChosen = false;
     let isDownloaded = false;
+    let isDownloadInFlight = false;
     let tabMediaCandidates = [];
     let resolvedMeta = null;
     let isResolving = false;
     let resolveError = null;
+    let deferredAutoResolve = false;
     let currentMediaIdentity = extractMediaIdentity(null, videoEl);
     let currentGeneration = 0;
     let resolveTimeoutTimer = null;
     let dlTimeoutTimer = null;
 
+    function hasDirectStreamCandidates() {
+      if (extractDomMediaCandidates(videoEl).size > 0) return true;
+      return tabMediaCandidates.some((c) => c && c.url && !c.is_segment && c.type !== 'segment');
+    }
+
+    function invalidateNavigationState() {
+      if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
+      currentGeneration++;
+      isResolving = false;
+      resolvedMeta = null;
+      selectedIdx = 0;
+      selectedUserChosen = false;
+      tabMediaCandidates = [];
+      resolveError = null;
+      deferredAutoResolve = true;
+      currentMediaIdentity = extractMediaIdentity(null, videoEl);
+      updatePillTag();
+      if (pn.classList.contains('on')) {
+        renderPanel();
+      }
+    }
+
     function triggerResolution(force = false) {
       if (isResolving && !force) return;
+      if (!force && resolvedMeta && !deferredAutoResolve) return;
 
       // Re-evaluate identity with current DOM context
       currentMediaIdentity = extractMediaIdentity(null, videoEl);
+      deferredAutoResolve = false;
 
-      // If on Facebook/Instagram and no specific Reel/Video was identified, notify user immediately
-      if (!currentMediaIdentity.isSpecific && isManagedPlatform(window.location.hostname)) {
+      // If on Facebook/Instagram and no specific Reel/Post was identified and no direct stream is present, notify immediately
+      if (!currentMediaIdentity.isSpecific && isManagedPlatform(window.location.hostname) && !hasDirectStreamCandidates()) {
         isResolving = false;
-        resolveError = 'Feed / stream not isolated. Please open the specific Reel directly in its own tab.';
+        resolveError = 'Feed / stream not isolated. Open the specific Reel or Post directly, or play the video to capture its direct stream.';
         updatePillTag();
         renderPanel();
         return;
@@ -1156,8 +1574,13 @@ function normalizePlatformUrl(rawUrl) {
       const thisGen = currentGeneration;
       const targetUrl = currentMediaIdentity?.canonicalUrl || currentMediaIdentity?.rawUrl || window.location.href;
       const reqId = 'req_res_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
-      const isPlatform = isSupportedPlatform(window.location.href) || isManagedPlatform(window.location.hostname);
-      const resolutionTimeoutMs = isPlatform ? 22000 : 12000;
+      const isSpecificPlatform =
+        isManagedPlatform(window.location.hostname)
+          ? currentMediaIdentity.isSpecific
+          : isSupportedPlatform(window.location.href);
+      const isPlatform = isSpecificPlatform;
+      // Coordinate strictly above background worker (32s/12s) and Rust orchestrator (26s/22s) deadlines
+      const resolutionTimeoutMs = isPlatform ? 34000 : 15000;
       const startTime = Date.now();
 
       // Sanitized diagnostic log
@@ -1176,50 +1599,78 @@ function normalizePlatformUrl(rawUrl) {
         }
       }, resolutionTimeoutMs);
 
-      chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA' }, (mRes) => {
-        if (thisGen !== currentGeneration) return;
-        tabMediaCandidates = mRes?.media || [];
-        // If on generic site and network candidates are captured, make them visible immediately
-        if (tabMediaCandidates.length > 0 && !isPlatform) {
-          updatePillTag();
-          renderPanel();
-        }
-      });
+      try {
+        chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA' }, (mRes) => {
+          const tabErr = chrome.runtime.lastError;
+          if (tabErr || thisGen !== currentGeneration) return;
+          tabMediaCandidates = mRes?.media || [];
+          // If on generic site and network candidates are captured, make them visible immediately
+          if (tabMediaCandidates.length > 0 && !isPlatform) {
+            updatePillTag();
+            renderPanel();
+          }
+        });
+      } catch (_) {}
 
       const domCandidates = Array.from(extractDomMediaCandidates(videoEl));
       const domThumbnail = extractPageThumbnail(videoEl);
-      const mediaTitle = getMediaTitle(videoEl);
+      const mediaTitle = getMediaTitle(videoEl, currentMediaIdentity?.videoId);
 
-      chrome.runtime.sendMessage(
-        {
-          action: 'RESOLVE_MEDIA',
-          url: targetUrl,
-          generation: thisGen,
-          correlation_id: reqId,
-          candidates: domCandidates,
-          page_title: mediaTitle,
-          thumbnail_url: domThumbnail,
-        },
-        (rRes) => {
-          if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
-          if (thisGen !== currentGeneration) {
-            console.log(`[TORI] Dropping stale resolution response for gen ${thisGen}, current is ${currentGeneration}`);
-            return;
+      try {
+        chrome.runtime.sendMessage(
+          {
+            action: 'RESOLVE_MEDIA',
+            url: targetUrl,
+            generation: thisGen,
+            correlation_id: reqId,
+            candidates: domCandidates,
+            page_title: mediaTitle,
+            thumbnail_url: domThumbnail,
+            force_refresh: !!force,
+          },
+          (rRes) => {
+            const lastErr = chrome.runtime.lastError;
+            if (resolveTimeoutTimer) {
+              clearTimeout(resolveTimeoutTimer);
+              resolveTimeoutTimer = null;
+            }
+            if (thisGen !== currentGeneration) {
+              console.log(`[TORI] Dropping stale resolution response for gen ${thisGen}, current is ${currentGeneration}`);
+              return;
+            }
+            isResolving = false;
+            const elapsed = Date.now() - startTime;
+            if (lastErr) {
+              resolveError = lastErr.message || 'Extension communication interrupted. Please retry resolution.';
+              console.warn(`[TORI Diagnostic] Resolve runtime error: ID=${reqId}, Error=${resolveError}, Elapsed=${elapsed}ms`);
+            } else if (rRes && rRes.status === 'ok' && rRes.metadata) {
+              resolvedMeta = rRes.metadata;
+              const { hasAnyCandidates } = getAvailableFormats();
+              if (hasAnyCandidates) {
+                resolveError = null;
+                console.log(`[TORI Diagnostic] Resolve succeeded: ID=${reqId}, Extractor=${resolvedMeta.extractor || 'unknown'}, Formats=${resolvedMeta.formats?.length || 0}, Elapsed=${elapsed}ms`);
+              } else {
+                resolveError = 'No downloadable media formats were returned for this video.';
+                console.log(`[TORI Diagnostic] Resolve returned 0 formats: ID=${reqId}, Extractor=${resolvedMeta.extractor || 'unknown'}, Elapsed=${elapsed}ms`);
+              }
+            } else {
+              resolveError = rRes?.message || 'Protected, restricted, or unsupported stream.';
+              console.log(`[TORI Diagnostic] Resolve terminal failure: ID=${reqId}, Code=${rRes?.code || 'ERROR'}, Message=${resolveError}, Elapsed=${elapsed}ms`);
+            }
+            updatePillTag();
+            renderPanel();
           }
-          isResolving = false;
-          const elapsed = Date.now() - startTime;
-          if (rRes && rRes.status === 'ok' && rRes.metadata) {
-            resolvedMeta = rRes.metadata;
-            resolveError = null;
-            console.log(`[TORI Diagnostic] Resolve succeeded: ID=${reqId}, Extractor=${resolvedMeta.extractor || 'unknown'}, Formats=${resolvedMeta.formats?.length || 0}, Elapsed=${elapsed}ms`);
-          } else {
-            resolveError = rRes?.message || 'Protected, restricted, or unsupported stream.';
-            console.log(`[TORI Diagnostic] Resolve terminal failure: ID=${reqId}, Code=${rRes?.code || 'ERROR'}, Message=${resolveError}, Elapsed=${elapsed}ms`);
-          }
-          updatePillTag();
-          renderPanel();
+        );
+      } catch (err) {
+        if (resolveTimeoutTimer) {
+          clearTimeout(resolveTimeoutTimer);
+          resolveTimeoutTimer = null;
         }
-      );
+        isResolving = false;
+        resolveError = err?.message || 'Extension runtime unavailable. Reload the page and retry.';
+        updatePillTag();
+        renderPanel();
+      }
     }
 
     function handleVideoNavigation(reason) {
@@ -1239,25 +1690,31 @@ function normalizePlatformUrl(rawUrl) {
 
       console.log(`[TORI Content] Video navigation detected (${reason}):`, currentMediaIdentity?.canonicalUrl, '->', newIdentity.canonicalUrl);
       currentMediaIdentity = newIdentity;
-      if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
-      currentGeneration++;
-
-      // Reset pill tag to "Resolving…"
-      const tagEl = pill.querySelector('.tori-pill-tag');
-      if (tagEl) {
-        tagEl.textContent = 'Resolving…';
-        tagEl.className = 'chip tori-pill-tag';
+      if (resolveTimeoutTimer) {
+        clearTimeout(resolveTimeoutTimer);
+        resolveTimeoutTimer = null;
       }
+      currentGeneration++;
+      isResolving = false;
 
-      // Immediately invalidate old media state
+      // Immediately invalidate old media state without prematurely forcing a loading label
       resolvedMeta = null;
       selectedIdx = 0;
       selectedUserChosen = false;
       tabMediaCandidates = [];
       resolveError = null;
+      deferredAutoResolve = false;
+      updatePillTag();
+      if (pn.classList.contains('on')) {
+        renderPanel();
+      }
 
-      // Automatically trigger resolution for the new video
-      triggerResolution(true);
+      // Trigger resolution for the new video only if visible or panel open; otherwise defer until scrolled into view
+      if (isElementNearViewport(videoEl, 220) || pn.classList.contains('on')) {
+        triggerResolution(true);
+      } else {
+        deferredAutoResolve = true;
+      }
     }
 
     mp.__toriHandleNav = handleVideoNavigation;
@@ -1526,10 +1983,15 @@ function normalizePlatformUrl(rawUrl) {
         return;
       }
 
+      // If not yet resolved and not resolving, initiate resolution (or surface panel immediately)
       const isOpen = pn.classList.contains('on');
       // Close any other open panels
       document.querySelectorAll('.tori-pn.on').forEach((p) => {
-        if (p !== pn) p.classList.remove('on');
+        if (p !== pn) {
+          p.classList.remove('on');
+          const ownerPill = p.closest('.tori-mp')?.querySelector('.tori-pill');
+          if (ownerPill) ownerPill.setAttribute('aria-expanded', 'false');
+        }
       });
 
       if (isOpen) {
@@ -1538,6 +2000,9 @@ function normalizePlatformUrl(rawUrl) {
       } else {
         pn.classList.add('on');
         pill.setAttribute('aria-expanded', 'true');
+        if (frame) {
+          syncFrameNow();
+        }
         // Render panel immediately so there is never an unpopulated/blank frame
         renderPanel();
 
@@ -1545,12 +2010,41 @@ function normalizePlatformUrl(rawUrl) {
         if (!resolvedMeta && !isResolving) {
           triggerResolution(false);
         }
+
+        // Move focus into opened panel when activated via keyboard (e.detail === 0)
+        if (e.detail === 0) {
+          requestAnimationFrame(() => {
+            const firstCtrl = pn.querySelector('[data-act="download"]:not([disabled]), [data-act="retry"], [data-act="close"]');
+            if (firstCtrl && typeof firstCtrl.focus === 'function') {
+              try {
+                firstCtrl.focus({ preventScroll: true });
+              } catch (_) {}
+            }
+          });
+        }
       }
     });
 
     function getErrorNotice(err) {
       const e = (err || '').trim();
       const lower = e.toLowerCase();
+
+      if (lower.includes('feed / stream not isolated') || lower.includes('does not expose a specific media id')) {
+        return {
+          title: 'Open Specific Post / Reel',
+          desc: e,
+          hint: 'Open the Reel or video post directly in its view, or play it to capture direct media.',
+          color: '#f59e0b',
+        };
+      }
+      if (lower.includes('instagram') && (lower.includes('empty') || lower.includes('login') || lower.includes('challenge') || lower.includes('checkpoint') || lower.includes('cookies'))) {
+        return {
+          title: 'Instagram Access Restricted',
+          desc: e,
+          hint: 'Log in to Instagram in this browser or play the video to allow stream capture, then retry.',
+          color: '#f59e0b',
+        };
+      }
 
       if (lower.includes('timed out') || lower.includes('timeout')) {
         return {
@@ -1745,6 +2239,19 @@ function normalizePlatformUrl(rawUrl) {
         : isDownloaded
         ? 'Queued in Tori'
         : `Download${sizeLabel}`;
+
+      // Capture active focus inside panel so re-renders (e.g. while resolving finishes) never drop keyboard focus
+      let focusRestoreSelector = null;
+      const activeEl = document.activeElement;
+      if (activeEl && pn.contains(activeEl)) {
+        const act = activeEl.getAttribute('data-act');
+        const tab = activeEl.getAttribute('data-tab');
+        const idxAttr = activeEl.getAttribute('data-idx');
+        if (act) focusRestoreSelector = `[data-act="${act}"]`;
+        else if (tab) focusRestoreSelector = `[data-tab="${tab}"]`;
+        else if (idxAttr !== null) focusRestoreSelector = `.tori-fr[data-idx="${idxAttr}"]`;
+        else focusRestoreSelector = '[data-act="close"]';
+      }
 
       pn.innerHTML = `
         <div class="head tori-ph ph">
@@ -1989,7 +2496,8 @@ function normalizePlatformUrl(rawUrl) {
       if (dlBtn) {
         dlBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          if (dlBtn.disabled || dlBtn.classList.contains('pending')) {
+          e.stopImmediatePropagation();
+          if (isDownloadInFlight || dlBtn.disabled || dlBtn.classList.contains('pending')) {
             return;
           }
           if (!canDownload) {
@@ -2002,6 +2510,7 @@ function normalizePlatformUrl(rawUrl) {
             return;
           }
 
+          isDownloadInFlight = true;
           dlBtn.disabled = true;
           dlBtn.classList.add('pending');
           const btnSpan = dlBtn.querySelector('span');
@@ -2016,21 +2525,26 @@ function normalizePlatformUrl(rawUrl) {
             filename: target.filename,
           });
 
+          const resolvedTargetUrl =
+            (resolvedMeta && resolvedMeta.source_url) ||
+            currentMediaIdentity?.canonicalUrl ||
+            window.location.href;
           const isSocialPlatform = isManagedPlatform(window.location.hostname);
           const isTransientCdn = isTransientCdnUrl(target.url);
-          const shouldUseManaged = target.format_id || target.isManaged || isSocialPlatform || isTransientCdn;
+          const shouldUseManaged = target.format_id || target.isManaged || (isSocialPlatform && currentMediaIdentity?.isSpecific) || isTransientCdn;
 
           const pageThumb = target.thumbnail_url || (resolvedMeta && resolvedMeta.thumbnail_url) || currentMediaIdentity?.thumbnailUrl || extractPageThumbnail(videoEl) || null;
           const reqPayload = shouldUseManaged
             ? {
                 action: 'START_MEDIA_DOWNLOAD',
-                url: (resolvedMeta && resolvedMeta.source_url) ? resolvedMeta.source_url : window.location.href,
+                url: resolvedTargetUrl,
                 format_id: target.format_id || 'best',
                 filename: target.filename,
                 priority: 'high',
                 correlation_id: correlationId,
                 page_url: window.location.href,
                 thumbnail_url: pageThumb,
+                direct_stream_url: target.url && !isTransientCdnUrl(target.url) ? target.url : null,
                 user_agent: navigator.userAgent,
               }
             : {
@@ -2047,6 +2561,7 @@ function normalizePlatformUrl(rawUrl) {
           let dlSettled = false;
           if (dlTimeoutTimer) clearTimeout(dlTimeoutTimer);
           const restoreDownloadBtn = () => {
+            isDownloadInFlight = false;
             dlBtn.classList.remove('pending');
             dlBtn.disabled = false;
             if (btnSpan) btnSpan.textContent = originalText;
@@ -2065,6 +2580,7 @@ function normalizePlatformUrl(rawUrl) {
               dlSettled = true;
               clearTimeout(dlTimeoutTimer);
               dlTimeoutTimer = null;
+              isDownloadInFlight = false;
               dlBtn.classList.remove('pending');
 
               const lastErr = chrome.runtime.lastError;
@@ -2106,12 +2622,29 @@ function normalizePlatformUrl(rawUrl) {
           }
         });
       }
+
+      if (focusRestoreSelector && pn.classList.contains('on')) {
+        const targetFocus =
+          pn.querySelector(focusRestoreSelector + ':not([disabled])') ||
+          pn.querySelector('[data-act="download"]:not([disabled]), [data-act="retry"], [data-act="close"]');
+        if (targetFocus && typeof targetFocus.focus === 'function') {
+          try {
+            targetFocus.focus({ preventScroll: true });
+          } catch (_) {}
+        }
+      }
     }
 
     function triggerDirectDownload(vid) {
+      if (isDownloadInFlight) return;
       const { videoFormats, audioFormats, hasAnyCandidates } = getAvailableFormats();
       if (!hasAnyCandidates) {
-        showToast('No downloadable media stream detected on this page', true);
+        if (!isResolving) {
+          triggerResolution(true);
+          showToast('Resolving video formats…');
+        } else {
+          showToast('Still resolving media stream…');
+        }
         return;
       }
       const list = settings.kind === 'Audio only' && audioFormats.length > 0 ? audioFormats : videoFormats;
@@ -2122,22 +2655,28 @@ function normalizePlatformUrl(rawUrl) {
         return;
       }
 
+      isDownloadInFlight = true;
       const correlationId = 'tori_dir_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+      const resolvedTargetUrl =
+        (resolvedMeta && resolvedMeta.source_url) ||
+        currentMediaIdentity?.canonicalUrl ||
+        window.location.href;
       const isSocialPlatform = isManagedPlatform(window.location.hostname);
       const isTransientCdn = isTransientCdnUrl(target.url);
-      const shouldUseManaged = target.format_id || target.isManaged || isSocialPlatform || isTransientCdn;
+      const shouldUseManaged = target.format_id || target.isManaged || (isSocialPlatform && currentMediaIdentity?.isSpecific) || isTransientCdn;
 
       const pageThumb = target.thumbnail_url || (resolvedMeta && resolvedMeta.thumbnail_url) || currentMediaIdentity?.thumbnailUrl || extractPageThumbnail(videoEl) || null;
       const reqPayload = shouldUseManaged
         ? {
             action: 'START_MEDIA_DOWNLOAD',
-            url: (resolvedMeta && resolvedMeta.source_url) ? resolvedMeta.source_url : window.location.href,
+            url: resolvedTargetUrl,
             format_id: target.format_id || 'best',
             filename: target.filename,
             priority: 'high',
             correlation_id: correlationId,
             page_url: window.location.href,
             thumbnail_url: pageThumb,
+            direct_stream_url: target.url && !isTransientCdnUrl(target.url) ? target.url : null,
             user_agent: navigator.userAgent,
           }
         : {
@@ -2155,25 +2694,36 @@ function normalizePlatformUrl(rawUrl) {
       const dlTimeout = setTimeout(() => {
         if (settled) return;
         settled = true;
+        isDownloadInFlight = false;
         showToast('Download handoff timed out. Check TORI Desktop.', true);
       }, 15000);
 
-      chrome.runtime.sendMessage(reqPayload, (res) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(dlTimeout);
-        if (chrome.runtime.lastError) {
-          showToast(chrome.runtime.lastError.message || 'Extension communication failed', true);
-          return;
+      try {
+        chrome.runtime.sendMessage(reqPayload, (res) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(dlTimeout);
+          isDownloadInFlight = false;
+          if (chrome.runtime.lastError) {
+            showToast(chrome.runtime.lastError.message || 'Extension communication failed', true);
+            return;
+          }
+          if (res && res.status === 'ok' && res.job_id) {
+            showToast(`Download queued in Tori (${res.filename || target.filename})`);
+          } else if (res && res.status === 'already_exists') {
+            showToast('Already downloading in Tori');
+          } else {
+            showToast(res?.message || 'Download failed', true);
+          }
+        });
+      } catch (err) {
+        if (!settled) {
+          settled = true;
+          clearTimeout(dlTimeout);
+          isDownloadInFlight = false;
+          showToast(err?.message || 'Failed to queue download', true);
         }
-        if (res && res.status === 'ok' && res.job_id) {
-          showToast(`Download queued in Tori (${res.filename || target.filename})`);
-        } else if (res && res.status === 'already_exists') {
-          showToast('Already downloading in Tori');
-        } else {
-          showToast(res?.message || 'Download failed', true);
-        }
-      });
+      }
     }
 
     // Dynamic state updates when media metadata loads or changes
@@ -2237,14 +2787,50 @@ function normalizePlatformUrl(rawUrl) {
     };
     chrome.runtime.onMessage.addListener(onRuntimeCandidateMessage);
 
+    const overlayCtx = {
+      mp,
+      pill,
+      pn,
+      videoEl,
+      anchor,
+      inShadowDom,
+      syncFrame: frame ? syncFrameNow : null,
+      onViewportSync: () => {
+        if (
+          deferredAutoResolve &&
+          !resolvedMeta &&
+          !isResolving &&
+          !resolveError &&
+          isSupportedPlatform(window.location.href) &&
+          isElementNearViewport(videoEl, 120)
+        ) {
+          deferredAutoResolve = false;
+          triggerResolution(false);
+        }
+      },
+      handleNav: handleVideoNavigation,
+      invalidateNav: invalidateNavigationState,
+    };
+    activeOverlays.add(overlayCtx);
+    videoOverlayMap.set(videoEl, overlayCtx);
+
     // Clean teardown to avoid listener/timer leaks on SPA navigation or removal
     mp.__toriDestroy = () => {
+      activeOverlays.delete(overlayCtx);
+      if (videoOverlayMap.get(videoEl) === overlayCtx) {
+        videoOverlayMap.delete(videoEl);
+      }
       endDrag(null, false);
       if (resolveTimeoutTimer) clearTimeout(resolveTimeoutTimer);
       if (asyncRetryTimer) clearTimeout(asyncRetryTimer);
       if (dlTimeoutTimer) clearTimeout(dlTimeoutTimer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', onResizeClamp);
+      if (frameResizeObs) {
+        try {
+          frameResizeObs.disconnect();
+        } catch (_) {}
+      }
       try {
         chrome.runtime.onMessage.removeListener(onRuntimeCandidateMessage);
       } catch (_) {}
@@ -2263,12 +2849,16 @@ function normalizePlatformUrl(rawUrl) {
     // Record DOM media candidates
     recordDomMedia(videoEl);
 
-    // Initial render and proactive platform resolution
+    // Initial render and proactive platform resolution (defer offscreen videos until near viewport)
     renderPanel();
     updatePillTag();
 
     if (isSupportedPlatform(window.location.href)) {
-      triggerResolution(false);
+      if (isElementNearViewport(videoEl, 220)) {
+        triggerResolution(false);
+      } else {
+        deferredAutoResolve = true;
+      }
     }
   }
 
@@ -2291,11 +2881,18 @@ function normalizePlatformUrl(rawUrl) {
 
   function notifyAllOverlays(reason) {
     lastCheckedUrl = window.location.href;
-    document.querySelectorAll('.tori-mp').forEach((mp) => {
-      if (typeof mp.__toriHandleNav === 'function') {
-        mp.__toriHandleNav(reason);
+    for (const ctx of Array.from(activeOverlays)) {
+      if (!ctx.videoEl.isConnected || !ctx.anchor.isConnected) {
+        destroyOverlay(ctx.mp);
+        continue;
       }
-    });
+      if (isElementNearViewport(ctx.videoEl, 220) || ctx.pn.classList.contains('on')) {
+        ctx.handleNav(reason);
+      } else {
+        ctx.invalidateNav();
+      }
+    }
+    scheduleMediaScan();
   }
 
   window.addEventListener('popstate', () => notifyAllOverlays('popstate'));
@@ -2316,6 +2913,21 @@ function normalizePlatformUrl(rawUrl) {
     }
   }, 600);
 
+  function getPrimaryActiveOverlay() {
+    let fallbackMp = document.querySelector('.tori-mp');
+    let visibleMp = null;
+    for (const ctx of activeOverlays) {
+      if (!ctx.mp.isConnected) continue;
+      if (ctx.pn.classList.contains('on')) return ctx.mp;
+      if (isElementNearViewport(ctx.videoEl, 40)) {
+        if (!ctx.videoEl.paused) return ctx.mp;
+        if (!visibleMp) visibleMp = ctx.mp;
+      }
+      if (!fallbackMp) fallbackMp = ctx.mp;
+    }
+    return visibleMp || fallbackMp;
+  }
+
   // Runtime message listener for background notifications and active media queries from extension popup
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.action === 'MEDIA_NAVIGATED') {
@@ -2325,7 +2937,7 @@ function normalizePlatformUrl(rawUrl) {
     }
 
     if (msg.action === 'TRIGGER_RESOLVE_MEDIA') {
-      const activeMp = document.querySelector('.tori-mp');
+      const activeMp = getPrimaryActiveOverlay();
       if (activeMp && typeof activeMp.__toriTriggerResolution === 'function') {
         activeMp.__toriTriggerResolution(true);
         sendResponse({ ok: true });
@@ -2336,7 +2948,7 @@ function normalizePlatformUrl(rawUrl) {
     }
 
     if (msg.action === 'GET_ACTIVE_MEDIA_INFO') {
-      const activeMp = document.querySelector('.tori-mp');
+      const activeMp = getPrimaryActiveOverlay();
       if (activeMp && typeof activeMp.__toriGetMediaInfo === 'function') {
         sendResponse({ ok: true, ...activeMp.__toriGetMediaInfo() });
       } else {
@@ -2357,19 +2969,39 @@ function normalizePlatformUrl(rawUrl) {
     }
   });
 
-  // Global outside-click listener to close any open panels cleanly
-  document.addEventListener('click', (e) => {
-    document.querySelectorAll('.tori-mp').forEach((mp) => {
-      if (!mp.contains(e.target)) {
-        const pn = mp.querySelector('.tori-pn');
-        if (pn && pn.classList.contains('on')) {
-          pn.classList.remove('on');
-          const pillBtn = mp.querySelector('.tori-pill');
-          if (pillBtn) pillBtn.setAttribute('aria-expanded', 'false');
+  // Close open panels cleanly when clicking outside TORI overlay without suppressing page events
+  document.addEventListener(
+    'click',
+    (e) => {
+      for (const ctx of activeOverlays) {
+        if (ctx.pn.classList.contains('on') && !ctx.mp.contains(e.target)) {
+          ctx.pn.classList.remove('on');
+          ctx.pill.setAttribute('aria-expanded', 'false');
         }
       }
-    });
-  });
+    },
+    true
+  );
+
+  // Close open TORI panel on Escape even if focus shifted briefly during async panel render
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key !== 'Escape') return;
+      for (const ctx of activeOverlays) {
+        if (ctx.pn.classList.contains('on')) {
+          ctx.pn.classList.remove('on');
+          ctx.pill.setAttribute('aria-expanded', 'false');
+          try {
+            ctx.pill.focus({ preventScroll: true });
+          } catch (_) {}
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+    },
+    true
+  );
 
   // Recursively collect all videos including inside open shadowRoot DOM trees
   function getAllVideos(root = document) {
@@ -2384,7 +3016,7 @@ function normalizePlatformUrl(rawUrl) {
         const allElements = root.querySelectorAll('*');
         for (let i = 0; i < allElements.length; i++) {
           const el = allElements[i];
-          if (el.shadowRoot) {
+          if (el.shadowRoot && el.id !== 'tori-overlay-portal-host') {
             const shadowVids = getAllVideos(el.shadowRoot);
             for (let j = 0; j < shadowVids.length; j++) {
               list.push(shadowVids[j]);
@@ -2396,13 +3028,17 @@ function normalizePlatformUrl(rawUrl) {
     return list;
   }
 
-  // Scan document for media elements
+  // Scan document for media elements and recover disconnected anchors
   function scanForMedia() {
     if (isSiteExcluded() || !settings.pill) return;
 
-    // Clean up any overlays whose associated video is disconnected from DOM
+    for (const ctx of Array.from(activeOverlays)) {
+      if (!ctx.videoEl.isConnected || !ctx.anchor.isConnected) {
+        destroyOverlay(ctx.mp);
+      }
+    }
     document.querySelectorAll('.tori-mp').forEach((mp) => {
-      if (mp.__toriVideoEl && !document.body.contains(mp.__toriVideoEl)) {
+      if (mp.__toriVideoEl && !mp.__toriVideoEl.isConnected) {
         destroyOverlay(mp);
       }
     });
@@ -2412,6 +3048,7 @@ function normalizePlatformUrl(rawUrl) {
       recordDomMedia(video);
       attachVideoOverlay(video);
     });
+    schedulePortalSync();
   }
 
   // Debounced MutationObserver (ignores noisy text/progress DOM ticks during playback)
@@ -2430,23 +3067,29 @@ function normalizePlatformUrl(rawUrl) {
     }, 120);
   }
 
-  function nodeMightContainVideo(node) {
+  function nodeAffectsOverlayDom(node) {
     if (!node || node.nodeType !== 1) return false;
-    if (node.tagName === 'VIDEO') return true;
+    if (node.id === 'tori-overlay-portal-host' || node.id === 'tori-page-toast') return false;
+    if (node.tagName === 'VIDEO' || node.tagName === 'DIALOG') return true;
     if (node.shadowRoot) return true;
-    if (typeof node.querySelector === 'function' && node.querySelector('video')) return true;
+    const role = typeof node.getAttribute === 'function' ? node.getAttribute('role') : '';
+    if (role === 'dialog') return true;
+    if (typeof node.querySelector === 'function' && node.querySelector('video, [role="dialog"]')) return true;
     return false;
   }
 
   const observer = new MutationObserver((mutations) => {
     if (isSiteExcluded() || !settings.pill) return;
     let shouldScan = false;
+    let dialogMutated = false;
     for (let i = 0; i < mutations.length; i++) {
       const m = mutations[i];
       if (m.addedNodes) {
         for (let j = 0; j < m.addedNodes.length; j++) {
-          if (nodeMightContainVideo(m.addedNodes[j])) {
+          const n = m.addedNodes[j];
+          if (nodeAffectsOverlayDom(n)) {
             shouldScan = true;
+            if (n.tagName === 'DIALOG' || n.getAttribute?.('role') === 'dialog') dialogMutated = true;
             break;
           }
         }
@@ -2455,9 +3098,18 @@ function normalizePlatformUrl(rawUrl) {
       if (m.removedNodes && m.removedNodes.length > 0) {
         for (let j = 0; j < m.removedNodes.length; j++) {
           const r = m.removedNodes[j];
-          if (r && r.nodeType === 1 && (r.tagName === 'VIDEO' || (typeof r.querySelector === 'function' && r.querySelector('video, .tori-mp')))) {
-            shouldScan = true;
-            break;
+          if (r && r.nodeType === 1) {
+            if (
+              r.tagName === 'DIALOG' ||
+              r.getAttribute?.('role') === 'dialog' ||
+              (typeof r.querySelector === 'function' && r.querySelector('dialog, [role="dialog"]'))
+            ) {
+              dialogMutated = true;
+            }
+            if (r.tagName === 'VIDEO' || (typeof r.querySelector === 'function' && r.querySelector('video, .tori-mp'))) {
+              shouldScan = true;
+              break;
+            }
           }
         }
       }
@@ -2465,6 +3117,8 @@ function normalizePlatformUrl(rawUrl) {
     }
     if (shouldScan) {
       scheduleMediaScan();
+    } else if (dialogMutated) {
+      schedulePortalSync();
     }
   });
 
