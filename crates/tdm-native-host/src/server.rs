@@ -588,10 +588,6 @@ async fn handle_create_download(
             }
             if !already_existed && job.state != tdm_core::JobState::Scheduled {
                 let _ = state_clone.manager.start_download(&job_id);
-                state_clone
-                    .manager
-                    .event_bus()
-                    .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: job_id });
             } else if already_existed && job.state == tdm_core::JobState::Queued {
                 let _ = state_clone.manager.start_download(&job_id);
             }
@@ -924,10 +920,6 @@ async fn handle_create_media_download(
             let fname = job.filename.clone();
             if job.state != tdm_core::JobState::Scheduled {
                 let _ = state.manager.start_download(&job_id);
-                state
-                    .manager
-                    .event_bus()
-                    .emit(tdm_core::DownloadEvent::OpenProgressWindow { id: job_id.clone() });
             }
 
             Ok(Json(CreateDownloadResp {

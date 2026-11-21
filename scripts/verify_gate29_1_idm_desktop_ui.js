@@ -642,13 +642,14 @@ async function run() {
     await cdp.screenshot(path.join(SCREENSHOTS_DIR, '05_settings_integration.png'));
 
     // Tab 4: About (screenshot + verify version & buttons)
+    const expectedDesktopVer = JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8')).version;
     await cdp.eval(`document.querySelector('#ptabsrow .pt[data-tab="about"]').click()`);
     await sleep(250);
     const aboutInfo = await cdp.eval(`(() => {
       const txt = document.getElementById('prefbody')?.textContent || '';
-      return { hasTitle: txt.includes('TORI Download Manager'), hasVersion: /Version\\s+1\\.0\\.5/i.test(txt), hasFalseDev: txt.includes('Development Build') };
+      return { hasTitle: txt.includes('TORI Download Manager'), hasVersion: txt.includes('Version ${expectedDesktopVer}'), hasFalseDev: txt.includes('Development Build') };
     })()`);
-    record('UI-SET-ABOUT', 'Settings About tab shows Version 1.0.5 accurately', aboutInfo.hasTitle && aboutInfo.hasVersion && !aboutInfo.hasFalseDev, JSON.stringify(aboutInfo));
+    record('UI-SET-ABOUT', `Settings About tab shows Version ${expectedDesktopVer} accurately`, aboutInfo.hasTitle && aboutInfo.hasVersion && !aboutInfo.hasFalseDev, JSON.stringify(aboutInfo));
     await cdp.screenshot(path.join(SCREENSHOTS_DIR, '06_settings_about.png'));
 
     // Switch Appearance -> Dark Theme + Ocean Accent, capture Dark Main Window!

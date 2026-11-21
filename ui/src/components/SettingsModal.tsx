@@ -57,10 +57,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     return initialTab || 'engine';
   });
-  const [appVersion, setAppVersion] = useState<string>('1.0.5');
+  const [appVersion, setAppVersion] = useState<string>('1.0.6');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
     state: 'idle',
-    currentVersion: '1.0.5',
+    currentVersion: '1.0.6',
     downloadedBytes: 0,
     totalBytes: 0,
   });
@@ -440,10 +440,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <b>Show Download Popup</b>
                     <span className="sub">
                       {settings.showDownloadPopup === 'never'
-                        ? 'Never show popup window'
+                        ? 'Never show progress window automatically'
                         : settings.showDownloadPopup === 'on_start'
-                          ? 'Show on start only'
-                          : 'Always show floating toast during download'}
+                          ? 'Show progress window on start only'
+                          : 'Always show download progress window'}
                     </span>
                   </div>
                   <div className="sc">

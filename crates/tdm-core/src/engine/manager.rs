@@ -1740,6 +1740,35 @@ impl DownloadManager {
         user_agent: Option<String>,
         scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<DownloadJob> {
+        self.create_managed_media_download_with_all_options_scheduled_and_start(
+            url,
+            format_id,
+            filename,
+            destination_dir,
+            priority,
+            thumbnail_url,
+            referer,
+            user_agent,
+            scheduled_at,
+            true,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_managed_media_download_with_all_options_scheduled_and_start<P: AsRef<Path>>(
+        &self,
+        url: &str,
+        format_id: &str,
+        filename: &str,
+        destination_dir: P,
+        priority: Priority,
+        thumbnail_url: Option<String>,
+        referer: Option<String>,
+        user_agent: Option<String>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+        auto_queue: bool,
+    ) -> Result<DownloadJob> {
         let clean_referer = referer
             .as_deref()
             .and_then(|r| crate::engine::referer::sanitize_and_validate_referer(r, url));
@@ -1759,6 +1788,7 @@ impl DownloadManager {
         let now = chrono::Utc::now();
         let (initial_state, final_sched) = match scheduled_at {
             Some(time) if time > now => (JobState::Scheduled, Some(time)),
+            _ if !auto_queue => (JobState::Paused, None),
             _ => (JobState::Queued, None),
         };
 
@@ -1808,7 +1838,7 @@ impl DownloadManager {
 
         if initial_state == JobState::Scheduled {
             self.notify_scheduler();
-        } else {
+        } else if auto_queue {
             let _ = self.process_queue();
         }
 
@@ -1915,6 +1945,9 @@ impl DownloadManager {
             id: id.to_string(),
             state: initial_state,
             error: None,
+        });
+        event_bus.emit(DownloadEvent::OpenProgressWindow {
+            id: id.to_string(),
         });
 
         let client_c = client.clone();

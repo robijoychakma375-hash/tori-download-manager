@@ -186,3 +186,65 @@ async fn test_per_download_speed_limiter_throttles_without_affecting_global() {
     assert_eq!(disk_bytes.len(), payload.len());
     cancel.cancel();
 }
+
+#[tokio::test]
+async fn test_start_and_queued_promotion_emit_open_progress_window_uniformly() {
+    let tmp = tempdir().unwrap();
+    let db = Database::open(tmp.path().join("lifecycle.sqlite")).unwrap();
+    let bus = EventBus::default();
+    let mut rx = bus.subscribe();
+    let mgr = DownloadManager::new(db, bus).unwrap();
+    mgr.set_max_active_jobs(1);
+
+    let payload = Arc::new(vec![0x33u8; 64 * 1024]);
+    let (port, cancel) = start_range_server(payload).await;
+
+    let url1 = format!("http://127.0.0.1:{}/job1.bin", port);
+    let url2 = format!("http://127.0.0.1:{}/job2.bin", port);
+    let job1 = mgr
+        .create_download_with_all_options_scheduled(&url1, tmp.path(), Priority::Normal, None, None, None)
+        .await
+        .unwrap();
+    let job2 = mgr
+        .create_download_with_all_options_scheduled(&url2, tmp.path(), Priority::Normal, None, None, None)
+        .await
+        .unwrap();
+
+    mgr.start_download(&job1.id).unwrap();
+    mgr.start_download(&job2.id).unwrap();
+
+    let mut opened_ids = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if let Ok(Ok(ev)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
+            if let tdm_core::DownloadEvent::OpenProgressWindow { id } = ev {
+                opened_ids.push(id);
+            }
+        }
+        let j1_done = mgr
+            .get_download(&job1.id)
+            .ok()
+            .flatten()
+            .map(|j| j.state == JobState::Completed)
+            .unwrap_or(false);
+        let j2_done = mgr
+            .get_download(&job2.id)
+            .ok()
+            .flatten()
+            .map(|j| j.state == JobState::Completed)
+            .unwrap_or(false);
+        if j1_done && j2_done && opened_ids.contains(&job1.id) && opened_ids.contains(&job2.id) {
+            break;
+        }
+    }
+
+    assert!(
+        opened_ids.contains(&job1.id),
+        "Active download job1 must emit OpenProgressWindow"
+    );
+    assert!(
+        opened_ids.contains(&job2.id),
+        "Queued download job2 must emit OpenProgressWindow when promoted to active"
+    );
+    cancel.cancel();
+}

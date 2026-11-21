@@ -359,7 +359,6 @@ fn test_v105_release_candidate_signature_cryptographic_verification() {
     let conf_path = root.join("src-tauri").join("tauri.conf.json");
     let conf: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&conf_path).unwrap()).unwrap();
-    assert_eq!(conf["version"].as_str(), Some("1.0.5"));
     let pubkey_base64 = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
     let decoded_pubkey = String::from_utf8(decode_base64_str(pubkey_base64)).unwrap();
     let public_key = PublicKey::decode(&decoded_pubkey).expect("Public key decode failed");
@@ -435,4 +434,72 @@ fn test_v105_release_candidate_signature_cryptographic_verification() {
             plat_url
         );
     }
+}
+
+#[test]
+fn test_v106_release_candidate_signature_cryptographic_verification() {
+    let root = get_project_root();
+    let installer_path = root
+        .join("release")
+        .join("v1.0.6-rc")
+        .join("TORI Download Manager_1.0.6_x64-setup.exe");
+    let sig_path = root
+        .join("release")
+        .join("v1.0.6-rc")
+        .join("TORI Download Manager_1.0.6_x64-setup.exe.sig");
+
+    assert!(
+        installer_path.exists(),
+        "v1.0.6 RC installer must exist: {:?}",
+        installer_path
+    );
+    assert!(
+        sig_path.exists(),
+        "v1.0.6 RC detached .sig must exist: {:?}",
+        sig_path
+    );
+
+    let installer_bytes =
+        fs::read(&installer_path).expect("Failed to read v1.0.6 RC installer executable");
+    assert!(
+        installer_bytes.starts_with(b"MZ"),
+        "v1.0.6 RC installer must start with MZ PE header"
+    );
+
+    let sig_str = fs::read_to_string(&sig_path).expect("Failed to read v1.0.6 RC .sig file");
+    let sig_raw = decode_base64_str(&sig_str);
+    let sig_text =
+        String::from_utf8(sig_raw).expect("v1.0.6 signature base64 did not decode to UTF-8");
+    let signature = Signature::decode(&sig_text)
+        .expect("v1.0.6 signature failed to parse as Minisign Signature");
+
+    let conf_path = root.join("src-tauri").join("tauri.conf.json");
+    let conf: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&conf_path).unwrap()).unwrap();
+    assert_eq!(conf["version"].as_str(), Some("1.0.6"));
+    let pubkey_base64 = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
+    let decoded_pubkey = String::from_utf8(decode_base64_str(pubkey_base64)).unwrap();
+    let public_key = PublicKey::decode(&decoded_pubkey).expect("Public key decode failed");
+
+    let verify_res = public_key.verify(&installer_bytes, &signature, true);
+    assert!(
+        verify_res.is_ok(),
+        "Ed25519 Minisign signature verification failed for v1.0.6 RC installer: {:?}",
+        verify_res.err()
+    );
+
+    let trusted_comment = signature.trusted_comment();
+    assert!(
+        trusted_comment.contains("file:TORI Download Manager_1.0.6_x64-setup.exe"),
+        "Trusted comment must reference v1.0.6 installer filename: {}",
+        trusted_comment
+    );
+
+    let mut tampered = installer_bytes.clone();
+    let mid = tampered.len() / 2;
+    tampered[mid] ^= 0x55;
+    assert!(
+        public_key.verify(&tampered, &signature, true).is_err(),
+        "Tampered v1.0.6 RC payload must be rejected by Ed25519 Minisign verification"
+    );
 }

@@ -8,6 +8,7 @@ use tdm_core::{
 };
 
 static AUTO_OPENED_PROGRESS_IDS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static PROGRESS_WINDOW_CREATE_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 fn mark_auto_opened_once(id: &str) -> bool {
     let lock = AUTO_OPENED_PROGRESS_IDS.get_or_init(|| Mutex::new(HashSet::new()));
@@ -150,6 +151,7 @@ pub async fn create_download(
     referer: Option<String>,
     user_agent: Option<String>,
     scheduled_at: Option<String>,
+    start_immediately: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<DownloadJob, String> {
     if let Some(ref d) = destination {
@@ -174,13 +176,14 @@ pub async fn create_download(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
+    let start_now = start_immediately.unwrap_or(true);
     let job = if is_media_portal_url(&url) {
         let dest_dir = state
             .manager
             .resolve_destination_folder("media_download.mp4", destination.as_deref());
         state
             .manager
-            .create_managed_media_download_with_all_options_scheduled(
+            .create_managed_media_download_with_all_options_scheduled_and_start(
                 &url,
                 "best",
                 "media_download.mp4",
@@ -190,6 +193,7 @@ pub async fn create_download(
                 clean_referer,
                 clean_user_agent,
                 parsed_sched,
+                start_now,
             )
             .await
             .map_err(|e| e.to_string())?
@@ -208,12 +212,16 @@ pub async fn create_download(
             .map_err(|e| e.to_string())?
     };
 
-    // Auto-start download upon creation if not scheduled
+    // Auto-start download upon creation unless scheduled or explicitly queued/paused
     if job.state != tdm_core::JobState::Scheduled {
-        state
-            .manager
-            .start_download(&job.id)
-            .map_err(|e| e.to_string())?;
+        if start_now {
+            state
+                .manager
+                .start_download(&job.id)
+                .map_err(|e| e.to_string())?;
+        } else if job.state != tdm_core::JobState::Paused {
+            let _ = state.manager.pause_download(&job.id);
+        }
     }
 
     Ok(job)
@@ -805,6 +813,9 @@ pub async fn open_progress_window_internal(
     id: &str,
     force: bool,
 ) -> Result<(), String> {
+    let create_lock = PROGRESS_WINDOW_CREATE_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
+    let _guard = create_lock.lock().await;
+
     let mut initial_theme: Option<String> = None;
     let mut initial_accent: Option<String> = None;
     let mut popup_mode = "always".to_string();
@@ -829,9 +840,19 @@ pub async fn open_progress_window_internal(
 
     if !force {
         if popup_mode == "never" {
+            crate::lifecycle::log_event(
+                "PROGRESS_WINDOW",
+                "SKIPPED",
+                &format!("id={}, reason=popup_mode_never", id),
+            );
             return Ok(());
         }
         if popup_mode == "on_start" && !mark_auto_opened_once(id) {
+            crate::lifecycle::log_event(
+                "PROGRESS_WINDOW",
+                "SKIPPED",
+                &format!("id={}, reason=already_auto_opened_on_start", id),
+            );
             return Ok(());
         }
     }
@@ -851,6 +872,11 @@ pub async fn open_progress_window_internal(
         if force {
             let _ = app.emit_to(&label, "progress-restore-full", id);
         }
+        crate::lifecycle::log_event(
+            "PROGRESS_WINDOW",
+            "REUSE",
+            &format!("label={}, id={}, force={}", label, id, force),
+        );
         return Ok(());
     }
 
@@ -928,6 +954,15 @@ pub async fn open_progress_window_internal(
     let _win = builder
         .build()
         .map_err(|e| format!("Failed to create progress window: {}", e))?;
+
+    crate::lifecycle::log_event(
+        "PROGRESS_WINDOW",
+        "OPEN",
+        &format!(
+            "label={}, id={}, filename={}, mode={}, force={}, always_on_top={}",
+            label, id, job.filename, popup_mode, force, always_on_top
+        ),
+    );
 
     Ok(())
 }
@@ -1202,7 +1237,7 @@ pub async fn update_toast_bounds(
     let target = if window.label().starts_with("progress_") {
         app.get_webview_window(window.label())
     } else {
-        app.get_webview_window("progress_toast")
+        None
     };
 
     if let Some(win) = target {
@@ -1220,11 +1255,9 @@ pub async fn update_toast_bounds(
 }
 
 #[tauri::command]
-pub async fn hide_toast_window(window: tauri::Window, app: tauri::AppHandle) -> Result<(), String> {
+pub async fn hide_toast_window(window: tauri::Window) -> Result<(), String> {
     if window.label() != "main" {
         let _ = window.close();
-    } else if let Some(win) = app.get_webview_window("progress_toast") {
-        let _ = win.close();
     }
     Ok(())
 }
@@ -1395,7 +1428,6 @@ pub async fn resolve_media(
 pub async fn create_media_download(
     args: CreateMediaDownloadArgs,
     state: State<'_, AppState>,
-    app: tauri::AppHandle,
 ) -> Result<DownloadJob, String> {
     let raw_url = args.url.trim();
     if raw_url.is_empty() {
@@ -1445,9 +1477,10 @@ pub async fn create_media_download(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
+    let start_now = args.start_immediately.unwrap_or(true);
     let job = state
         .manager
-        .create_managed_media_download_with_all_options_scheduled(
+        .create_managed_media_download_with_all_options_scheduled_and_start(
             target_media_url,
             &format_id,
             &filename_with_ext,
@@ -1457,18 +1490,16 @@ pub async fn create_media_download(
             None,
             None,
             parsed_sched,
+            start_now,
         )
         .await
         .map_err(|e| e.to_string())?;
 
-    let start_now = args.start_immediately.unwrap_or(true);
-    if start_now && job.state != tdm_core::JobState::Scheduled {
+    if job.state != tdm_core::JobState::Scheduled && start_now {
         state
             .manager
             .start_download(&job.id)
             .map_err(|e| e.to_string())?;
-
-        let _ = open_progress_window_internal(&app, &state.manager, &job.id, false).await;
     }
 
     Ok(job)

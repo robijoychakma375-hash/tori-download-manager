@@ -20,7 +20,6 @@ import { SideBar } from './components/SideBar';
 import { DownloadTable } from './components/DownloadTable';
 import { StatusBar } from './components/StatusBar';
 import { AddDownloadModal } from './components/AddDownloadModal';
-import { ProgressModal } from './components/ProgressModal';
 import { DownloadToast } from './components/DownloadToast';
 import { SettingsModal } from './components/SettingsModal';
 import { ContextMenu } from './components/ContextMenu';
@@ -343,7 +342,6 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
     }
     return null;
   });
-  const [progressJobId, setProgressJobId] = useState<string | null>(null);
   const [settingsInitialTab, setSettingsInitialTab] = useState<
     'appearance' | 'engine' | 'integration' | 'about'
   >('engine');
@@ -612,7 +610,6 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
       setIsSettingsModalOpen(false);
       setDeleteConfirmJobs(null);
       setContextMenu(null);
-      setProgressJobId(null);
       setPlaylistModalState({
         url: cleanUrl,
         requestId,
@@ -1026,19 +1023,15 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
             },
           });
         } else {
-          const job = await invoke<DownloadJob>('create_download', {
+          await invoke<DownloadJob>('create_download', {
             url,
             destination: dir || null,
             priority: 'normal',
             referer: null,
             userAgent: null,
             scheduledAt: scheduledAt || null,
+            startImmediately,
           });
-          if (!startImmediately && !scheduledAt) {
-            await invoke('pause_download', { id: job.id });
-          } else if (startImmediately && !scheduledAt) {
-            invoke('open_progress_window', { id: job.id, force: false }).catch(() => {});
-          }
         }
         createdCount++;
       } catch (err) {
@@ -1111,15 +1104,6 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
     [showToast]
   );
 
-  const handleCancel = async (job: DownloadJob) => {
-    try {
-      await invoke('cancel_download', { id: job.id });
-      showToast(`Cancelled ${job.filename}`);
-    } catch (err) {
-      showToast(`Cancel failed: ${String(err)}`);
-    }
-  };
-
   const handleReschedule = async (job: DownloadJob) => {
     const defaultVal = job.scheduled_at
       ? new Date(job.scheduled_at).toISOString().slice(0, 16)
@@ -1158,13 +1142,17 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
     }
   };
 
-  const handleOpenProgress = useCallback(async (job: DownloadJob) => {
-    try {
-      await invoke('open_progress_window', { id: job.id });
-    } catch {
-      setProgressJobId(job.id);
-    }
-  }, []);
+  const handleOpenProgress = useCallback(
+    async (job: DownloadJob) => {
+      try {
+        await invoke('open_progress_window', { id: job.id, force: true });
+      } catch (err) {
+        console.error('Failed to open native progress window:', err);
+        showToast(`Could not open progress window: ${String(err)}`);
+      }
+    },
+    [showToast]
+  );
 
   const handleStopAll = useCallback(async () => {
     const active = downloads.filter(
@@ -1379,7 +1367,6 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
       if (e.key === 'Escape') {
         setIsAddModalOpen(false);
         setPlaylistModalState(null);
-        setProgressJobId(null);
         setIsSettingsModalOpen(false);
         setDeleteConfirmJobs(null);
         setContextMenu(null);
@@ -1467,10 +1454,6 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [filteredDownloads, handleBulkTogglePause, lastFocusedId, selectedJobs]);
 
-  const progressJob = useMemo(() => {
-    return downloads.find((d) => d.id === progressJobId) || null;
-  }, [downloads, progressJobId]);
-
   const singleSelected = selectedJobs.length === 1 ? selectedJobs[0] : null;
 
   return (
@@ -1493,7 +1476,6 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
           isSettingsModalOpen ||
           !!playlistModalState ||
           !!deleteConfirmJobs ||
-          !!progressJobId ||
           !!availableUpdate
         }
         onAdd={() => setIsAddModalOpen(true)}
@@ -1607,16 +1589,6 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
             loadDownloads();
             showToast(`Enqueued ${count} videos from playlist`);
           }}
-        />
-      )}
-
-      {progressJob && (
-        <ProgressModal
-          job={progressJob}
-          onClose={() => setProgressJobId(null)}
-          onTogglePause={handleTogglePause}
-          onCancel={handleCancel}
-          onOpenFile={handleOpenFile}
         />
       )}
 

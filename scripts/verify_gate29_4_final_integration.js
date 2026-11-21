@@ -20,9 +20,10 @@ const crypto = require('crypto');
 const { spawn, execSync, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const RC_DIR = path.join(ROOT, 'release', 'v1.0.5-rc');
-const INSTALLER_EXE = path.join(RC_DIR, 'TORI Download Manager_1.0.5_x64-setup.exe');
-const INSTALLER_SIG = path.join(RC_DIR, 'TORI Download Manager_1.0.5_x64-setup.exe.sig');
+const TARGET_VER = process.env.TORI_QA_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8')).version || '1.0.5';
+const RC_DIR = process.env.TORI_QA_RC_DIR || path.join(ROOT, 'release', `v${TARGET_VER}-rc`);
+const INSTALLER_EXE = path.join(RC_DIR, `TORI Download Manager_${TARGET_VER}_x64-setup.exe`);
+const INSTALLER_SIG = path.join(RC_DIR, `TORI Download Manager_${TARGET_VER}_x64-setup.exe.sig`);
 const SHA256SUMS_PATH = path.join(RC_DIR, 'SHA256SUMS.txt');
 
 const EXT_RC_DIR = path.join(ROOT, 'release', 'v1.0.9-extension-rc');
@@ -87,6 +88,7 @@ const trackedProcs = new Set();
 const perfMetrics = {};
 let oemWasRunning = false;
 let hkcuUninstallExisted = false;
+let hkcuManuExisted = false;
 let fixtureServer = null;
 
 function record(id, name, status, detail = '') {
@@ -228,6 +230,15 @@ function backupOemState() {
     hkcuUninstallExisted = false;
   }
 
+  const manuKey = 'HKCU\\Software\\tori\\TORI Download Manager';
+  const manuReg = path.join(QA_BACKUP_DIR, 'manu.reg');
+  try {
+    execFileSync('reg', ['export', manuKey, manuReg, '/y'], { stdio: 'ignore', timeout: 4000 });
+    hkcuManuExisted = true;
+  } catch {
+    hkcuManuExisted = false;
+  }
+
   for (let i = 0; i < getShortcutTargets().length; i++) {
     const src = getShortcutTargets()[i];
     if (fs.existsSync(src)) {
@@ -244,6 +255,16 @@ function restoreOemState() {
       execFileSync('reg', ['import', uninstReg], { stdio: 'ignore', timeout: 4000 });
     } else {
       execFileSync('reg', ['delete', uninstKey, '/f'], { stdio: 'ignore', timeout: 4000 });
+    }
+  } catch {}
+
+  const manuKey = 'HKCU\\Software\\tori\\TORI Download Manager';
+  const manuReg = path.join(QA_BACKUP_DIR, 'manu.reg');
+  try {
+    if (hkcuManuExisted && fs.existsSync(manuReg)) {
+      execFileSync('reg', ['import', manuReg], { stdio: 'ignore', timeout: 4000 });
+    } else {
+      execFileSync('reg', ['delete', manuKey, '/f'], { stdio: 'ignore', timeout: 4000 });
     }
   } catch {}
 
@@ -855,14 +876,14 @@ async function main() {
       ['-NoProfile', '-Command', `(Get-Item '${instDesktop.replace(/'/g, "''")}').VersionInfo.ProductVersion`],
       { encoding: 'utf8', timeout: 5000 }
     ).trim();
-    const rcSumsOk = ['tori-download-manager.exe', 'tdm-native-host.exe', 'tdm-cli.exe', 'TORI Download Manager_1.0.5_x64-setup.exe', 'TORI Download Manager_1.0.5_x64-setup.exe.sig'].every((f) => {
+    const rcSumsOk = ['tori-download-manager.exe', 'tdm-native-host.exe', 'tdm-cli.exe', `TORI Download Manager_${TARGET_VER}_x64-setup.exe`, `TORI Download Manager_${TARGET_VER}_x64-setup.exe.sig`].every((f) => {
       const h = sha256File(path.join(RC_DIR, f));
       return h && rcSums.includes(h);
     });
     record(
       'G294-INST-01',
-      'Clean NSIS silent install deploys verified v1.0.5 binaries & signed updater artifact cleanly',
-      Boolean(installerExists && instHost && fs.existsSync(path.join(QA_INST_DIR, 'uninstall.exe')) && instPeVer.startsWith('1.0.5') && instBinsMatch && rcSumsOk && rcDeskHash && chrRegVal.includes('com.tori.download_manager.json')),
+      `Clean NSIS silent install deploys verified v${TARGET_VER} binaries & signed updater artifact cleanly`,
+      Boolean(installerExists && instHost && fs.existsSync(path.join(QA_INST_DIR, 'uninstall.exe')) && instPeVer.startsWith(TARGET_VER) && instBinsMatch && rcSumsOk && rcDeskHash && chrRegVal.includes('com.tori.download_manager.json')),
       `peVer=${instPeVer}, instBinsMatch=${instBinsMatch}, rcSumsOk=${rcSumsOk}, nmReg=${chrRegVal.includes('com.tori.download_manager.json')}, host=${instHost || 'none'}`
     );
 
@@ -891,8 +912,8 @@ async function main() {
     const tables = JSON.parse(schemaCheck);
     record(
       'G294-INST-02',
-      'Installed v1.0.5 initializes SQLite cleanly, renders v1.0.5 UI with zero console windows',
-      Boolean(cleanBoot.pingOk && uiCleanDiag.ver === '1.0.5' && cleanStats.consoleCount === 0 && ['downloads', 'download_chunks', 'engine_settings', 'format_metadata_cache'].every((t) => tables.includes(t))),
+      `Installed v${TARGET_VER} initializes SQLite cleanly, renders v${TARGET_VER} UI with zero console windows`,
+      Boolean(cleanBoot.pingOk && uiCleanDiag.ver === TARGET_VER && cleanStats.consoleCount === 0 && ['downloads', 'download_chunks', 'engine_settings', 'format_metadata_cache'].every((t) => tables.includes(t))),
       JSON.stringify({ ...uiCleanDiag, consoleCount: cleanStats.consoleCount, tables })
     );
 

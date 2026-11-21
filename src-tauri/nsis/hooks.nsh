@@ -24,6 +24,16 @@ postinstall_fallback:
   WriteRegStr HKCU "Software\Mozilla\NativeMessagingHosts\com.tori.download_manager" "" "$APPDATA\tori-download-manager\com.tori.download_manager.firefox.json"
 
 postinstall_done:
+  ; Terminate any stale TORI Desktop instance that may have been respawned by a
+  ; browser Native Messaging host during installer extraction so the newly installed
+  ; binary launches cleanly as the primary instance instead of hitting SECONDARY_INSTANCE.
+  nsis_tauri_utils::FindProcessCurrentUser "tori-download-manager.exe"
+  Pop $R0
+  ${If} $R0 = 0
+    nsis_tauri_utils::KillProcessCurrentUser "tori-download-manager.exe"
+    Pop $R0
+    Sleep 300
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
