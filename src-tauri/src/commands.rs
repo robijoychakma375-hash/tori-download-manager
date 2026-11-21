@@ -1526,3 +1526,146 @@ pub async fn reschedule_download(
         .reschedule_download(&id, parsed_sched)
         .map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// Independent External Tools Auto-Update Manager Commands (Gate 32)
+// ============================================================================
+
+pub fn send_tool_update_notification(title: &str, body: &str) {
+    crate::lifecycle::log_event(
+        "NOTIFY",
+        "EXTERNAL_TOOL_UPDATE",
+        &format!("title={}, body={}", title, body),
+    );
+
+    #[cfg(windows)]
+    {
+        let safe_title = xml_escape(title).replace('\'', "''");
+        let safe_body = xml_escape(body).replace('\'', "''");
+        let ps_script = format!(
+            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; \
+             [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null; \
+             $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; \
+             $xml.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>'); \
+             $toast = New-Object Windows.UI.Notifications.ToastNotification $xml; \
+             [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('TORI Download Manager').Show($toast)",
+            safe_title, safe_body
+        );
+        std::thread::spawn(move || {
+            let _ = silent_command("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    &ps_script,
+                ])
+                .output();
+        });
+    }
+}
+
+#[tauri::command]
+pub async fn get_external_tools_status(
+    state: State<'_, AppState>,
+) -> Result<tdm_core::tools::ExternalToolsSnapshot, String> {
+    let tm = state.tools_manager.clone();
+    tokio::task::spawn_blocking(move || tm.get_status_snapshot())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn check_external_tools_updates(
+    state: State<'_, AppState>,
+) -> Result<tdm_core::tools::ExternalToolsSnapshot, String> {
+    state
+        .tools_manager
+        .check_for_updates(true)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_external_tool(
+    tool_id: String,
+    state: State<'_, AppState>,
+) -> Result<tdm_core::tools::ExternalToolsSnapshot, String> {
+    // Strictly validate against allowlist (yt-dlp, ffmpeg, ffprobe); frontend can never supply URLs or paths
+    let parsed_id = tool_id.parse::<tdm_core::tools::ToolId>()?;
+    state
+        .tools_manager
+        .update_tool(parsed_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_all_external_tools(
+    state: State<'_, AppState>,
+) -> Result<tdm_core::tools::ExternalToolsSnapshot, String> {
+    state
+        .tools_manager
+        .update_all_tools()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_external_tool_update_history(
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<tdm_core::tools::ExternalToolHistoryEntry>, String> {
+    state
+        .tools_manager
+        .get_update_history(limit.unwrap_or(100))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn rollback_external_tool(
+    tool_id: String,
+    state: State<'_, AppState>,
+) -> Result<tdm_core::tools::ExternalToolsSnapshot, String> {
+    let parsed_id = tool_id.parse::<tdm_core::tools::ToolId>()?;
+    state
+        .tools_manager
+        .rollback_tool(parsed_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_external_tool_location(
+    tool_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let parsed_id = tool_id.parse::<tdm_core::tools::ToolId>()?;
+    let loc = state
+        .tools_manager
+        .get_tool_location(parsed_id)
+        .ok_or_else(|| format!("Executable location for {} was not found", parsed_id.display_name()))?;
+    let path_str = loc.to_string_lossy().to_string();
+    open_folder(path_str.clone()).await?;
+    Ok(path_str)
+}
+
+#[tauri::command]
+pub async fn get_external_tool_update_settings(
+    state: State<'_, AppState>,
+) -> Result<tdm_core::tools::ExternalToolsSettings, String> {
+    Ok(state.tools_manager.get_settings())
+}
+
+#[tauri::command]
+pub async fn save_external_tool_update_settings(
+    settings: tdm_core::tools::ExternalToolsSettings,
+    state: State<'_, AppState>,
+) -> Result<tdm_core::tools::ExternalToolsSettings, String> {
+    state
+        .tools_manager
+        .save_settings(&settings)
+        .map_err(|e| e.to_string())
+}

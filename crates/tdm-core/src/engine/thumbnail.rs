@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::db::Database;
 use crate::error::{EngineError, Result};
-use crate::hls::muxer::{find_ffmpeg, silent_command};
+use crate::hls::muxer::silent_command;
 use crate::resolver::ssrf::validate_safe_media_url;
 
 const BASE64_ALPHABET: &[u8; 64] =
@@ -116,8 +116,9 @@ pub fn extract_thumbnail_from_video(video_path: &Path, output_path: &Path) -> Re
         )));
     }
 
-    let ffmpeg_bin = find_ffmpeg()
+    let ffmpeg_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffmpeg)
         .ok_or_else(|| EngineError::Other("FFmpeg is required for thumbnail extraction".into()))?;
+    let ffmpeg_bin = ffmpeg_lease.into_path_buf_ref();
 
     if let Some(parent) = output_path.parent() {
         let _ = fs::create_dir_all(parent);

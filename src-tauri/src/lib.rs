@@ -100,6 +100,31 @@ pub fn run() {
             .expect("Failed to initialize TDM Download Manager"),
     );
 
+    // Initialize Independent External Tools Auto-Update Manager (yt-dlp, FFmpeg, FFprobe)
+    let mut tools_cfg = tdm_core::tools::ToolsManagerConfig::default();
+    // Isolated QA harness override: ONLY active when TORI_DATA_DIR is set AND target is strictly 127.0.0.1
+    if std::env::var("TORI_DATA_DIR").is_ok() {
+        if let Ok(manifest_url) = std::env::var("TORI_TEST_TOOLS_MANIFEST_URL") {
+            if manifest_url.starts_with("http://127.0.0.1:") {
+                tools_cfg.signed_manifest_url = Some(manifest_url);
+                tools_cfg.allow_loopback_http = true;
+            }
+        }
+        if let Ok(pubkey) = std::env::var("TORI_TEST_TOOLS_PUBKEY") {
+            if !pubkey.trim().is_empty() && tools_cfg.allow_loopback_http {
+                tools_cfg.tori_manifest_pubkey_b64 = pubkey;
+            }
+        }
+    }
+    let tools_manager = Arc::new(
+        tdm_core::tools::ExternalToolsManager::with_config(db.clone(), data_dir.clone(), tools_cfg)
+            .expect("Failed to initialize External Tools Auto-Update Manager"),
+    );
+    let busy_mgr = manager.clone();
+    tools_manager.set_busy_jobs_checker(Arc::new(move |bundle| {
+        busy_mgr.has_active_external_tool_jobs(bundle)
+    }));
+
     let already_migrated_tray = db
         .get_setting("close_to_tray_migrated_v104")
         .ok()
@@ -146,6 +171,8 @@ pub fn run() {
     let shutdown_token = CancellationToken::new();
     let ipc_shutdown = shutdown_token.clone();
     let srv_shutdown = shutdown_token.clone();
+    let tools_shutdown = shutdown_token.clone();
+    let setup_tools_manager = tools_manager.clone();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(move |app, args, _cwd| {
@@ -167,6 +194,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             manager: manager.clone(),
+            tools_manager: tools_manager.clone(),
             is_minimized_launch: is_minimized_launch.clone(),
         })
         .setup(move |app| {
@@ -277,6 +305,31 @@ pub fn run() {
                     eprintln!("[TORI] Failed to start local integration server: {}", e);
                 }
             });
+
+            // Forward External Tools Updater events to frontend & native notifications
+            let tools_events_app = app_handle.clone();
+            let mut tools_rx = setup_tools_manager.subscribe();
+            tauri::async_runtime::spawn(async move {
+                while let Ok(evt) = tools_rx.recv().await {
+                    match evt {
+                        tdm_core::tools::ExternalToolsEvent::StatusChanged => {
+                            let _ = tools_events_app.emit("external-tools-status-changed", ());
+                        }
+                        tdm_core::tools::ExternalToolsEvent::Progress(prog) => {
+                            let _ = tools_events_app.emit("external-tools-progress", &prog);
+                        }
+                        tdm_core::tools::ExternalToolsEvent::Notification(notif) => {
+                            let _ = tools_events_app.emit("external-tools-notification", &notif);
+                            commands::send_tool_update_notification(&notif.title, &notif.body);
+                        }
+                    }
+                }
+            });
+
+            // Start non-blocking background External Tools Update scheduler (every 24h by default)
+            tauri::async_runtime::spawn(
+                setup_tools_manager.run_background_scheduler(tools_shutdown),
+            );
 
             if setup_minimized_flag.load(std::sync::atomic::Ordering::SeqCst)
                 && manager.pending_playlist_requests_snapshot().is_empty()
@@ -400,6 +453,15 @@ pub fn run() {
             get_active_downloads_count,
             open_external_url,
             get_third_party_licenses,
+            get_external_tools_status,
+            check_external_tools_updates,
+            update_external_tool,
+            update_all_external_tools,
+            get_external_tool_update_history,
+            rollback_external_tool,
+            open_external_tool_location,
+            get_external_tool_update_settings,
+            save_external_tool_update_settings,
         ])
         .build(tauri::generate_context!())
         .expect("Error while building TORI Download Manager desktop application");

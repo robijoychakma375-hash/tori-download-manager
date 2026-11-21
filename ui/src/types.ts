@@ -200,3 +200,102 @@ export interface MediaMetadata {
   formats: ResolvedMediaFormat[];
   is_direct_media: boolean;
 }
+
+export type ExternalToolId = 'yt-dlp' | 'ffmpeg' | 'ffprobe';
+
+export type ExternalToolUpdateStatus =
+  | 'up_to_date'
+  | 'checking'
+  | 'update_available'
+  | 'downloading'
+  | 'verifying'
+  | 'testing'
+  | 'pending_activation'
+  | 'installing'
+  | 'updated'
+  | 'update_failed'
+  | 'rolled_back'
+  | 'source_untrusted';
+
+export interface ExternalToolsSettings {
+  auto_update: boolean;
+  check_interval_hours: number;
+  auto_install: boolean;
+  notify_on_update: boolean;
+  defer_while_in_use: boolean;
+}
+
+export interface ExternalToolRecord {
+  tool_id: ExternalToolId;
+  display_name: string;
+  installed_version: string | null;
+  available_version: string | null;
+  active_binary_path: string | null;
+  source: string;
+  platform: string;
+  architecture: string;
+  artifact_sha256: string | null;
+  installed_at: string | null;
+  last_checked_at: string | null;
+  last_updated_at: string | null;
+  last_successful_version: string | null;
+  update_status: ExternalToolUpdateStatus;
+  last_error: string | null;
+  rollback_available: boolean;
+  rollback_version: string | null;
+  rollback_binary_path: string | null;
+  pending_version: string | null;
+  pending_binary_path: string | null;
+  failed_versions: string[];
+}
+
+export interface ExternalToolHistoryEntry {
+  id: number;
+  tool_id: string;
+  action: string;
+  from_version: string | null;
+  to_version: string | null;
+  status: string;
+  source: string | null;
+  artifact_sha256: string | null;
+  trust_level: string | null;
+  message: string | null;
+  created_at: string;
+}
+
+export interface ExternalToolsSchedulerState {
+  last_successful_check_at: string | null;
+  last_attempt_at: string | null;
+  consecutive_failures: number;
+  next_retry_after: string | null;
+  last_error: string | null;
+}
+
+export interface ExternalToolsSnapshot {
+  tools: ExternalToolRecord[];
+  settings: ExternalToolsSettings;
+  scheduler: ExternalToolsSchedulerState;
+  checking: boolean;
+  active_yt_dlp_leases: number;
+  active_ffmpeg_leases: number;
+  active_ffprobe_leases: number;
+}
+
+export interface ExternalToolProgressEvent {
+  tool_id: ExternalToolId;
+  status: ExternalToolUpdateStatus;
+  stage: string;
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  speed_bps: number;
+  message: string | null;
+}
+
+export interface ExternalToolNotificationEvent {
+  kind: string;
+  tool_id: ExternalToolId;
+  title: string;
+  body: string;
+  version: string | null;
+  timestamp: string;
+}

@@ -367,6 +367,44 @@ impl DownloadManager {
         self.rate_limiter.rate_limit()
     }
 
+    /// Returns true if any active download job currently relies on the specified external tool bundle.
+    pub fn has_active_external_tool_jobs(&self, bundle: crate::tools::ToolBundleId) -> bool {
+        let active_ids: Vec<String> = {
+            let guard = self.active_tokens.lock().unwrap();
+            guard.keys().cloned().collect()
+        };
+        if active_ids.is_empty() {
+            return false;
+        }
+        for id in active_ids {
+            if let Ok(Some(job)) = self.db.get_job(&id) {
+                let is_active_state = matches!(
+                    job.state,
+                    JobState::Probing | JobState::Downloading | JobState::Verifying
+                );
+                if !is_active_state {
+                    continue;
+                }
+                let uses_bundle = match bundle {
+                    crate::tools::ToolBundleId::YtDlp => {
+                        matches!(job.job_type, JobType::ManagedMedia)
+                    }
+                    crate::tools::ToolBundleId::FfmpegBundle => matches!(
+                        job.job_type,
+                        JobType::ManagedMedia
+                            | JobType::HlsVod
+                            | JobType::DashVod
+                            | JobType::LiveStream
+                    ),
+                };
+                if uses_bundle {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn job_limiter_for_id(
         id: &str,
         db: &Database,

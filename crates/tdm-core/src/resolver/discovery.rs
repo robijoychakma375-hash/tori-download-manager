@@ -4,84 +4,13 @@ use std::path::PathBuf;
 pub use crate::hls::muxer::{find_ffmpeg, find_ffprobe, silent_command};
 use crate::resolver::models::ResolverStatus;
 
-/// Locates the `yt-dlp` executable on the system.
+/// Locates the `yt-dlp` executable using TORI's managed tools priority:
+/// 1. Active verified managed version (`<data_dir>/tools/manifests/active-tools.json`)
+/// 2. Verified rollback managed version
+/// 3. Bundled binary shipped with TORI
+/// 4. Legacy user/system fallback
 pub fn find_yt_dlp() -> Option<PathBuf> {
-    // 1. Check PATH via where.exe
-    if let Ok(output) = silent_command("where.exe").arg("yt-dlp").output() {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = stdout.lines().next() {
-                let p = PathBuf::from(line.trim());
-                if p.exists() {
-                    return Some(p);
-                }
-            }
-        }
-    }
-
-    // 2. Check application directory & sidecar bin / resources
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            for cand in [
-                dir.join("yt-dlp.exe"),
-                dir.join("bin").join("yt-dlp.exe"),
-                dir.join("resources").join("yt-dlp.exe"),
-                dir.join("resources").join("bin").join("yt-dlp.exe"),
-            ] {
-                if cand.exists() {
-                    return Some(cand);
-                }
-            }
-        }
-    }
-
-    // 3. User local runtime location (%LOCALAPPDATA%\tori-download-manager\bin\yt-dlp.exe)
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let p = PathBuf::from(&local_app_data)
-            .join("tori-download-manager")
-            .join("bin")
-            .join("yt-dlp.exe");
-        if p.exists() {
-            return Some(p);
-        }
-
-        // 4. WinGet Packages directory
-        let winget_dir = PathBuf::from(&local_app_data)
-            .join("Microsoft")
-            .join("WinGet")
-            .join("Packages");
-        if let Ok(entries) = fs::read_dir(winget_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.contains("yt-dlp.yt-dlp"))
-                    .unwrap_or(false)
-                {
-                    let bin = path.join("yt-dlp.exe");
-                    if bin.exists() {
-                        return Some(bin);
-                    }
-                }
-            }
-        }
-    }
-
-    // 5. Common system locations
-    for cand in [
-        r"C:\yt-dlp\yt-dlp.exe",
-        r"C:\Program Files\yt-dlp\yt-dlp.exe",
-        r"C:\ProgramData\chocolatey\bin\yt-dlp.exe",
-        r"C:\tools\yt-dlp\yt-dlp.exe",
-    ] {
-        let p = PathBuf::from(cand);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-
-    None
+    crate::tools::resolve_global_tool_path(crate::tools::ToolId::YtDlp)
 }
 
 /// Locates the `streamlink` executable on the system if installed (optional adapter).

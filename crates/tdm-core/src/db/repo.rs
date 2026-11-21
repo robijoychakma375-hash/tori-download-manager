@@ -28,6 +28,14 @@ impl Database {
         })
     }
 
+    pub(crate) fn with_conn<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> rusqlite::Result<R>,
+    {
+        let conn = self.conn.lock().unwrap();
+        Ok(f(&conn)?)
+    }
+
     pub fn insert_job(&self, job: &DownloadJob) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

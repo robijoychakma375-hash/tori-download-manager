@@ -18,163 +18,22 @@ pub fn silent_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     cmd
 }
 
-/// Locates the `ffmpeg` executable on the system.
+/// Locates the `ffmpeg` executable using TORI's managed tools priority:
+/// 1. Active verified managed bundle (`<data_dir>/tools/manifests/active-tools.json`)
+/// 2. Verified rollback managed bundle
+/// 3. Bundled binary shipped with TORI
+/// 4. Legacy user/system fallback
 pub fn find_ffmpeg() -> Option<PathBuf> {
-    if let Ok(output) = silent_command("where.exe").arg("ffmpeg").output() {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = stdout.lines().next() {
-                let p = PathBuf::from(line.trim());
-                if p.exists() {
-                    return Some(p);
-                }
-            }
-        }
-    }
-
-    // App directory and user runtime locations
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            for cand in [
-                dir.join("ffmpeg.exe"),
-                dir.join("bin").join("ffmpeg.exe"),
-                dir.join("resources").join("ffmpeg.exe"),
-                dir.join("resources").join("bin").join("ffmpeg.exe"),
-            ] {
-                if cand.exists() {
-                    return Some(cand);
-                }
-            }
-        }
-    }
-
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let p = PathBuf::from(&local_app_data)
-            .join("tori-download-manager")
-            .join("bin")
-            .join("ffmpeg.exe");
-        if p.exists() {
-            return Some(p);
-        }
-
-        // WinGet Gyan.FFmpeg discovery
-        let winget_dir = PathBuf::from(&local_app_data)
-            .join("Microsoft")
-            .join("WinGet")
-            .join("Packages");
-        if let Ok(entries) = fs::read_dir(winget_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_lowercase().contains("ffmpeg"))
-                    .unwrap_or(false)
-                {
-                    // Scan subdirectories for bin\ffmpeg.exe
-                    if let Ok(sub_entries) = fs::read_dir(&path) {
-                        for sub in sub_entries.flatten() {
-                            let bin = sub.path().join("bin").join("ffmpeg.exe");
-                            if bin.exists() {
-                                return Some(bin);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Common system fallback locations
-    for cand in [
-        r"C:\ffmpeg\bin\ffmpeg.exe",
-        r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
-    ] {
-        let p = PathBuf::from(cand);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-
-    None
+    crate::tools::resolve_global_tool_path(crate::tools::ToolId::Ffmpeg)
 }
 
-/// Locates the `ffprobe` executable on the system.
+/// Locates the `ffprobe` executable using TORI's managed tools priority:
+/// 1. Active verified managed bundle (`<data_dir>/tools/manifests/active-tools.json`)
+/// 2. Verified rollback managed bundle
+/// 3. Bundled binary shipped with TORI
+/// 4. Legacy user/system fallback
 pub fn find_ffprobe() -> Option<PathBuf> {
-    if let Ok(output) = silent_command("where.exe").arg("ffprobe").output() {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = stdout.lines().next() {
-                let p = PathBuf::from(line.trim());
-                if p.exists() {
-                    return Some(p);
-                }
-            }
-        }
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            for cand in [
-                dir.join("ffprobe.exe"),
-                dir.join("bin").join("ffprobe.exe"),
-                dir.join("resources").join("ffprobe.exe"),
-                dir.join("resources").join("bin").join("ffprobe.exe"),
-            ] {
-                if cand.exists() {
-                    return Some(cand);
-                }
-            }
-        }
-    }
-
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let p = PathBuf::from(&local_app_data)
-            .join("tori-download-manager")
-            .join("bin")
-            .join("ffprobe.exe");
-        if p.exists() {
-            return Some(p);
-        }
-
-        // WinGet Gyan.FFmpeg discovery
-        let winget_dir = PathBuf::from(&local_app_data)
-            .join("Microsoft")
-            .join("WinGet")
-            .join("Packages");
-        if let Ok(entries) = fs::read_dir(winget_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_lowercase().contains("ffmpeg"))
-                    .unwrap_or(false)
-                {
-                    if let Ok(sub_entries) = fs::read_dir(&path) {
-                        for sub in sub_entries.flatten() {
-                            let bin = sub.path().join("bin").join("ffprobe.exe");
-                            if bin.exists() {
-                                return Some(bin);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    for cand in [
-        r"C:\ffmpeg\bin\ffprobe.exe",
-        r"C:\Program Files\ffmpeg\bin\ffprobe.exe",
-    ] {
-        let p = PathBuf::from(cand);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-
-    None
+    crate::tools::resolve_global_tool_path(crate::tools::ToolId::Ffprobe)
 }
 
 /// Creates a safe FFmpeg concat demuxer text file.
@@ -203,12 +62,14 @@ pub fn remux_hls_to_mp4(
         ));
     }
 
-    let ffmpeg_bin = find_ffmpeg().ok_or_else(|| {
-        EngineError::Other(
-            "FFmpeg executable not found. TORI requires FFmpeg for standards-compliant container muxing."
-                .to_string(),
-        )
-    })?;
+    let ffmpeg_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffmpeg)
+        .ok_or_else(|| {
+            EngineError::Other(
+                "FFmpeg executable not found. TORI requires FFmpeg for standards-compliant container muxing."
+                    .to_string(),
+            )
+        })?;
+    let ffmpeg_bin = ffmpeg_lease.into_path_buf_ref();
 
     // Check if segments are fMP4 (e.g. init.mp4 + .m4s fragments)
     let is_fmp4 = video_segments.iter().any(|p| {
@@ -320,9 +181,11 @@ pub fn remux_hls_to_mp4(
 
 /// Probes a media file with `ffprobe` to verify duration and container integrity.
 pub fn probe_duration(file_path: &Path) -> Result<f64> {
-    let ffprobe_bin = find_ffprobe().ok_or_else(|| {
-        EngineError::Other("FFprobe executable not found on system PATH".to_string())
-    })?;
+    let ffprobe_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffprobe)
+        .ok_or_else(|| {
+            EngineError::Other("FFprobe executable not found on system PATH".to_string())
+        })?;
+    let ffprobe_bin = ffprobe_lease.into_path_buf_ref();
 
     let output = silent_command(&ffprobe_bin)
         .arg("-v")
@@ -354,9 +217,11 @@ pub fn probe_duration(file_path: &Path) -> Result<f64> {
 
 /// Detailed media probe returning `(has_video, has_audio, duration_seconds)`.
 pub fn probe_media_streams(file_path: &Path) -> Result<(bool, bool, f64)> {
-    let ffprobe_bin = find_ffprobe().ok_or_else(|| {
-        EngineError::Other("FFprobe executable not found on system PATH".to_string())
-    })?;
+    let ffprobe_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffprobe)
+        .ok_or_else(|| {
+            EngineError::Other("FFprobe executable not found on system PATH".to_string())
+        })?;
+    let ffprobe_bin = ffprobe_lease.into_path_buf_ref();
 
     let stream_output = silent_command(&ffprobe_bin)
         .arg("-v")

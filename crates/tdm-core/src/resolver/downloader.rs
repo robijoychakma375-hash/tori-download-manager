@@ -10,7 +10,6 @@ use tokio_util::sync::CancellationToken;
 use crate::db::Database;
 use crate::engine::EventBus;
 use crate::error::{EngineError, Result};
-use crate::resolver::discovery::{find_ffmpeg, find_yt_dlp};
 use crate::resolver::extractor::clean_ytdlp_error;
 use crate::types::{DownloadJob, DownloadProgress, JobState};
 use crate::DownloadEvent;
@@ -23,12 +22,16 @@ pub async fn download_managed_media(
     event_bus: &EventBus,
     cancel_token: &CancellationToken,
 ) -> Result<()> {
-    let yt_dlp_bin = find_yt_dlp().ok_or_else(|| {
-        EngineError::Other(
-            "yt-dlp executable was not found. Please install yt-dlp or place it in the TORI bin directory."
-                .to_string(),
-        )
-    })?;
+    let yt_dlp_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::YtDlp)
+        .ok_or_else(|| {
+            EngineError::Other(
+                "yt-dlp executable was not found. Please install yt-dlp or place it in the TORI bin directory."
+                    .to_string(),
+            )
+        })?;
+    let yt_dlp_bin = yt_dlp_lease.into_path_buf_ref();
+    let ffmpeg_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffmpeg);
+    let _ffprobe_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffprobe);
 
     let mut args: Vec<String> = vec![
         "--no-playlist".to_string(),
@@ -83,8 +86,8 @@ pub async fn download_managed_media(
     }
 
     // Configure FFmpeg location if available for stream-copy muxing
-    if let Some(ffmpeg_bin) = find_ffmpeg() {
-        if let Some(parent) = ffmpeg_bin.parent() {
+    if let Some(ref lease) = ffmpeg_lease {
+        if let Some(parent) = lease.path().parent() {
             args.push("--ffmpeg-location".to_string());
             args.push(parent.to_string_lossy().to_string());
         }

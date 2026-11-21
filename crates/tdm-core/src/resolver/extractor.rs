@@ -4,7 +4,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use crate::error::{EngineError, Result};
-use crate::resolver::discovery::{find_ffmpeg, find_yt_dlp};
+use crate::resolver::discovery::find_ffmpeg;
 
 pub const DEFAULT_RESOLVER_TIMEOUT: Duration = Duration::from_secs(30);
 pub const GENERIC_RESOLVER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -16,12 +16,14 @@ pub async fn execute_yt_dlp_dump(
     url: &str,
     timeout_dur: Option<Duration>,
 ) -> Result<serde_json::Value> {
-    let yt_dlp_bin = find_yt_dlp().ok_or_else(|| {
-        EngineError::Other(
-            "yt-dlp executable was not found. Please install yt-dlp or place it in the TORI bin folder."
-                .to_string(),
-        )
-    })?;
+    let yt_dlp_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::YtDlp)
+        .ok_or_else(|| {
+            EngineError::Other(
+                "yt-dlp executable was not found. Please install yt-dlp or place it in the TORI bin folder."
+                    .to_string(),
+            )
+        })?;
+    let yt_dlp_bin = yt_dlp_lease.into_path_buf_ref();
 
     let timeout = timeout_dur.unwrap_or(DEFAULT_RESOLVER_TIMEOUT);
 
@@ -145,12 +147,14 @@ pub async fn execute_yt_dlp_playlist_dump(
     limit: Option<usize>,
     timeout_dur: Option<Duration>,
 ) -> Result<serde_json::Value> {
-    let yt_dlp_bin = find_yt_dlp().ok_or_else(|| {
-        EngineError::Other(
-            "yt-dlp executable was not found. Please install yt-dlp or place it in the TORI bin folder."
-                .to_string(),
-        )
-    })?;
+    let yt_dlp_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::YtDlp)
+        .ok_or_else(|| {
+            EngineError::Other(
+                "yt-dlp executable was not found. Please install yt-dlp or place it in the TORI bin folder."
+                    .to_string(),
+            )
+        })?;
+    let yt_dlp_bin = yt_dlp_lease.into_path_buf_ref();
 
     let timeout = timeout_dur.unwrap_or(DEFAULT_RESOLVER_TIMEOUT);
 

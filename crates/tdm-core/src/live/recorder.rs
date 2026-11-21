@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::db::Database;
 use crate::engine::{DownloadEvent, EventBus};
 use crate::error::{EngineError, Result};
-use crate::hls::muxer::{find_ffmpeg, find_ffprobe, probe_duration};
+use crate::hls::muxer::{find_ffprobe, probe_duration};
 use crate::types::{DownloadJob, DownloadProgress, JobState};
 
 use super::protocol::{detect_live_protocol, LiveProtocol};
@@ -29,9 +29,11 @@ pub async fn record_live_stream(
     stop_token: &CancellationToken,
     options: Option<LiveRecordingOptions>,
 ) -> Result<()> {
-    let ffmpeg_bin = find_ffmpeg().ok_or_else(|| {
-        EngineError::Other("FFmpeg executable not found on system PATH".to_string())
-    })?;
+    let ffmpeg_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffmpeg)
+        .ok_or_else(|| {
+            EngineError::Other("FFmpeg executable not found on system PATH".to_string())
+        })?;
+    let ffmpeg_bin = ffmpeg_lease.into_path_buf_ref();
 
     let temp_path = PathBuf::from(&job.temp_path);
     let target_path = PathBuf::from(&job.target_path);

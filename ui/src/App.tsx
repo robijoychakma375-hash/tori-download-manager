@@ -9,6 +9,7 @@ import type {
   DownloadEvent,
   DownloadJob,
   DownloadProgress,
+  ExternalToolNotificationEvent,
   PendingPlaylistRequest,
   SortDirection,
   SortField,
@@ -771,12 +772,22 @@ function MainWindow({ urlParams }: { urlParams: URLSearchParams }) {
       }
     );
 
+    const unlistenToolNotifyPromise = listen<ExternalToolNotificationEvent>(
+      'external-tools-notification',
+      (event) => {
+        if (event.payload?.title) {
+          showToast(`${event.payload.title}: ${event.payload.body}`);
+        }
+      }
+    );
+
     const allListeners = Promise.all([
       unlistenPromise,
       unlistenDeletedPromise,
       unlistenPlaylistRequestPromise,
       unlistenPlaylistModalPromise,
       unlistenNotifyPromise,
+      unlistenToolNotifyPromise,
     ]);
 
     allListeners

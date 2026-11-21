@@ -1426,6 +1426,222 @@ label.cb {
   flex: none;
 }
 
+/* ================= EXTERNAL TOOLS UPDATE MANAGER ================= */
+.et-table-region {
+  overflow-x: auto;
+  border: 1px solid var(--pline);
+  border-radius: 6px;
+  background: var(--win);
+  margin: 6px 0 12px;
+}
+
+.et-table-region:focus-visible {
+  outline: 2px solid var(--a3);
+  outline-offset: 2px;
+}
+
+.et-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.et-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mut);
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--pline);
+  background: var(--panel);
+  white-space: nowrap;
+}
+
+.et-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--pline);
+  vertical-align: middle;
+  color: var(--txt);
+}
+
+.et-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.et-cell-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.et-mono {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.et-sub-tag {
+  font-size: 10.5px;
+  color: var(--mut);
+  margin-top: 1px;
+  text-transform: capitalize;
+}
+
+.et-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.et-tone-ok {
+  background: rgba(34, 180, 90, 0.14);
+  color: #15803d;
+}
+
+.et-tone-info {
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
+}
+
+.et-tone-warn {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+
+.et-tone-bad {
+  background: rgba(239, 68, 68, 0.14);
+  color: #b91c1c;
+}
+
+.et-tone-muted {
+  background: var(--pline);
+  color: var(--mut);
+}
+
+[data-theme="dark"] .et-tone-ok {
+  background: rgba(52, 211, 153, 0.18);
+  color: #6ee7b7;
+}
+
+[data-theme="dark"] .et-tone-info {
+  background: rgba(96, 165, 250, 0.2);
+  color: #93c5fd;
+}
+
+[data-theme="dark"] .et-tone-warn {
+  background: rgba(251, 191, 36, 0.18);
+  color: #fcd34d;
+}
+
+[data-theme="dark"] .et-tone-bad {
+  background: rgba(248, 113, 113, 0.2);
+  color: #fca5a5;
+}
+
+.et-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+
+.et-mini-btn {
+  min-width: 0 !important;
+  height: 24px !important;
+  line-height: 22px !important;
+  padding: 0 7px !important;
+  font-size: 11px !important;
+}
+
+.et-actions-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.et-progress-card {
+  background: var(--win);
+  border: 1px solid var(--pline);
+  border-radius: 6px;
+  padding: 9px 12px;
+  margin: 8px 0;
+}
+
+.et-progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--pline);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.et-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--a3), var(--a5));
+  border-radius: 3px;
+}
+
+.et-notice {
+  border-radius: 6px;
+  padding: 8px 11px;
+  font-size: 11.5px;
+  line-height: 16px;
+  margin: 8px 0;
+}
+
+.et-notice-warn {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--txt);
+}
+
+.et-notice-bad {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: var(--bad);
+}
+
+.et-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 210;
+}
+
+.et-modal-box {
+  background: var(--panel);
+  border: 1px solid var(--pline);
+  border-radius: 8px;
+  width: 90%;
+  max-width: 700px;
+  max-height: 82%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  padding: 16px;
+}
+
+.et-history-scroll {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--pline);
+  border-radius: 6px;
+  background: var(--win);
+}
+
 /* ================= CONTEXT MENU ================= */
 #ctx, #trayM {
   position: fixed;

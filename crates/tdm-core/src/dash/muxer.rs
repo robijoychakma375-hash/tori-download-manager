@@ -23,12 +23,14 @@ pub fn remux_dash_to_playable(
         ));
     }
 
-    let ffmpeg_bin = find_ffmpeg().ok_or_else(|| {
-        EngineError::Other(
-            "FFmpeg executable not found. TORI requires FFmpeg for standards-compliant DASH container remuxing."
-                .to_string(),
-        )
-    })?;
+    let ffmpeg_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffmpeg)
+        .ok_or_else(|| {
+            EngineError::Other(
+                "FFmpeg executable not found. TORI requires FFmpeg for standards-compliant DASH container remuxing."
+                    .to_string(),
+            )
+        })?;
+    let ffmpeg_bin = ffmpeg_lease.into_path_buf_ref();
 
     let mut temp_files: Vec<PathBuf> = Vec::new();
     let mut cmd = silent_command(&ffmpeg_bin);

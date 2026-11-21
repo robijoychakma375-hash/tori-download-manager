@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { TitleBar } from './TitleBar';
 import { ToggleSwitch } from './ToggleSwitch';
 import { SettingsTabIcon, ToriLogoIcon } from './Icons';
+import { ExternalToolsPanel } from './ExternalToolsPanel';
 import type { AppSettings } from '../types';
 import {
   fetchAppVersion,
@@ -23,7 +24,7 @@ interface SettingsModalProps {
   initialTab?: TabKey;
 }
 
-type TabKey = 'appearance' | 'engine' | 'integration' | 'about';
+type TabKey = 'appearance' | 'engine' | 'integration' | 'tools' | 'about';
 
 interface NavTab {
   key: TabKey;
@@ -34,6 +35,7 @@ const TABS: NavTab[] = [
   { key: 'appearance', label: 'Appearance' },
   { key: 'engine', label: 'Download Engine' },
   { key: 'integration', label: 'Browser Integration' },
+  { key: 'tools', label: 'External Tools' },
   { key: 'about', label: 'About' },
 ];
 
@@ -49,7 +51,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [currentTab, setCurrentTab] = useState<TabKey>(() => {
     try {
       const paramTab = new URLSearchParams(window.location.search).get('tab');
-      if (paramTab && ['appearance', 'engine', 'integration', 'about'].includes(paramTab)) {
+      if (paramTab && ['appearance', 'engine', 'integration', 'tools', 'about'].includes(paramTab)) {
         return paramTab as TabKey;
       }
     } catch {
@@ -899,6 +901,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               )}
             </>
+          )}
+
+          {/* ================= EXTERNAL TOOLS ================= */}
+          {currentTab === 'tools' && (
+            <ExternalToolsPanel onFlash={flash} />
           )}
 
           {/* ================= ABOUT ================= */}

@@ -134,7 +134,7 @@ export const ToolbarIcon: React.FC<{ kind: ToolbarIconKind }> = React.memo(({ ki
 });
 ToolbarIcon.displayName = 'ToolbarIcon';
 
-export const SettingsTabIcon: React.FC<{ tab: 'appearance' | 'engine' | 'integration' | 'about' }> = React.memo(
+export const SettingsTabIcon: React.FC<{ tab: 'appearance' | 'engine' | 'integration' | 'tools' | 'about' }> = React.memo(
   ({ tab }) => {
     switch (tab) {
       case 'appearance':
@@ -155,6 +155,13 @@ export const SettingsTabIcon: React.FC<{ tab: 'appearance' | 'engine' | 'integra
         return (
           <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
             <path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" />
+          </svg>
+        );
+      case 'tools':
+        return (
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14.7 6.3a4 4 0 00-5.4 5.4l-5 5a1.5 1.5 0 002.1 2.1l5-5a4 4 0 005.4-5.4l-2.3 2.3-2.1-2.1 2.3-2.3z" />
+            <path d="M17 14v6M14 17l3 3 3-3" />
           </svg>
         );
       case 'about':

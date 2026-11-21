@@ -34,5 +34,10 @@ aes = "0.8"
 cbc = { version = "0.1", features = ["block-padding"] }
 quick-xml = { version = "0.37", features = ["serialize"] }
 librqbit = { version = "9.1.0", default-features = false, features = ["rust-tls"] }
+minisign-verify = "0.3.0"
+base64 = "0.22"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+rsa = { version = "0.9", features = ["sha2"] }
+sha1 = "0.10"
 
 

@@ -67,7 +67,48 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_downloads_state ON downloads(state);
         CREATE INDEX IF NOT EXISTS idx_download_chunks_lookup ON download_chunks(download_id, chunk_index);
         CREATE INDEX IF NOT EXISTS idx_format_cache_expires ON format_metadata_cache(expires_at);
-        CREATE INDEX IF NOT EXISTS idx_format_cache_platform_id ON format_metadata_cache(platform, video_id);"
+        CREATE INDEX IF NOT EXISTS idx_format_cache_platform_id ON format_metadata_cache(platform, video_id);
+
+        CREATE TABLE IF NOT EXISTS external_tools_registry (
+            tool_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            installed_version TEXT,
+            available_version TEXT,
+            active_binary_path TEXT,
+            source TEXT NOT NULL DEFAULT 'bundled',
+            platform TEXT NOT NULL DEFAULT 'windows',
+            architecture TEXT NOT NULL DEFAULT 'x86_64',
+            artifact_sha256 TEXT,
+            installed_at TEXT,
+            last_checked_at TEXT,
+            last_updated_at TEXT,
+            last_successful_version TEXT,
+            update_status TEXT NOT NULL DEFAULT 'up_to_date',
+            last_error TEXT,
+            rollback_available INTEGER NOT NULL DEFAULT 0,
+            rollback_version TEXT,
+            rollback_binary_path TEXT,
+            pending_version TEXT,
+            pending_binary_path TEXT,
+            failed_versions_json TEXT NOT NULL DEFAULT '[]'
+        );
+
+        CREATE TABLE IF NOT EXISTS external_tool_update_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tool_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            from_version TEXT,
+            to_version TEXT,
+            status TEXT NOT NULL,
+            source TEXT,
+            artifact_sha256 TEXT,
+            trust_level TEXT,
+            message TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ext_tools_history_created ON external_tool_update_history(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_ext_tools_history_tool ON external_tool_update_history(tool_id, created_at DESC);"
     )?;
 
     // Backward-compatible schema migration

@@ -5,6 +5,7 @@ pub mod error;
 pub mod hls;
 pub mod live;
 pub mod resolver;
+pub mod tools;
 pub mod torrent;
 pub mod types;
 
