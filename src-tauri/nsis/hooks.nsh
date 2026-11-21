@@ -1,5 +1,29 @@
 !macro NSIS_HOOK_PREINSTALL
-  ; Pre-install hook
+  ; Guard non-silent installs (interactive GUI and Tauri /P /UPDATE auto-updater)
+  ; against stale temporary/QA paths left in HKCU\Software\tori\TORI Download Manager.
+  ; Automated silent installs (/S /D=<path>) are intentionally allowed to target custom paths.
+  ${IfNot} ${Silent}
+    ${StrCase} $R8 "$INSTDIR" "L"
+    ${StrLoc} $R9 "$R8" "\temp\" ">"
+    ${If} $R9 != ""
+      StrCpy $R7 "$INSTDIR"
+      DetailPrint "Detected stale temporary install path ($INSTDIR); redirecting to $LOCALAPPDATA\${PRODUCTNAME}"
+      StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"
+      CreateDirectory "$INSTDIR"
+      SetOutPath "$INSTDIR"
+      RMDir "$R7"
+    ${Else}
+      ${StrLoc} $R9 "$R8" "_qa" ">"
+      ${If} $R9 != ""
+        StrCpy $R7 "$INSTDIR"
+        DetailPrint "Detected stale QA install path ($INSTDIR); redirecting to $LOCALAPPDATA\${PRODUCTNAME}"
+        StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"
+        CreateDirectory "$INSTDIR"
+        SetOutPath "$INSTDIR"
+        RMDir "$R7"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

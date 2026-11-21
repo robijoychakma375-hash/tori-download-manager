@@ -18,6 +18,7 @@ const http = require('http');
 const net = require('net');
 const crypto = require('crypto');
 const { spawn, execSync, execFileSync } = require('child_process');
+const { QaOemStateGuard } = require('./lib/qa_oem_state_guard');
 
 const ROOT = path.resolve(__dirname, '..');
 const TARGET_VER = process.env.TORI_QA_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8')).version || '1.0.5';
@@ -86,9 +87,7 @@ const results = [];
 const counts = { PASS: 0, FAIL: 0, TIMEOUT: 0, NOT_TESTED: 0 };
 const trackedProcs = new Set();
 const perfMetrics = {};
-let oemWasRunning = false;
-let hkcuUninstallExisted = false;
-let hkcuManuExisted = false;
+const oemGuard = new QaOemStateGuard('gate29_4');
 let fixtureServer = null;
 
 function record(id, name, status, detail = '') {
@@ -220,88 +219,15 @@ function getShortcutTargets() {
 }
 
 function backupOemState() {
-  fs.mkdirSync(QA_BACKUP_DIR, { recursive: true });
-  const uninstKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\TORI Download Manager';
-  const uninstReg = path.join(QA_BACKUP_DIR, 'uninstall.reg');
-  try {
-    execFileSync('reg', ['export', uninstKey, uninstReg, '/y'], { stdio: 'ignore', timeout: 4000 });
-    hkcuUninstallExisted = true;
-  } catch {
-    hkcuUninstallExisted = false;
-  }
-
-  const manuKey = 'HKCU\\Software\\tori\\TORI Download Manager';
-  const manuReg = path.join(QA_BACKUP_DIR, 'manu.reg');
-  try {
-    execFileSync('reg', ['export', manuKey, manuReg, '/y'], { stdio: 'ignore', timeout: 4000 });
-    hkcuManuExisted = true;
-  } catch {
-    hkcuManuExisted = false;
-  }
-
-  for (let i = 0; i < getShortcutTargets().length; i++) {
-    const src = getShortcutTargets()[i];
-    if (fs.existsSync(src)) {
-      fs.copyFileSync(src, path.join(QA_BACKUP_DIR, `lnk_${i}.lnk`));
-    }
-  }
+  oemGuard.backup({ stopRunningOem: false });
 }
 
 function restoreOemState() {
-  const uninstKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\TORI Download Manager';
-  const uninstReg = path.join(QA_BACKUP_DIR, 'uninstall.reg');
-  try {
-    if (hkcuUninstallExisted && fs.existsSync(uninstReg)) {
-      execFileSync('reg', ['import', uninstReg], { stdio: 'ignore', timeout: 4000 });
-    } else {
-      execFileSync('reg', ['delete', uninstKey, '/f'], { stdio: 'ignore', timeout: 4000 });
-    }
-  } catch {}
-
-  const manuKey = 'HKCU\\Software\\tori\\TORI Download Manager';
-  const manuReg = path.join(QA_BACKUP_DIR, 'manu.reg');
-  try {
-    if (hkcuManuExisted && fs.existsSync(manuReg)) {
-      execFileSync('reg', ['import', manuReg], { stdio: 'ignore', timeout: 4000 });
-    } else {
-      execFileSync('reg', ['delete', manuKey, '/f'], { stdio: 'ignore', timeout: 4000 });
-    }
-  } catch {}
-
-  const sc = getShortcutTargets();
-  for (let i = 0; i < sc.length; i++) {
-    const bak = path.join(QA_BACKUP_DIR, `lnk_${i}.lnk`);
-    try {
-      if (fs.existsSync(bak)) {
-        fs.mkdirSync(path.dirname(sc[i]), { recursive: true });
-        fs.copyFileSync(bak, sc[i]);
-      } else if (fs.existsSync(sc[i])) {
-        // Remove shortcut created solely by QA silent install
-        const target = execFileSync(
-          'powershell',
-          ['-NoProfile', '-Command', `$s=(New-Object -ComObject WScript.Shell).CreateShortcut('${sc[i].replace(/'/g, "''")}'); $s.TargetPath`],
-          { encoding: 'utf8', timeout: 4000 }
-        ).trim();
-        if (target.toLowerCase().includes('gate29_4_qa')) {
-          fs.unlinkSync(sc[i]);
-        }
-      }
-    } catch {}
+  const parity = oemGuard.restore({ qaPathMarker: 'gate29_4_qa', restartOem: true });
+  if (parity && !parity.ok && !parity.skipped) {
+    console.error('[WARN] Gate 29.4 QaOemStateGuard parity mismatch after restore:', JSON.stringify(parity));
   }
-
-  try {
-    if (fs.existsSync(OEM_HOST_EXE)) {
-      execFileSync(OEM_HOST_EXE, ['--register'], { stdio: 'ignore', timeout: 5000 });
-    }
-  } catch {}
-
-  if (oemWasRunning && fs.existsSync(OEM_DESKTOP_EXE)) {
-    try {
-      const p = spawn(OEM_DESKTOP_EXE, ['--minimized'], { detached: true, stdio: 'ignore' });
-      p.unref();
-    } catch {}
-    oemWasRunning = false;
-  }
+  return parity;
 }
 
 function registerQaNativeHosts({ hostExe, chromeExtIds, firefoxId }) {
@@ -333,26 +259,7 @@ function registerQaNativeHosts({ hostExe, chromeExtIds, firefoxId }) {
 }
 
 function temporarilySilenceNativeHostAutoSpawn() {
-  const blockedChr = path.join(QA_ROOT, 'nm_chr_blocked.json');
-  const blockedFf = path.join(QA_ROOT, 'nm_ff_blocked.json');
-  fs.mkdirSync(QA_ROOT, { recursive: true });
-  fs.writeFileSync(blockedChr, JSON.stringify({
-    name: 'com.tori.download_manager',
-    description: 'TORI QA Isolation Shield',
-    path: 'C:\\Windows\\System32\\cmd.exe',
-    type: 'stdio',
-    allowed_origins: ['chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/'],
-  }, null, 2));
-  fs.writeFileSync(blockedFf, JSON.stringify({
-    name: 'com.tori.download_manager',
-    description: 'TORI QA Isolation Shield (Firefox)',
-    path: 'C:\\Windows\\System32\\cmd.exe',
-    type: 'stdio',
-    allowed_extensions: ['qa-isolation-shield@toridm.org'],
-  }, null, 2));
-  execFileSync('reg', ['add', 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.tori.download_manager', '/ve', '/t', 'REG_SZ', '/d', blockedChr, '/f'], { stdio: 'ignore', timeout: 4000 });
-  execFileSync('reg', ['add', 'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.tori.download_manager', '/ve', '/t', 'REG_SZ', '/d', blockedChr, '/f'], { stdio: 'ignore', timeout: 4000 });
-  execFileSync('reg', ['add', 'HKCU\\Software\\Mozilla\\NativeMessagingHosts\\com.tori.download_manager', '/ve', '/t', 'REG_SZ', '/d', blockedFf, '/f'], { stdio: 'ignore', timeout: 4000 });
+  oemGuard.temporarilySilenceNativeHostAutoSpawn(path.join(QA_ROOT, 'shield'));
 }
 
 function seedSqliteSettings(dbPath, { port, token, dlDir, theme = 'light', accent = 'indigo', maxa = 3 }) {
@@ -655,11 +562,11 @@ async function main() {
 
   record('G294-PRE-01', 'Signed Firefox v1.0.7 XPI preserved untouched', initialXpiHash === EXPECTED_V107_SHA256, `sha256=${initialXpiHash}`);
 
+  backupOemState();
   fs.rmSync(QA_ROOT, { recursive: true, force: true });
   fs.mkdirSync(QA_ROOT, { recursive: true });
   fs.mkdirSync(QA_CHR_DL, { recursive: true });
   fs.mkdirSync(QA_FF_DL, { recursive: true });
-  backupOemState();
   // Silence OEM native messaging auto-spawn from user's live browsers before stopping idle OEM Desktop
   temporarilySilenceNativeHostAutoSpawn();
 
@@ -674,7 +581,6 @@ async function main() {
     if (activeCount > 0) {
       throw new Error(`OEM TORI Desktop has ${activeCount} active downloads — refusing to pause`);
     }
-    oemWasRunning = true;
     for (const pid of initialOemPids) killProcTree(pid);
     await sleep(600);
   }
@@ -845,6 +751,7 @@ async function main() {
   });
   await new Promise((r) => fixtureServer.listen(FIXTURE_PORT, '127.0.0.1', r));
 
+  let finalOemDbHash = null;
   try {
     // =====================================================================
     // PHASE 2: CLEAN INSTALLATION VERIFICATION
@@ -1616,10 +1523,11 @@ exit 1
   } finally {
     cleanupProcs();
     if (fixtureServer) try { fixtureServer.close(); } catch {}
-    restoreOemState();
+    finalOemDbHash = sha256File(OEM_DB_PATH);
+    const regParity = restoreOemState();
+    record('G294-SAFETY-REG', 'OEM Windows Registry, Native Messaging manifests, and shortcuts restored with exact parity', Boolean(regParity && regParity.ok), JSON.stringify(regParity));
   }
 
-  const finalOemDbHash = sha256File(OEM_DB_PATH);
   const finalXpiHash = sha256File(SIGNED_V107_XPI);
   record('G294-SAFETY-DB', 'OEM production SQLite database untouched across entire Gate 29.4 suite', finalOemDbHash === initialOemDbHash, `sha256=${finalOemDbHash}`);
   record('G294-SAFETY-XPI', 'Mozilla-signed Firefox v1.0.7 XPI untouched across entire Gate 29.4 suite', finalXpiHash === initialXpiHash, `sha256=${finalXpiHash}`);
