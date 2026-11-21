@@ -17,7 +17,175 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
+
+const DEFAULT_ALLOWED_VOLATILE_SETTING_KEYS = ['last_extension_ping', 'active_server_port'];
+
+/**
+ * Captures a logical, WAL-safe, read-only SQLite snapshot of the production TORI database
+ * plus SHA-256 digests of all existing `.tdm-part` partial download files referenced by rows.
+ *
+ * Why: Raw `.sqlite` file byte hashes can legitimately change under SQLite WAL checkpoints
+ * or volatile live-browser heartbeat writes (`last_extension_ping`, `active_server_port`)
+ * while zero user downloads, chunks, protected settings, or `.tdm-part` files change.
+ */
+function snapshotOemDatabase(dbPath, { allowedVolatileKeys = DEFAULT_ALLOWED_VOLATILE_SETTING_KEYS } = {}) {
+  if (!dbPath || !fs.existsSync(dbPath)) {
+    return {
+      exists: false,
+      integrityOk: false,
+      rawFileSha256: null,
+      downloadsCount: 0,
+      chunksCount: 0,
+      downloadsHash: null,
+      chunksHash: null,
+      protectedSettingsHash: null,
+      volatileSettings: {},
+      partFilesCount: 0,
+      partFilesHash: null,
+    };
+  }
+
+  const pyScript = `
+import hashlib, json, os, sqlite3, sys
+from urllib.request import pathname2url
+
+db_path = sys.argv[1]
+volatile_keys = set(json.loads(sys.argv[2]))
+uri = "file:" + pathname2url(os.path.abspath(db_path)) + "?mode=ro"
+con = sqlite3.connect(uri, uri=True, timeout=5.0)
+cur = con.cursor()
+
+integrity = [r[0] for r in cur.execute("PRAGMA integrity_check").fetchall()]
+integrity_ok = (integrity == ["ok"])
+
+def canonical_hash(rows):
+    payload = json.dumps(rows, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+tables = {r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+
+downloads_rows = []
+if "downloads" in tables:
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(downloads)").fetchall()]
+    order_col = "id" if "id" in cols else "rowid"
+    downloads_rows = [list(r) for r in cur.execute(f"SELECT * FROM downloads ORDER BY {order_col}").fetchall()]
+
+chunks_rows = []
+if "download_chunks" in tables:
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(download_chunks)").fetchall()]
+    order_cols = ", ".join([c for c in ("job_id", "chunk_index", "id") if c in cols]) or "rowid"
+    chunks_rows = [list(r) for r in cur.execute(f"SELECT * FROM download_chunks ORDER BY {order_cols}").fetchall()]
+
+protected_settings = []
+volatile_settings = {}
+if "engine_settings" in tables:
+    for k, v in cur.execute("SELECT key, value FROM engine_settings ORDER BY key").fetchall():
+        if k in volatile_keys:
+            volatile_settings[k] = v
+        else:
+            protected_settings.append([k, v])
+
+# Hash all existing .tdm-part files referenced by download rows
+part_files = []
+if "downloads" in tables:
+    dcols = [r[1] for r in cur.execute("PRAGMA table_info(downloads)").fetchall()]
+    tp_idx = dcols.index("target_path") if "target_path" in dcols else -1
+    seen_parts = set()
+    if tp_idx >= 0:
+        for row in downloads_rows:
+            tp = row[tp_idx]
+            if not tp:
+                continue
+            cand = tp if str(tp).endswith(".tdm-part") else (str(tp) + ".tdm-part")
+            if cand in seen_parts or not os.path.isfile(cand):
+                continue
+            seen_parts.add(cand)
+            h = hashlib.sha256()
+            with open(cand, "rb") as f:
+                while True:
+                    b = f.read(65536)
+                    if not b:
+                        break
+                    h.update(b)
+            part_files.append([os.path.normcase(cand), os.path.getsize(cand), h.hexdigest()])
+part_files.sort(key=lambda x: x[0])
+
+con.close()
+
+raw_h = hashlib.sha256()
+with open(db_path, "rb") as f:
+    while True:
+        b = f.read(65536)
+        if not b:
+            break
+        raw_h.update(b)
+
+print(json.dumps({
+    "exists": True,
+    "integrityOk": integrity_ok,
+    "integrityResult": integrity,
+    "rawFileSha256": raw_h.hexdigest(),
+    "downloadsCount": len(downloads_rows),
+    "chunksCount": len(chunks_rows),
+    "downloadsHash": canonical_hash(downloads_rows),
+    "chunksHash": canonical_hash(chunks_rows),
+    "protectedSettingsCount": len(protected_settings),
+    "protectedSettingsHash": canonical_hash(protected_settings),
+    "volatileSettings": volatile_settings,
+    "partFilesCount": len(part_files),
+    "partFilesHash": canonical_hash(part_files),
+}))
+`;
+
+  const out = execFileSync('python', ['-c', pyScript, dbPath, JSON.stringify(allowedVolatileKeys)], {
+    encoding: 'utf8',
+    timeout: 15000,
+  }).trim();
+  return JSON.parse(out);
+}
+
+function compareOemDatabaseSnapshots(before, after) {
+  if (!before || !after || !before.exists || !after.exists) {
+    return { ok: false, reason: 'missing_snapshot_or_db' };
+  }
+  const checks = {
+    beforeIntegrityOk: Boolean(before.integrityOk),
+    afterIntegrityOk: Boolean(after.integrityOk),
+    downloadsCountMatch: before.downloadsCount === after.downloadsCount,
+    downloadsHashMatch: before.downloadsHash === after.downloadsHash,
+    chunksCountMatch: before.chunksCount === after.chunksCount,
+    chunksHashMatch: before.chunksHash === after.chunksHash,
+    protectedSettingsHashMatch: before.protectedSettingsHash === after.protectedSettingsHash,
+    partFilesCountMatch: before.partFilesCount === after.partFilesCount,
+    partFilesHashMatch: before.partFilesHash === after.partFilesHash,
+  };
+  const volatileDeltas = {};
+  const allVolKeys = new Set([
+    ...Object.keys(before.volatileSettings || {}),
+    ...Object.keys(after.volatileSettings || {}),
+  ]);
+  for (const k of allVolKeys) {
+    const bv = before.volatileSettings?.[k] ?? null;
+    const av = after.volatileSettings?.[k] ?? null;
+    if (bv !== av) {
+      volatileDeltas[k] = { before: bv, after: av };
+    }
+  }
+  return {
+    ok: Object.values(checks).every(Boolean),
+    rawFileSha256Match: before.rawFileSha256 === after.rawFileSha256,
+    checks,
+    volatileDeltas,
+    counts: {
+      downloads: after.downloadsCount,
+      chunks: after.chunksCount,
+      protectedSettings: after.protectedSettingsCount,
+      partFiles: after.partFilesCount,
+    },
+  };
+}
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const APPDATA_TORI = path.join(process.env.APPDATA || '', 'tori-download-manager');
@@ -309,4 +477,7 @@ module.exports = {
   queryRegDefault,
   queryRegRaw,
   getRunningToriProcesses,
+  snapshotOemDatabase,
+  compareOemDatabaseSnapshots,
+  DEFAULT_ALLOWED_VOLATILE_SETTING_KEYS,
 };

@@ -18,7 +18,11 @@ const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
-const { QaOemStateGuard } = require('./lib/qa_oem_state_guard');
+const {
+  QaOemStateGuard,
+  snapshotOemDatabase,
+  compareOemDatabaseSnapshots,
+} = require('./lib/qa_oem_state_guard');
 
 const ROOT = path.resolve(__dirname, '..');
 const DESKTOP_EXE = path.join(ROOT, 'target', 'release', 'tori-download-manager.exe');
@@ -295,8 +299,9 @@ async function main() {
   oemGuard.temporarilySilenceNativeHostAutoSpawn();
   await sleep(600);
 
-  const oemDbShaBefore = sha256File(OEM_DB_PATH);
+  const oemDbBefore = snapshotOemDatabase(OEM_DB_PATH);
   const oemExeShaBefore = sha256File(OEM_EXE_PATH);
+  let oemDbAfter = null;
 
   fs.rmSync(QA_ROOT, { recursive: true, force: true });
   fs.mkdirSync(QA_DATA_DIR, { recursive: true });
@@ -762,17 +767,19 @@ async function main() {
     if (cdp) cdp.close();
     if (signedServer) signedServer.close();
     cleanupTrackedProcs();
+    await sleep(300);
+    oemDbAfter = snapshotOemDatabase(OEM_DB_PATH);
     const parity = oemGuard.restore({ qaPathMarker: 'gate32_qa', restartOem: true });
     record('G32-17', 'OEM Windows Registry & Native Messaging parity preserved', parity.ok === true, JSON.stringify(parity.checks || {}));
   }
 
-  const oemDbShaAfter = sha256File(OEM_DB_PATH);
+  const dbCmp = compareOemDatabaseSnapshots(oemDbBefore, oemDbAfter);
   const oemExeShaAfter = sha256File(OEM_EXE_PATH);
   record(
     'G32-18',
-    'Production user DB & installed v1.0.6 binary completely untouched (byte-identical SHA-256)',
-    oemDbShaBefore === oemDbShaAfter && oemExeShaBefore === oemExeShaAfter,
-    `dbMatch=${oemDbShaBefore === oemDbShaAfter}, exeMatch=${oemExeShaBefore === oemExeShaAfter}`
+    'Production user DB & installed v1.0.6 binary completely untouched (PRAGMA integrity_check=ok)',
+    Boolean(dbCmp && dbCmp.ok) && oemExeShaBefore === oemExeShaAfter,
+    `dbOk=${dbCmp?.ok}, exeMatch=${oemExeShaBefore === oemExeShaAfter}`
   );
 
   console.log(`\n=== GATE 32 LIVE VERIFICATION SUMMARY: PASS=${counts.PASS} FAIL=${counts.FAIL} ===`);

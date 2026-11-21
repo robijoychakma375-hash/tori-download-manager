@@ -367,6 +367,17 @@ pub struct SchedulerState {
     pub last_error: Option<String>,
 }
 
+/// Persisted anti-replay state for TORI Ed25519-signed tools manifests.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ManifestAntiReplayState {
+    pub highest_accepted_revision: u64,
+    pub last_accepted_manifest_sha256: Option<String>,
+    pub last_accepted_published_at: Option<DateTime<Utc>>,
+    pub last_accepted_at: Option<DateTime<Utc>>,
+    pub last_signing_key_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalToolsSnapshot {
     pub tools: Vec<ExternalToolRecord>,
@@ -384,6 +395,9 @@ pub struct ToolsManagerConfig {
     pub ffmpeg_release_api_url: String,
     pub signed_manifest_url: Option<String>,
     pub tori_manifest_pubkey_b64: String,
+    pub expected_manifest_key_id: Option<String>,
+    pub current_tori_version: String,
+    pub max_clock_skew_secs: i64,
     pub ytdlp_pgp_pubkey_asc: String,
     pub ytdlp_pgp_fingerprint_hex: String,
     pub allow_loopback_http: bool,
@@ -403,13 +417,20 @@ impl Default for ToolsManagerConfig {
                 "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest".to_string(),
             ffmpeg_release_api_url:
                 "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest".to_string(),
-            signed_manifest_url: None,
+            signed_manifest_url: Some(
+                crate::tools::trust::TORI_DEFAULT_TOOLS_MANIFEST_URL.to_string(),
+            ),
             tori_manifest_pubkey_b64: crate::tools::trust::TORI_ED25519_PUBKEY_B64.to_string(),
+            expected_manifest_key_id: Some(
+                crate::tools::trust::TORI_ED25519_KEY_ID.to_string(),
+            ),
+            current_tori_version: env!("CARGO_PKG_VERSION").to_string(),
+            max_clock_skew_secs: 15 * 60,
             ytdlp_pgp_pubkey_asc: crate::tools::trust::YTDLP_PGP_PUBKEY_ASC.to_string(),
             ytdlp_pgp_fingerprint_hex: crate::tools::trust::YTDLP_PGP_FINGERPRINT_HEX.to_string(),
             allow_loopback_http: false,
             http_timeout_secs: 20,
-            download_timeout_secs: 600,
+            download_timeout_secs: 1800,
             max_ytdlp_bytes: 90 * 1024 * 1024,
             max_ffmpeg_zip_bytes: 380 * 1024 * 1024,
             max_extracted_bundle_bytes: 650 * 1024 * 1024,

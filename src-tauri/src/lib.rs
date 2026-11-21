@@ -102,17 +102,25 @@ pub fn run() {
 
     // Initialize Independent External Tools Auto-Update Manager (yt-dlp, FFmpeg, FFprobe)
     let mut tools_cfg = tdm_core::tools::ToolsManagerConfig::default();
-    // Isolated QA harness override: ONLY active when TORI_DATA_DIR is set AND target is strictly 127.0.0.1
+    // Isolated QA harness override: ONLY active when TORI_DATA_DIR is explicitly set.
+    // - Loopback `http://127.0.0.1:` allows local mock server + optional test key.
+    // - Official HTTPS staging prefix `https://toridownload.xyz/assets/tools/staging/`
+    //   STRICTLY preserves embedded production Ed25519 public key (key ID CDC23D8CC8DA5397).
     if std::env::var("TORI_DATA_DIR").is_ok() {
         if let Ok(manifest_url) = std::env::var("TORI_TEST_TOOLS_MANIFEST_URL") {
-            if manifest_url.starts_with("http://127.0.0.1:") {
-                tools_cfg.signed_manifest_url = Some(manifest_url);
+            let trimmed = manifest_url.trim().to_string();
+            if trimmed.starts_with("http://127.0.0.1:") {
+                tools_cfg.signed_manifest_url = Some(trimmed);
                 tools_cfg.allow_loopback_http = true;
+            } else if trimmed.starts_with(tdm_core::tools::TORI_STAGING_TOOLS_MANIFEST_PREFIX) {
+                tools_cfg.signed_manifest_url = Some(trimmed);
+                tools_cfg.allow_loopback_http = false;
             }
         }
         if let Ok(pubkey) = std::env::var("TORI_TEST_TOOLS_PUBKEY") {
             if !pubkey.trim().is_empty() && tools_cfg.allow_loopback_http {
                 tools_cfg.tori_manifest_pubkey_b64 = pubkey;
+                tools_cfg.expected_manifest_key_id = None;
             }
         }
     }

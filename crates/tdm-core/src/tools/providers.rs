@@ -1,13 +1,18 @@
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::error::{EngineError, Result};
 use crate::tools::trust::{
-    build_trusted_http_client, validate_trusted_url, verify_minisign_ed25519,
+    build_trusted_http_client, compare_semver_versions, extract_minisign_key_id_hex,
+    reject_duplicate_json_keys, validate_trusted_url, verify_minisign_ed25519,
     verify_openpgp_detached_rsa_signature,
 };
-use crate::tools::types::{ToolBundleId, ToolsManagerConfig, TrustLevel};
+use crate::tools::types::{
+    ManifestAntiReplayState, ToolBundleId, ToolsManagerConfig, TrustLevel,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactKind {
@@ -27,6 +32,11 @@ pub struct UpdateCandidate {
     pub untrusted_reason: Option<String>,
     pub published_at: Option<String>,
     pub artifact_kind: ArtifactKind,
+    pub allow_rollback_to: bool,
+    pub manifest_revision: Option<u64>,
+    pub is_higher_manifest_revision: bool,
+    pub expected_ffmpeg_version: Option<String>,
+    pub expected_ffprobe_version: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,28 +65,82 @@ impl std::fmt::Display for ProviderFetchError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestProvenance {
+    pub upstream_provider: String,
+    pub upstream_release: String,
+    pub upstream_url: String,
+    pub approved_by: String,
+    pub approved_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedManifestToolEntry {
+    #[serde(default)]
+    pub tool_id: Option<String>,
     pub version: String,
+    #[serde(default)]
+    pub ffmpeg_version: Option<String>,
+    #[serde(default)]
+    pub ffprobe_version: Option<String>,
+    #[serde(default)]
+    pub bundle_id: Option<String>,
     pub url: String,
     pub sha256: String,
     #[serde(default)]
     pub size: Option<u64>,
     #[serde(default)]
+    pub artifact_format: Option<String>,
+    #[serde(default)]
     pub platform: Option<String>,
     #[serde(default)]
     pub architecture: Option<String>,
     #[serde(default)]
+    pub min_tori_version: Option<String>,
+    #[serde(default)]
+    pub max_tori_version: Option<String>,
+    #[serde(default)]
     pub published_at: Option<String>,
+    #[serde(default)]
+    pub allow_rollback_to: bool,
+    #[serde(default)]
+    pub provenance: Option<ManifestProvenance>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedToolsManifest {
     pub schema_version: u32,
+    #[serde(default)]
+    pub manifest_revision: u64,
+    #[serde(default)]
     pub generated_at: String,
+    #[serde(default)]
+    pub published_at: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub signing_key_id: Option<String>,
     #[serde(default)]
     pub yt_dlp: Option<SignedManifestToolEntry>,
     #[serde(default)]
     pub ffmpeg_bundle: Option<SignedManifestToolEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidatedSignedManifest {
+    pub manifest: SignedToolsManifest,
+    pub raw_sha256: String,
+    pub verified_key_id: Option<String>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub is_higher_revision: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum ManifestFetchOutcome {
+    Available(ValidatedSignedManifest),
+    NotConfigured,
+    NotPublishedYet,
+    NetworkUnavailable(String),
+    RejectedSecurity(String),
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,74 +235,306 @@ fn normalize_github_digest(digest: Option<&str>) -> Option<String> {
     }
 }
 
-/// Fetches and cryptographically verifies an optional TORI Ed25519-signed tools manifest
+fn parse_rfc3339_utc(s: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s.trim())
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+/// Fetches and cryptographically verifies TORI's Ed25519-signed tools manifest
 /// (`tools-manifest.json` + `tools-manifest.json.sig`).
+///
+/// Verification order (fail-closed):
+/// 1. HTTPS allowlist check for manifest & `.sig` URLs
+/// 2. Download exact raw manifest bytes (HTTP 404 => `NotPublishedYet`; 5xx/offline => `NetworkUnavailable`)
+/// 3. Download `.sig` (HTTP 404 when manifest exists => `RejectedSecurity`)
+/// 4. Verify Minisign Ed25519 signature over exact raw bytes BEFORE any JSON parsing
+/// 5. Reject duplicate JSON keys & trailing garbage
+/// 6. Parse schema (`1` or `2`), verify `signing_key_id`, `published_at`, `expires_at`,
+///    and enforce strictly monotonic anti-replay `manifest_revision` + SHA-256 equivocation check.
 pub async fn fetch_signed_tools_manifest(
     config: &ToolsManagerConfig,
-) -> std::result::Result<Option<SignedToolsManifest>, ProviderFetchError> {
+    prior_state: &ManifestAntiReplayState,
+    now: DateTime<Utc>,
+) -> ManifestFetchOutcome {
     let Some(ref raw_url) = config.signed_manifest_url else {
-        return Ok(None);
+        return ManifestFetchOutcome::NotConfigured;
     };
 
-    let manifest_url = validate_trusted_url(raw_url, config.allow_loopback_http)
-        .map_err(|e| ProviderFetchError::Untrusted(e.to_string()))?;
+    let manifest_url = match validate_trusted_url(raw_url, config.allow_loopback_http) {
+        Ok(u) => u,
+        Err(e) => return ManifestFetchOutcome::RejectedSecurity(e.to_string()),
+    };
     let sig_url_str = format!("{}.sig", manifest_url.as_str());
-    let sig_url = validate_trusted_url(&sig_url_str, config.allow_loopback_http)
-        .map_err(|e| ProviderFetchError::Untrusted(e.to_string()))?;
+    let sig_url = match validate_trusted_url(&sig_url_str, config.allow_loopback_http) {
+        Ok(u) => u,
+        Err(e) => return ManifestFetchOutcome::RejectedSecurity(e.to_string()),
+    };
 
-    let client = build_trusted_http_client(config.http_timeout_secs, config.allow_loopback_http)
-        .map_err(|e| ProviderFetchError::Other(e.to_string()))?;
+    let client = match build_trusted_http_client(config.http_timeout_secs, config.allow_loopback_http) {
+        Ok(c) => c,
+        Err(e) => return ManifestFetchOutcome::NetworkUnavailable(e.to_string()),
+    };
 
-    let resp = client
-        .get(manifest_url.as_str())
-        .send()
-        .await
-        .map_err(|e| ProviderFetchError::Network(format!("Signed manifest fetch failed: {}", e)))?;
-    check_response_status(&resp, "TORI signed tools manifest")?;
-    let manifest_bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| ProviderFetchError::Network(format!("Failed reading signed manifest: {}", e)))?;
+    let resp = match client.get(manifest_url.as_str()).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = format!("Signed manifest fetch failed: {}", e);
+            if msg.contains("Untrusted") || msg.contains("redirect") {
+                return ManifestFetchOutcome::RejectedSecurity(msg);
+            }
+            return ManifestFetchOutcome::NetworkUnavailable(msg);
+        }
+    };
+
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return ManifestFetchOutcome::NotPublishedYet;
+    }
+    if let Err(e) = check_response_status(&resp, "TORI signed tools manifest") {
+        return ManifestFetchOutcome::NetworkUnavailable(e.to_string());
+    }
+    let manifest_is_html = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.to_ascii_lowercase().contains("text/html"))
+        .unwrap_or(false);
+
+    let manifest_bytes = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            return ManifestFetchOutcome::NetworkUnavailable(format!(
+                "Failed reading signed manifest: {}",
+                e
+            ))
+        }
+    };
+    if manifest_bytes.is_empty() {
+        return ManifestFetchOutcome::RejectedSecurity(
+            "Signed tools manifest is empty (0 bytes)".to_string(),
+        );
+    }
     if manifest_bytes.len() > 2 * 1024 * 1024 {
-        return Err(ProviderFetchError::Other(
+        return ManifestFetchOutcome::RejectedSecurity(
             "Signed tools manifest exceeds 2 MiB safety limit".to_string(),
+        );
+    }
+
+    // Cloudflare Pages SPA fallback returns HTTP 200 text/html (index.html) for unpublished paths.
+    // Treat HTML fallback as NotPublishedYet ONLY when manifest itself is HTML (never JSON).
+    if manifest_is_html {
+        let head = String::from_utf8_lossy(&manifest_bytes[..manifest_bytes.len().min(64)])
+            .trim_start()
+            .to_ascii_lowercase();
+        if head.starts_with("<!doctype html") || head.starts_with("<html") {
+            return ManifestFetchOutcome::NotPublishedYet;
+        }
+    }
+
+    let sig_resp = match client.get(sig_url.as_str()).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = format!("Signed manifest signature fetch failed: {}", e);
+            if msg.contains("Untrusted") || msg.contains("redirect") {
+                return ManifestFetchOutcome::RejectedSecurity(msg);
+            }
+            return ManifestFetchOutcome::NetworkUnavailable(msg);
+        }
+    };
+    if sig_resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return ManifestFetchOutcome::RejectedSecurity(
+            "Signed tools manifest signature (.sig) is missing (HTTP 404)".to_string(),
+        );
+    }
+    if let Err(e) = check_response_status(&sig_resp, "TORI signed tools manifest signature") {
+        return ManifestFetchOutcome::NetworkUnavailable(e.to_string());
+    }
+    let sig_text = match sig_resp.text().await {
+        Ok(t) => t,
+        Err(e) => {
+            return ManifestFetchOutcome::NetworkUnavailable(format!(
+                "Failed reading manifest signature: {}",
+                e
+            ))
+        }
+    };
+
+    // 1. Cryptographic Ed25519 signature verification over exact serialized bytes BEFORE parsing JSON
+    if let Err(e) = verify_minisign_ed25519(&config.tori_manifest_pubkey_b64, &manifest_bytes, &sig_text)
+    {
+        return ManifestFetchOutcome::RejectedSecurity(e.to_string());
+    }
+
+    let raw_sha256 = hex::encode(Sha256::digest(&manifest_bytes));
+
+    // 2. Reject duplicate JSON keys & trailing garbage to prevent parser ambiguity attacks
+    if let Err(e) = reject_duplicate_json_keys(&manifest_bytes) {
+        return ManifestFetchOutcome::RejectedSecurity(e.to_string());
+    }
+
+    // 3. Parse verified JSON manifest
+    let manifest: SignedToolsManifest = match serde_json::from_slice(&manifest_bytes) {
+        Ok(m) => m,
+        Err(e) => {
+            return ManifestFetchOutcome::RejectedSecurity(format!(
+                "Malformed signed tools manifest JSON: {}",
+                e
+            ))
+        }
+    };
+
+    // 4. Schema version enforcement (supports v2 production and v1 backward compatibility)
+    if manifest.schema_version != 1 && manifest.schema_version != 2 {
+        return ManifestFetchOutcome::RejectedSecurity(format!(
+            "Unsupported signed tools manifest schema_version {}",
+            manifest.schema_version
         ));
     }
 
-    let sig_resp = client
-        .get(sig_url.as_str())
-        .send()
-        .await
-        .map_err(|e| {
-            ProviderFetchError::Network(format!("Signed manifest signature fetch failed: {}", e))
-        })?;
-    check_response_status(&sig_resp, "TORI signed tools manifest signature")?;
-    let sig_text = sig_resp.text().await.map_err(|e| {
-        ProviderFetchError::Network(format!("Failed reading manifest signature: {}", e))
-    })?;
-
-    verify_minisign_ed25519(&config.tori_manifest_pubkey_b64, &manifest_bytes, &sig_text)
-        .map_err(|e| ProviderFetchError::Untrusted(e.to_string()))?;
-
-    let manifest: SignedToolsManifest = serde_json::from_slice(&manifest_bytes).map_err(|e| {
-        ProviderFetchError::Other(format!("Malformed signed tools manifest JSON: {}", e))
-    })?;
-
-    if manifest.schema_version != 1 {
-        return Err(ProviderFetchError::Other(format!(
-            "Unsupported signed tools manifest schema_version {}",
-            manifest.schema_version
-        )));
+    // 5. Signing Key ID enforcement
+    let actual_key_id = extract_minisign_key_id_hex(&config.tori_manifest_pubkey_b64);
+    if let Some(ref expected_kid) = config.expected_manifest_key_id {
+        let exp_norm = expected_kid.trim().to_ascii_uppercase();
+        if actual_key_id.as_deref() != Some(exp_norm.as_str()) {
+            return ManifestFetchOutcome::RejectedSecurity(format!(
+                "Configured public key ID ({:?}) does not match expected TORI key ID {}",
+                actual_key_id, exp_norm
+            ));
+        }
+    }
+    if let Some(ref declared_kid) = manifest.signing_key_id {
+        let decl_norm = declared_kid.trim().to_ascii_uppercase();
+        if decl_norm.is_empty() || actual_key_id.as_deref() != Some(decl_norm.as_str()) {
+            return ManifestFetchOutcome::RejectedSecurity(format!(
+                "Manifest signing_key_id '{}' does not match verified Ed25519 key ID {:?}",
+                declared_kid, actual_key_id
+            ));
+        }
+    } else if manifest.schema_version >= 2 {
+        return ManifestFetchOutcome::RejectedSecurity(
+            "Schema v2 signed manifest missing required signing_key_id".to_string(),
+        );
     }
 
-    Ok(Some(manifest))
+    // 6. Freshness, expiry, future-date & monotonic anti-replay checks
+    let skew = ChronoDuration::seconds(config.max_clock_skew_secs.max(0));
+    let published_raw = manifest
+        .published_at
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            if !manifest.generated_at.trim().is_empty() {
+                Some(manifest.generated_at.as_str())
+            } else {
+                None
+            }
+        });
+    let published_dt = published_raw.and_then(parse_rfc3339_utc);
+
+    if manifest.schema_version >= 2 {
+        if manifest.manifest_revision < 1 {
+            return ManifestFetchOutcome::RejectedSecurity(
+                "Schema v2 signed manifest requires manifest_revision >= 1".to_string(),
+            );
+        }
+        let Some(pub_dt) = published_dt else {
+            return ManifestFetchOutcome::RejectedSecurity(
+                "Schema v2 signed manifest missing valid RFC 3339 published_at timestamp"
+                    .to_string(),
+            );
+        };
+        if pub_dt > now + skew {
+            return ManifestFetchOutcome::RejectedSecurity(format!(
+                "Rejected future-dated tools manifest (published_at {} exceeds current UTC + {}s skew)",
+                pub_dt.to_rfc3339(),
+                config.max_clock_skew_secs
+            ));
+        }
+        let Some(exp_str) = manifest.expires_at.as_deref() else {
+            return ManifestFetchOutcome::RejectedSecurity(
+                "Schema v2 signed manifest missing required expires_at timestamp".to_string(),
+            );
+        };
+        let Some(exp_dt) = parse_rfc3339_utc(exp_str) else {
+            return ManifestFetchOutcome::RejectedSecurity(format!(
+                "Schema v2 signed manifest has invalid RFC 3339 expires_at '{}'",
+                exp_str
+            ));
+        };
+        if exp_dt <= pub_dt {
+            return ManifestFetchOutcome::RejectedSecurity(
+                "Rejected signed tools manifest where expires_at <= published_at".to_string(),
+            );
+        }
+        if now > exp_dt + skew {
+            return ManifestFetchOutcome::RejectedSecurity(format!(
+                "Rejected expired signed tools manifest (expired at {})",
+                exp_dt.to_rfc3339()
+            ));
+        }
+    } else if let Some(exp_str) = manifest.expires_at.as_deref() {
+        let Some(exp_dt) = parse_rfc3339_utc(exp_str) else {
+            return ManifestFetchOutcome::RejectedSecurity(format!(
+                "Signed tools manifest has invalid RFC 3339 expires_at '{}'",
+                exp_str
+            ));
+        };
+        if now > exp_dt + skew {
+            return ManifestFetchOutcome::RejectedSecurity(format!(
+                "Rejected expired signed tools manifest (expired at {})",
+                exp_dt.to_rfc3339()
+            ));
+        }
+    }
+
+    // Anti-replay monotonicity check (enforced whenever manifest_revision > 0 or schema_version >= 2)
+    let is_higher_revision = if manifest.manifest_revision > 0 || manifest.schema_version >= 2 {
+        if prior_state.highest_accepted_revision > 0 {
+            if manifest.manifest_revision < prior_state.highest_accepted_revision {
+                return ManifestFetchOutcome::RejectedSecurity(format!(
+                    "Manifest replay rejected: received manifest_revision {} < highest accepted revision {}",
+                    manifest.manifest_revision, prior_state.highest_accepted_revision
+                ));
+            }
+            if manifest.manifest_revision == prior_state.highest_accepted_revision {
+                if let Some(ref prev_sha) = prior_state.last_accepted_manifest_sha256 {
+                    if prev_sha != &raw_sha256 {
+                        return ManifestFetchOutcome::RejectedSecurity(format!(
+                            "Manifest equivocation rejected: manifest_revision {} bytes changed without incrementing revision",
+                            manifest.manifest_revision
+                        ));
+                    }
+                }
+            }
+        }
+        manifest.manifest_revision > prior_state.highest_accepted_revision
+    } else {
+        false
+    };
+
+    ManifestFetchOutcome::Available(ValidatedSignedManifest {
+        manifest,
+        raw_sha256,
+        verified_key_id: actual_key_id,
+        published_at: published_dt,
+        is_higher_revision,
+    })
 }
 
 fn validate_manifest_entry(
+    validated: &ValidatedSignedManifest,
     entry: &SignedManifestToolEntry,
     bundle: ToolBundleId,
     config: &ToolsManagerConfig,
 ) -> std::result::Result<UpdateCandidate, ProviderFetchError> {
+    let schema_v2 = validated.manifest.schema_version >= 2;
+
+    if entry.version.trim().is_empty() {
+        return Err(ProviderFetchError::Untrusted(
+            "Signed manifest entry missing version".to_string(),
+        ));
+    }
+
     if let Some(ref plat) = entry.platform {
         if !plat.eq_ignore_ascii_case("windows") {
             return Err(ProviderFetchError::Untrusted(format!(
@@ -246,12 +542,66 @@ fn validate_manifest_entry(
                 plat
             )));
         }
+    } else if schema_v2 {
+        return Err(ProviderFetchError::Untrusted(
+            "Schema v2 manifest entry missing required platform field".to_string(),
+        ));
     }
+
     if let Some(ref arch) = entry.architecture {
         if !matches!(arch.to_ascii_lowercase().as_str(), "x86_64" | "amd64" | "x64") {
             return Err(ProviderFetchError::Untrusted(format!(
                 "Manifest entry architecture '{}' is incompatible with Windows x86_64",
                 arch
+            )));
+        }
+    } else if schema_v2 {
+        return Err(ProviderFetchError::Untrusted(
+            "Schema v2 manifest entry missing required architecture field".to_string(),
+        ));
+    }
+
+    if let Some(ref fmt) = entry.artifact_format {
+        let fmt_lc = fmt.trim().to_ascii_lowercase();
+        let ok = match bundle {
+            ToolBundleId::YtDlp => matches!(fmt_lc.as_str(), "exe" | "single_exe"),
+            ToolBundleId::FfmpegBundle => matches!(fmt_lc.as_str(), "zip" | "ffmpeg_zip"),
+        };
+        if !ok {
+            return Err(ProviderFetchError::Untrusted(format!(
+                "Manifest entry artifact_format '{}' is unsupported for {}",
+                fmt,
+                bundle.display_name()
+            )));
+        }
+    }
+
+    if let Some(ref min_ver) = entry.min_tori_version {
+        let Some(ord) = compare_semver_versions(&config.current_tori_version, min_ver) else {
+            return Err(ProviderFetchError::Untrusted(format!(
+                "Manifest entry has invalid min_tori_version '{}'",
+                min_ver
+            )));
+        };
+        if ord == std::cmp::Ordering::Less {
+            return Err(ProviderFetchError::Untrusted(format!(
+                "Manifest entry requires TORI Desktop >= {} (current version is {})",
+                min_ver, config.current_tori_version
+            )));
+        }
+    }
+
+    if let Some(ref max_ver) = entry.max_tori_version {
+        let Some(ord) = compare_semver_versions(&config.current_tori_version, max_ver) else {
+            return Err(ProviderFetchError::Untrusted(format!(
+                "Manifest entry has invalid max_tori_version '{}'",
+                max_ver
+            )));
+        };
+        if ord == std::cmp::Ordering::Greater {
+            return Err(ProviderFetchError::Untrusted(format!(
+                "Manifest entry supports up to TORI Desktop {} (current version is {})",
+                max_ver, config.current_tori_version
             )));
         }
     }
@@ -261,8 +611,14 @@ fn validate_manifest_entry(
 
     let sha = entry.sha256.trim().to_ascii_lowercase();
     if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ProviderFetchError::Other(
+        return Err(ProviderFetchError::Untrusted(
             "Signed manifest entry has invalid SHA-256 digest".to_string(),
+        ));
+    }
+
+    if schema_v2 && entry.size.unwrap_or(0) == 0 {
+        return Err(ProviderFetchError::Untrusted(
+            "Schema v2 signed manifest entry missing positive artifact byte size".to_string(),
         ));
     }
 
@@ -280,6 +636,12 @@ fn validate_manifest_entry(
             ToolBundleId::YtDlp => ArtifactKind::SingleExe,
             ToolBundleId::FfmpegBundle => ArtifactKind::FfmpegZip,
         },
+        allow_rollback_to: entry.allow_rollback_to,
+        manifest_revision: (validated.manifest.manifest_revision > 0)
+            .then_some(validated.manifest.manifest_revision),
+        is_higher_manifest_revision: validated.is_higher_revision,
+        expected_ffmpeg_version: entry.ffmpeg_version.clone(),
+        expected_ffprobe_version: entry.ffprobe_version.clone(),
     })
 }
 
@@ -287,11 +649,11 @@ fn validate_manifest_entry(
 /// and cryptographically verifies `SHA2-256SUMS` against `SHA2-256SUMS.sig` using yt-dlp's pinned RSA-4096 OpenPGP key.
 pub async fn fetch_ytdlp_candidate(
     config: &ToolsManagerConfig,
-    signed_manifest: Option<&SignedToolsManifest>,
+    signed_manifest: Option<&ValidatedSignedManifest>,
 ) -> std::result::Result<UpdateCandidate, ProviderFetchError> {
-    if let Some(manifest) = signed_manifest {
-        if let Some(ref entry) = manifest.yt_dlp {
-            return validate_manifest_entry(entry, ToolBundleId::YtDlp, config);
+    if let Some(validated) = signed_manifest {
+        if let Some(ref entry) = validated.manifest.yt_dlp {
+            return validate_manifest_entry(validated, entry, ToolBundleId::YtDlp, config);
         }
     }
 
@@ -424,6 +786,11 @@ pub async fn fetch_ytdlp_candidate(
         untrusted_reason: None,
         published_at: release.published_at,
         artifact_kind: ArtifactKind::SingleExe,
+        allow_rollback_to: false,
+        manifest_revision: None,
+        is_higher_manifest_revision: false,
+        expected_ffmpeg_version: None,
+        expected_ffprobe_version: None,
     })
 }
 
@@ -433,11 +800,11 @@ pub async fn fetch_ytdlp_candidate(
 ///   as `TrustLevel::ChecksumOnlyUntrusted`, which strictly blocks unattended installation (`Source Untrusted`).
 pub async fn fetch_ffmpeg_bundle_candidate(
     config: &ToolsManagerConfig,
-    signed_manifest: Option<&SignedToolsManifest>,
+    signed_manifest: Option<&ValidatedSignedManifest>,
 ) -> std::result::Result<UpdateCandidate, ProviderFetchError> {
-    if let Some(manifest) = signed_manifest {
-        if let Some(ref entry) = manifest.ffmpeg_bundle {
-            return validate_manifest_entry(entry, ToolBundleId::FfmpegBundle, config);
+    if let Some(validated) = signed_manifest {
+        if let Some(ref entry) = validated.manifest.ffmpeg_bundle {
+            return validate_manifest_entry(validated, entry, ToolBundleId::FfmpegBundle, config);
         }
     }
 
@@ -537,6 +904,11 @@ pub async fn fetch_ffmpeg_bundle_candidate(
         ),
         published_at: release.published_at,
         artifact_kind: ArtifactKind::FfmpegZip,
+        allow_rollback_to: false,
+        manifest_revision: None,
+        is_higher_manifest_revision: false,
+        expected_ffmpeg_version: None,
+        expected_ffprobe_version: None,
     })
 }
 

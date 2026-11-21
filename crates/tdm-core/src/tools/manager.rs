@@ -17,7 +17,8 @@ use crate::tools::activation::{
 use crate::tools::health::{verify_staged_ffmpeg_bundle, verify_staged_ytdlp};
 use crate::tools::providers::{
     fetch_ffmpeg_bundle_candidate, fetch_signed_tools_manifest, fetch_ytdlp_candidate,
-    ArtifactKind, ProviderFetchError, UpdateCandidate,
+    ArtifactKind, ManifestFetchOutcome, ProviderFetchError, UpdateCandidate,
+    ValidatedSignedManifest,
 };
 use crate::tools::staging::{
     append_tools_log, cleanup_staging_directory, copy_file_atomic, download_artifact_to_staging,
@@ -27,8 +28,8 @@ use crate::tools::store;
 use crate::tools::trust::compute_file_sha256;
 use crate::tools::types::{
     ExternalToolHistoryEntry, ExternalToolRecord, ExternalToolsSettings, ExternalToolsSnapshot,
-    ToolBundleId, ToolId, ToolNotificationEvent, ToolNotificationKind, ToolProgressEvent,
-    ToolUpdateStatus, ToolsManagerConfig, TrustLevel,
+    ManifestAntiReplayState, ToolBundleId, ToolId, ToolNotificationEvent, ToolNotificationKind,
+    ToolProgressEvent, ToolUpdateStatus, ToolsManagerConfig, TrustLevel,
 };
 use crate::tools::version::{
     compare_tool_versions, probe_tool_version, sanitize_version_dir_name, VersionComparison,
@@ -575,26 +576,47 @@ impl ExternalToolsManager {
             }
         }
 
-        // 1. Optional TORI Ed25519-signed manifest check
-        let signed_manifest = match fetch_signed_tools_manifest(&self.config).await {
-            Ok(m) => m,
-            Err(e) => {
-                append_tools_log(
-                    &self.layout,
-                    "WARN",
-                    "SIGNED_MANIFEST_ERR",
-                    &format!("Signed tools manifest check failed: {}", e),
-                );
-                None
-            }
-        };
+        // 1. TORI Ed25519-signed manifest check with anti-replay, expiry, and strict schema validation
+        let prior_manifest_state = store::load_manifest_state(&self.db);
+        let mut manifest_security_rejection: Option<String> = None;
+        let signed_manifest: Option<ValidatedSignedManifest> =
+            match fetch_signed_tools_manifest(&self.config, &prior_manifest_state, now).await {
+                ManifestFetchOutcome::Available(validated) => {
+                    self.record_accepted_manifest_state(&prior_manifest_state, &validated, now);
+                    Some(validated)
+                }
+                ManifestFetchOutcome::NotConfigured => None,
+                ManifestFetchOutcome::NotPublishedYet => {
+                    append_tools_log(
+                        &self.layout,
+                        "INFO",
+                        "SIGNED_MANIFEST_UNPUBLISHED",
+                        "Signed tools manifest endpoint returned HTTP 404 (not published yet); using direct verified providers where available",
+                    );
+                    None
+                }
+                ManifestFetchOutcome::NetworkUnavailable(reason) => {
+                    append_tools_log(
+                        &self.layout,
+                        "WARN",
+                        "SIGNED_MANIFEST_NETWORK",
+                        &format!("Signed tools manifest temporarily unavailable: {}", reason),
+                    );
+                    None
+                }
+                ManifestFetchOutcome::RejectedSecurity(reason) => {
+                    self.record_manifest_security_rejection(&reason);
+                    manifest_security_rejection = Some(reason);
+                    None
+                }
+            };
 
         let mut any_network_failure = false;
         let mut max_retry_after: Option<i64> = None;
         let mut last_check_err: Option<String> = None;
         let mut auto_install_targets: Vec<ToolBundleId> = Vec::new();
 
-        // 2. Check yt-dlp
+        // 2. Check yt-dlp (independent pinned OpenPGP publisher verification even if manifest is absent)
         match fetch_ytdlp_candidate(&self.config, signed_manifest.as_ref()).await {
             Ok(candidate) => {
                 let should_auto = self.apply_candidate_discovery(
@@ -619,28 +641,39 @@ impl ExternalToolsManager {
             }
         }
 
-        // 3. Check FFmpeg + FFprobe bundle
-        match fetch_ffmpeg_bundle_candidate(&self.config, signed_manifest.as_ref()).await {
-            Ok(candidate) => {
-                let should_auto = self.apply_candidate_discovery(
-                    ToolBundleId::FfmpegBundle,
-                    candidate,
-                    now,
-                    manual,
-                )?;
-                if should_auto {
-                    auto_install_targets.push(ToolBundleId::FfmpegBundle);
+        // 3. Check FFmpeg + FFprobe bundle (if manifest was rejected for security reasons, fail closed!)
+        if let Some(ref sec_err) = manifest_security_rejection {
+            self.handle_provider_check_error(
+                ToolBundleId::FfmpegBundle,
+                &ProviderFetchError::Untrusted(sec_err.clone()),
+                now,
+                &mut any_network_failure,
+                &mut max_retry_after,
+                &mut last_check_err,
+            );
+        } else {
+            match fetch_ffmpeg_bundle_candidate(&self.config, signed_manifest.as_ref()).await {
+                Ok(candidate) => {
+                    let should_auto = self.apply_candidate_discovery(
+                        ToolBundleId::FfmpegBundle,
+                        candidate,
+                        now,
+                        manual,
+                    )?;
+                    if should_auto {
+                        auto_install_targets.push(ToolBundleId::FfmpegBundle);
+                    }
                 }
-            }
-            Err(err) => {
-                self.handle_provider_check_error(
-                    ToolBundleId::FfmpegBundle,
-                    &err,
-                    now,
-                    &mut any_network_failure,
-                    &mut max_retry_after,
-                    &mut last_check_err,
-                );
+                Err(err) => {
+                    self.handle_provider_check_error(
+                        ToolBundleId::FfmpegBundle,
+                        &err,
+                        now,
+                        &mut any_network_failure,
+                        &mut max_retry_after,
+                        &mut last_check_err,
+                    );
+                }
             }
         }
 
@@ -680,6 +713,65 @@ impl ExternalToolsManager {
         }
 
         self.get_status_snapshot()
+    }
+
+    fn record_accepted_manifest_state(
+        &self,
+        prior: &ManifestAntiReplayState,
+        validated: &ValidatedSignedManifest,
+        now: DateTime<Utc>,
+    ) {
+        let rev = validated.manifest.manifest_revision;
+        let mut next = prior.clone();
+        if rev >= next.highest_accepted_revision && rev > 0 {
+            next.highest_accepted_revision = rev;
+            next.last_accepted_manifest_sha256 = Some(validated.raw_sha256.clone());
+        } else if next.highest_accepted_revision == 0 {
+            next.last_accepted_manifest_sha256 = Some(validated.raw_sha256.clone());
+        }
+        next.last_accepted_published_at = validated.published_at;
+        next.last_accepted_at = Some(now);
+        next.last_signing_key_id = validated.verified_key_id.clone();
+        let _ = store::save_manifest_state(&self.db, &next);
+        append_tools_log(
+            &self.layout,
+            "INFO",
+            "SIGNED_MANIFEST_VERIFIED",
+            &format!(
+                "Verified TORI signed tools manifest schema_v{} rev={} key_id={:?} sha256={}",
+                validated.manifest.schema_version,
+                rev,
+                validated.verified_key_id,
+                &validated.raw_sha256[..16]
+            ),
+        );
+    }
+
+    fn record_manifest_security_rejection(&self, reason: &str) {
+        append_tools_log(
+            &self.layout,
+            "ERROR",
+            "MANIFEST_SECURITY_REJECTED",
+            reason,
+        );
+        let _ = store::insert_history_entry(
+            &self.db,
+            "system",
+            "manifest_verify",
+            None,
+            None,
+            "rejected_security",
+            self.config.signed_manifest_url.as_deref(),
+            None,
+            Some(TrustLevel::Untrusted.as_str()),
+            Some(reason),
+        );
+    }
+
+    fn is_authorized_emergency_rollback(candidate: &UpdateCandidate) -> bool {
+        candidate.allow_rollback_to
+            && candidate.is_higher_manifest_revision
+            && candidate.trust_level == TrustLevel::ToriEd25519ManifestVerified
     }
 
     fn handle_provider_check_error(
@@ -754,8 +846,8 @@ impl ExternalToolsManager {
         let mut should_auto_install = false;
 
         match comparison {
-            VersionComparison::Equal | VersionComparison::Older => {
-                // Already up to date (or installed version is newer — reject downgrades!)
+            VersionComparison::Equal => {
+                // Already up to date — never emit desktop notification!
                 for &tool in bundle.tools() {
                     let mut r = store::get_tool_record(&self.db, tool)?
                         .unwrap_or_else(|| ExternalToolRecord::new_default(tool));
@@ -767,9 +859,49 @@ impl ExternalToolsManager {
                     }
                     store::upsert_tool_record(&self.db, &r)?;
                 }
-                // Never emit desktop notification when up to date!
             }
-            VersionComparison::Newer | VersionComparison::Unknown => {
+            VersionComparison::Older if !Self::is_authorized_emergency_rollback(&candidate) => {
+                // Installed version is newer — strictly reject unauthorized downgrades!
+                append_tools_log(
+                    &self.layout,
+                    "WARN",
+                    "DOWNGRADE_BLOCKED",
+                    &format!(
+                        "Blocked unauthorized downgrade candidate {} for {} (installed={:?})",
+                        candidate.version,
+                        bundle.display_name(),
+                        rec.installed_version
+                    ),
+                );
+                for &tool in bundle.tools() {
+                    let mut r = store::get_tool_record(&self.db, tool)?
+                        .unwrap_or_else(|| ExternalToolRecord::new_default(tool));
+                    r.available_version = Some(candidate.version.clone());
+                    r.last_checked_at = Some(now);
+                    r.last_error = None;
+                    if r.update_status != ToolUpdateStatus::PendingActivation {
+                        r.update_status = ToolUpdateStatus::UpToDate;
+                    }
+                    store::upsert_tool_record(&self.db, &r)?;
+                }
+            }
+            VersionComparison::Older
+            | VersionComparison::Newer
+            | VersionComparison::Unknown => {
+                if comparison == VersionComparison::Older {
+                    append_tools_log(
+                        &self.layout,
+                        "WARN",
+                        "EMERGENCY_MANIFEST_ROLLBACK",
+                        &format!(
+                            "Authorized emergency signed-manifest rollback for {} from {:?} to {} (manifest_revision={:?})",
+                            bundle.display_name(),
+                            rec.installed_version,
+                            candidate.version,
+                            candidate.manifest_revision
+                        ),
+                    );
+                }
                 let is_quarantined = !manual && rec.failed_versions.contains(&candidate.version);
 
                 if !candidate.trust_level.allows_automatic_install() {
@@ -901,7 +1033,29 @@ impl ExternalToolsManager {
             match cached {
                 Some(c) => c,
                 None => {
-                    let signed = fetch_signed_tools_manifest(&self.config).await.ok().flatten();
+                    let now = Utc::now();
+                    let prior = store::load_manifest_state(&self.db);
+                    let signed = match fetch_signed_tools_manifest(&self.config, &prior, now).await {
+                        ManifestFetchOutcome::Available(validated) => {
+                            self.record_accepted_manifest_state(&prior, &validated, now);
+                            Some(validated)
+                        }
+                        ManifestFetchOutcome::RejectedSecurity(reason) => {
+                            self.record_manifest_security_rejection(&reason);
+                            if bundle == ToolBundleId::FfmpegBundle {
+                                self.set_bundle_status(
+                                    bundle,
+                                    ToolUpdateStatus::SourceUntrusted,
+                                    Some(reason.clone()),
+                                );
+                                return Err(EngineError::Other(reason));
+                            }
+                            None
+                        }
+                        ManifestFetchOutcome::NotConfigured
+                        | ManifestFetchOutcome::NotPublishedYet
+                        | ManifestFetchOutcome::NetworkUnavailable(_) => None,
+                    };
                     match bundle {
                         ToolBundleId::YtDlp => {
                             fetch_ytdlp_candidate(&self.config, signed.as_ref()).await
@@ -941,14 +1095,14 @@ impl ExternalToolsManager {
             return Err(EngineError::Other(reason));
         }
 
-        // 2. Reject downgrades or redundant installs
+        // 2. Reject downgrades or redundant installs (except explicitly authorized higher-revision signed emergency rollback)
         if let Some(ref installed) = current_rec.installed_version {
             match compare_tool_versions(primary_tool, installed, &candidate.version) {
                 VersionComparison::Equal => {
                     self.set_bundle_status(bundle, ToolUpdateStatus::UpToDate, None);
                     return Ok(());
                 }
-                VersionComparison::Older => {
+                VersionComparison::Older if !Self::is_authorized_emergency_rollback(&candidate) => {
                     let msg = format!(
                         "Rejected downgrade for {}: installed '{}' is newer than candidate '{}'",
                         bundle.display_name(),
@@ -958,6 +1112,20 @@ impl ExternalToolsManager {
                     append_tools_log(&self.layout, "WARN", "DOWNGRADE_REJECTED", &msg);
                     self.set_bundle_status(bundle, ToolUpdateStatus::UpToDate, None);
                     return Err(EngineError::Other(msg));
+                }
+                VersionComparison::Older => {
+                    append_tools_log(
+                        &self.layout,
+                        "WARN",
+                        "EMERGENCY_MANIFEST_ROLLBACK_EXECUTE",
+                        &format!(
+                            "Executing authorized emergency rollback for {} from '{}' to '{}' (manifest_revision={:?})",
+                            bundle.display_name(),
+                            installed,
+                            candidate.version,
+                            candidate.manifest_revision
+                        ),
+                    );
                 }
                 VersionComparison::Newer | VersionComparison::Unknown => {}
             }
@@ -1070,6 +1238,7 @@ impl ExternalToolsManager {
             &candidate.download_url,
             &staged_download_path,
             expected_sha,
+            candidate.expected_size,
             max_bytes,
             self.config.download_timeout_secs,
             self.config.allow_loopback_http,
@@ -1301,18 +1470,58 @@ impl ExternalToolsManager {
         };
 
         if let Err(err) = post_switch_ok {
-            // Immediate automatic rollback + quarantine failed version
+            // Immediate automatic rollback + quarantine failed version.
+            // If the previous managed binary disappeared on disk (failed automatic rollback),
+            // cleanly clear the managed active slot so verified bundled fallback activates automatically!
+            let mut restored_manifest = prev_manifest.clone();
+            let mut fell_back_to_bundled = false;
+            let missing_prev_yt = restored_manifest
+                .yt_dlp_active
+                .as_ref()
+                .filter(|prev_active| !prev_active.binary_path.exists())
+                .map(|prev_active| prev_active.binary_path.clone());
+            if let Some(missing_path) = missing_prev_yt {
+                restored_manifest.yt_dlp_active = None;
+                if restored_manifest
+                    .yt_dlp_rollback
+                    .as_ref()
+                    .map(|r| r.source == "bundled")
+                    .unwrap_or(false)
+                {
+                    restored_manifest.yt_dlp_rollback = None;
+                }
+                fell_back_to_bundled = true;
+                append_tools_log(
+                    &self.layout,
+                    "WARN",
+                    "AUTO_ROLLBACK_BUNDLED_FALLBACK",
+                    &format!(
+                        "Previous managed yt-dlp {:?} missing during auto-rollback; falling back to bundled binary",
+                        missing_path
+                    ),
+                );
+            }
             self.coordinator
                 .update_manifest_metadata(&self.layout, |m| {
-                    *m = prev_manifest.clone();
+                    *m = restored_manifest;
                 })?;
 
+            if fell_back_to_bundled {
+                let _ = self.sync_local_inventory();
+            }
             if let Ok(Some(mut rec)) = store::get_tool_record(&self.db, ToolId::YtDlp) {
                 rec.update_status = ToolUpdateStatus::RolledBack;
-                rec.last_error = Some(format!(
-                    "Post-activation verification failed ({}); rolled back automatically.",
-                    err
-                ));
+                rec.last_error = Some(if fell_back_to_bundled {
+                    format!(
+                        "Post-activation verification failed ({}) and previous managed binary was missing; restored verified bundled fallback.",
+                        err
+                    )
+                } else {
+                    format!(
+                        "Post-activation verification failed ({}); rolled back automatically.",
+                        err
+                    )
+                });
                 if !rec.failed_versions.contains(&new_slot.version) {
                     rec.failed_versions.push(new_slot.version.clone());
                 }
@@ -1538,18 +1747,58 @@ impl ExternalToolsManager {
         };
 
         if let Err(err) = post_switch_ok {
+            let mut restored_manifest = prev_manifest.clone();
+            let mut fell_back_to_bundled = false;
+            let missing_prev_ff = restored_manifest
+                .ffmpeg_bundle_active
+                .as_ref()
+                .filter(|prev_active| {
+                    !prev_active.ffmpeg_path.exists() || !prev_active.ffprobe_path.exists()
+                })
+                .map(|prev_active| prev_active.version.clone());
+            if let Some(missing_ver) = missing_prev_ff {
+                restored_manifest.ffmpeg_bundle_active = None;
+                if restored_manifest
+                    .ffmpeg_bundle_rollback
+                    .as_ref()
+                    .map(|r| r.source == "bundled")
+                    .unwrap_or(false)
+                {
+                    restored_manifest.ffmpeg_bundle_rollback = None;
+                }
+                fell_back_to_bundled = true;
+                append_tools_log(
+                    &self.layout,
+                    "WARN",
+                    "AUTO_ROLLBACK_BUNDLED_FALLBACK",
+                    &format!(
+                        "Previous managed FFmpeg bundle {} incomplete during auto-rollback; falling back to bundled pair",
+                        missing_ver
+                    ),
+                );
+            }
             self.coordinator
                 .update_manifest_metadata(&self.layout, |m| {
-                    *m = prev_manifest.clone();
+                    *m = restored_manifest;
                 })?;
 
+            if fell_back_to_bundled {
+                let _ = self.sync_local_inventory();
+            }
             for tool in [ToolId::Ffmpeg, ToolId::Ffprobe] {
                 if let Ok(Some(mut rec)) = store::get_tool_record(&self.db, tool) {
                     rec.update_status = ToolUpdateStatus::RolledBack;
-                    rec.last_error = Some(format!(
-                        "Post-activation verification failed ({}); rolled back automatically.",
-                        err
-                    ));
+                    rec.last_error = Some(if fell_back_to_bundled {
+                        format!(
+                            "Post-activation verification failed ({}) and previous managed bundle was missing; restored verified bundled pair.",
+                            err
+                        )
+                    } else {
+                        format!(
+                            "Post-activation verification failed ({}); rolled back automatically.",
+                            err
+                        )
+                    });
                     if !rec.failed_versions.contains(&candidate.version) {
                         rec.failed_versions.push(candidate.version.clone());
                     }
@@ -1716,6 +1965,11 @@ impl ExternalToolsManager {
                     untrusted_reason: None,
                     published_at: None,
                     artifact_kind: ArtifactKind::SingleExe,
+                    allow_rollback_to: false,
+                    manifest_revision: None,
+                    is_higher_manifest_revision: false,
+                    expected_ffmpeg_version: None,
+                    expected_ffprobe_version: None,
                 };
                 let before_active = manifest
                     .yt_dlp_active
@@ -1751,6 +2005,11 @@ impl ExternalToolsManager {
                     untrusted_reason: None,
                     published_at: None,
                     artifact_kind: ArtifactKind::FfmpegZip,
+                    allow_rollback_to: false,
+                    manifest_revision: None,
+                    is_higher_manifest_revision: false,
+                    expected_ffmpeg_version: Some(pending.ffmpeg_version.clone()),
+                    expected_ffprobe_version: Some(pending.ffprobe_version.clone()),
                 };
                 let before_active = manifest
                     .ffmpeg_bundle_active

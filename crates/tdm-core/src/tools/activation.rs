@@ -393,8 +393,11 @@ impl ToolUsageCoordinator {
     /// 2. Verified rollback managed version (`active-tools.json`)
     /// 3. Bundled binary shipped with TORI
     /// 4. System fallback (only if neither managed nor bundled exists)
-    pub fn resolve_tool(&self, tool: ToolId) -> Option<ResolvedToolBinary> {
-        let manifest = self.manifest.read().unwrap();
+    fn resolve_tool_locked(
+        &self,
+        manifest: &ActiveToolsManifest,
+        tool: ToolId,
+    ) -> Option<ResolvedToolBinary> {
         let bundled_override = self.bundled_override_dir.read().unwrap().clone();
 
         match tool {
@@ -413,7 +416,7 @@ impl ToolUsageCoordinator {
                     if is_healthy_file(&slot.binary_path) {
                         return Some(ResolvedToolBinary {
                             path: slot.binary_path.clone(),
-                            source: "rollback",
+                            source: if slot.source == "bundled" { "bundled" } else { "rollback" },
                             version_hint: Some(slot.version.clone()),
                             sha256_hint: slot.sha256.clone(),
                         });
@@ -450,7 +453,7 @@ impl ToolUsageCoordinator {
                         };
                         return Some(ResolvedToolBinary {
                             path,
-                            source: "rollback",
+                            source: if slot.source == "bundled" { "bundled" } else { "rollback" },
                             version_hint: Some(ver),
                             sha256_hint: slot.sha256.clone(),
                         });
@@ -458,7 +461,6 @@ impl ToolUsageCoordinator {
                 }
             }
         }
-        drop(manifest);
 
         if let Some(bundled) = discover_bundled_tool(tool, bundled_override.as_deref()) {
             return Some(ResolvedToolBinary {
@@ -481,26 +483,24 @@ impl ToolUsageCoordinator {
         None
     }
 
-    /// Acquires an RAII usage lease for `tool` and returns the resolved executable path.
-    /// While this guard is alive, active-tool switches for this tool's bundle will defer cleanly.
-    pub fn acquire_lease(self: &Arc<Self>, tool: ToolId) -> Option<ToolLeaseGuard> {
-        // Hold read lock while resolving & incrementing lease counter so activation's write lock
-        // cannot interleave between path resolution and lease acquisition.
-        let _manifest_guard = self.manifest.read().unwrap();
-        self.lease_counter(tool).fetch_add(1, Ordering::SeqCst);
-        drop(_manifest_guard);
+    pub fn resolve_tool(&self, tool: ToolId) -> Option<ResolvedToolBinary> {
+        let manifest = self.manifest.read().unwrap();
+        self.resolve_tool_locked(&manifest, tool)
+    }
 
-        match self.resolve_tool(tool) {
-            Some(resolved) => Some(ToolLeaseGuard {
-                coordinator: Arc::clone(self),
-                tool,
-                path: resolved.path,
-            }),
-            None => {
-                self.lease_counter(tool).fetch_sub(1, Ordering::SeqCst);
-                None
-            }
-        }
+    /// Acquires an RAII usage lease for `tool` and returns the resolved executable path
+    /// in a single read-locked critical section so activation cannot interleave with job launch.
+    pub fn acquire_lease(self: &Arc<Self>, tool: ToolId) -> Option<ToolLeaseGuard> {
+        let manifest_guard = self.manifest.read().unwrap();
+        let resolved = self.resolve_tool_locked(&manifest_guard, tool)?;
+        self.lease_counter(tool).fetch_add(1, Ordering::SeqCst);
+        drop(manifest_guard);
+
+        Some(ToolLeaseGuard {
+            coordinator: Arc::clone(self),
+            tool,
+            path: resolved.path,
+        })
     }
 
     /// Attempts an exclusive manifest mutation ONLY if `defer_while_in_use` allows it

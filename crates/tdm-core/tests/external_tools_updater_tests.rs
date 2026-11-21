@@ -25,10 +25,12 @@ use tokio::net::TcpListener;
 
 use tdm_core::tools::{
     compare_tool_versions, compute_file_sha256, extract_ffmpeg_bundle_zip,
-    parse_and_pin_openpgp_rsa_pubkey, validate_trusted_url, validate_windows_x64_pe_bytes,
-    verify_minisign_ed25519, verify_openpgp_detached_rsa_signature, ExternalToolsEvent,
-    ExternalToolsManager, ExternalToolsSettings, SignedManifestToolEntry, SignedToolsManifest,
+    extract_minisign_key_id_hex, parse_and_pin_openpgp_rsa_pubkey, reject_duplicate_json_keys,
+    validate_trusted_url, validate_windows_x64_pe_bytes, verify_minisign_ed25519,
+    verify_openpgp_detached_rsa_signature, ExternalToolsEvent, ExternalToolsManager,
+    ExternalToolsSettings, ManifestProvenance, SignedManifestToolEntry, SignedToolsManifest,
     ToolId, ToolNotificationKind, ToolUpdateStatus, ToolsManagerConfig, VersionComparison,
+    TORI_DEFAULT_TOOLS_MANIFEST_URL, TORI_ED25519_KEY_ID, TORI_ED25519_PUBKEY_B64,
     YTDLP_PGP_FINGERPRINT_HEX, YTDLP_PGP_PUBKEY_ASC,
 };
 use tdm_core::Database;
@@ -481,7 +483,46 @@ fn build_test_manager(
     cfg.allow_loopback_http = true;
     cfg.register_globally = false;
     cfg.bundled_override_dir = Some(bundled_dir.to_path_buf());
+    // Offline unit tests must not hit live toridownload.xyz unless explicitly configured to a test server
+    if cfg.signed_manifest_url.as_deref() == Some(TORI_DEFAULT_TOOLS_MANIFEST_URL) {
+        cfg.signed_manifest_url = None;
+    }
+    if cfg.tori_manifest_pubkey_b64 != TORI_ED25519_PUBKEY_B64 {
+        cfg.expected_manifest_key_id = None;
+    }
     Arc::new(ExternalToolsManager::with_config(db, data_dir.to_path_buf(), cfg).unwrap())
+}
+
+fn make_manifest_entry(
+    version: &str,
+    url: String,
+    sha256: String,
+    size: Option<u64>,
+) -> SignedManifestToolEntry {
+    SignedManifestToolEntry {
+        tool_id: Some("ffmpeg_bundle".to_string()),
+        version: version.to_string(),
+        ffmpeg_version: Some(version.to_string()),
+        ffprobe_version: Some(version.to_string()),
+        bundle_id: Some(format!("ffmpeg-bundle-{}", version)),
+        url,
+        sha256,
+        size,
+        artifact_format: Some("zip".to_string()),
+        platform: Some("windows".to_string()),
+        architecture: Some("x86_64".to_string()),
+        min_tori_version: Some("1.0.6".to_string()),
+        max_tori_version: None,
+        published_at: Some(Utc::now().to_rfc3339()),
+        allow_rollback_to: false,
+        provenance: Some(ManifestProvenance {
+            upstream_provider: "BtbN/FFmpeg-Builds".to_string(),
+            upstream_release: "autobuild-test".to_string(),
+            upstream_url: "https://github.com/BtbN/FFmpeg-Builds".to_string(),
+            approved_by: "TORI QA".to_string(),
+            approved_at: Utc::now().to_rfc3339(),
+        }),
+    }
 }
 
 fn build_ytdlp_github_routes(
@@ -615,17 +656,18 @@ async fn test_01_valid_ytdlp_openpgp_and_ffmpeg_ed25519_bundle_updates_and_rollb
 
     let signed_manifest = SignedToolsManifest {
         schema_version: 1,
+        manifest_revision: 0,
         generated_at: Utc::now().to_rfc3339(),
+        published_at: None,
+        expires_at: None,
+        signing_key_id: None,
         yt_dlp: None,
-        ffmpeg_bundle: Some(SignedManifestToolEntry {
-            version: "N-126374-g089a48eb36-20260831".to_string(),
-            url: format!("{}/ffmpeg-bundle.zip", asset_server.base_url),
-            sha256: ffmpeg_zip_sha.clone(),
-            size: Some(real_ffmpeg_zip.len() as u64),
-            platform: Some("windows".to_string()),
-            architecture: Some("x86_64".to_string()),
-            published_at: Some("2026-08-31T00:00:00Z".to_string()),
-        }),
+        ffmpeg_bundle: Some(make_manifest_entry(
+            "N-126374-g089a48eb36-20260831",
+            format!("{}/ffmpeg-bundle.zip", asset_server.base_url),
+            ffmpeg_zip_sha.clone(),
+            Some(real_ffmpeg_zip.len() as u64),
+        )),
     };
     let manifest_bytes = serde_json::to_vec(&signed_manifest).unwrap();
     let manifest_sig = minisign.sign(&manifest_bytes);
@@ -1212,17 +1254,18 @@ async fn test_12_to_15_and_24_validation_health_limits_mismatch_and_zip_security
 
         let manifest = SignedToolsManifest {
             schema_version: 1,
+            manifest_revision: 0,
             generated_at: Utc::now().to_rfc3339(),
+            published_at: None,
+            expires_at: None,
+            signing_key_id: None,
             yt_dlp: None,
-            ffmpeg_bundle: Some(SignedManifestToolEntry {
-                version: "N-126374-g089a48eb36-20260831".into(),
-                url: format!("{}/mismatch.zip", a_srv.base_url),
-                sha256: bad_sha,
-                size: Some(bad_zip.len() as u64),
-                platform: Some("windows".into()),
-                architecture: Some("x86_64".into()),
-                published_at: None,
-            }),
+            ffmpeg_bundle: Some(make_manifest_entry(
+                "N-126374-g089a48eb36-20260831",
+                format!("{}/mismatch.zip", a_srv.base_url),
+                bad_sha,
+                Some(bad_zip.len() as u64),
+            )),
         };
         let mb = serde_json::to_vec(&manifest).unwrap();
         let msig = minisign.sign(&mb);
@@ -1427,17 +1470,18 @@ async fn test_20_to_23_active_usage_deferral_and_concurrency_guards() {
 
     let manifest = SignedToolsManifest {
         schema_version: 1,
+        manifest_revision: 0,
         generated_at: Utc::now().to_rfc3339(),
+        published_at: None,
+        expires_at: None,
+        signing_key_id: None,
         yt_dlp: None,
-        ffmpeg_bundle: Some(SignedManifestToolEntry {
-            version: "N-126374-g089a48eb36-20260831".into(),
-            url: format!("{}/ffmpeg.zip", a_srv.base_url),
-            sha256: ff_sha,
-            size: Some(real_ffmpeg_zip.len() as u64),
-            platform: Some("windows".into()),
-            architecture: Some("x86_64".into()),
-            published_at: None,
-        }),
+        ffmpeg_bundle: Some(make_manifest_entry(
+            "N-126374-g089a48eb36-20260831",
+            format!("{}/ffmpeg.zip", a_srv.base_url),
+            ff_sha,
+            Some(real_ffmpeg_zip.len() as u64),
+        )),
     };
     let mb = serde_json::to_vec(&manifest).unwrap();
     let msig = minisign.sign(&mb);
@@ -1668,7 +1712,485 @@ async fn test_29_and_30_scheduling_policy_and_security_boundaries() {
     assert!(validate_trusted_url("https://user:pass@github.com/a", false).is_err());
     assert!(parse_and_pin_openpgp_rsa_pubkey(YTDLP_PGP_PUBKEY_ASC, YTDLP_PGP_FINGERPRINT_HEX).is_ok());
     assert_eq!(
+        extract_minisign_key_id_hex(TORI_ED25519_PUBKEY_B64).as_deref(),
+        Some(TORI_ED25519_KEY_ID)
+    );
+    assert_eq!(
         compare_tool_versions(ToolId::YtDlp, "2026.10.26", "2026.08.19"),
         VersionComparison::Older
     );
+}
+
+// ============================================================================
+// GATE 32.1 — PHASE 14 & PHASE 18: SCHEMA V2, ANTI-REPLAY, EXPIRY, DUPLICATE
+// JSON KEYS, KEY ID PINNING, VERSION BOUNDS, REDIRECTS, SIZE ENFORCEMENT,
+// EMERGENCY SIGNED ROLLBACK, AND FAILED AUTO-ROLLBACK FALLBACK
+// ============================================================================
+
+fn build_v2_manifest(
+    minisign: &EphemeralMinisignKey,
+    revision: u64,
+    published_at: chrono::DateTime<Utc>,
+    expires_at: chrono::DateTime<Utc>,
+    entry: SignedManifestToolEntry,
+) -> (Vec<u8>, String) {
+    let key_id = extract_minisign_key_id_hex(&minisign.pubkey_b64).unwrap();
+    let manifest = SignedToolsManifest {
+        schema_version: 2,
+        manifest_revision: revision,
+        generated_at: published_at.to_rfc3339(),
+        published_at: Some(published_at.to_rfc3339()),
+        expires_at: Some(expires_at.to_rfc3339()),
+        signing_key_id: Some(key_id),
+        yt_dlp: None,
+        ffmpeg_bundle: Some(entry),
+    };
+    let bytes = serde_json::to_vec_pretty(&manifest).unwrap();
+    let sig = minisign.sign(&bytes);
+    (bytes, sig)
+}
+
+#[tokio::test]
+async fn test_31_gate32_1_schema_v2_anti_replay_expiry_future_and_emergency_rollback() {
+    let data_dir = TempDir::new().unwrap();
+    let bundled = prepare_old_bundled_dir();
+    let minisign = EphemeralMinisignKey::generate();
+    let real_ffmpeg_zip = build_real_ffmpeg_zip_bytes();
+    let ff_sha = hex::encode(Sha256::digest(&real_ffmpeg_zip));
+
+    // Also build a "newer" older-version zip (uses real ffmpeg/ffprobe, labeled as older version for emergency rollback test)
+    let mut asset_routes = HashMap::new();
+    asset_routes.insert(
+        "/ffmpeg-v2.zip".into(),
+        MockResponse::ok_bytes(real_ffmpeg_zip.clone()),
+    );
+    asset_routes.insert(
+        "/redirect-evil".into(),
+        MockResponse::status_only(
+            302,
+            vec![("Location".into(), "https://evil.untrusted.example/ffmpeg.zip".into())],
+        ),
+    );
+    let asset_srv = MockServer::start(asset_routes).await;
+
+    let now = Utc::now();
+
+    // 1. Valid Schema v2 manifest (revision 2) -> installs cleanly and persists highest_accepted_revision = 2
+    let entry_rev2 = make_manifest_entry(
+        "N-126374-g089a48eb36-20260831",
+        format!("{}/ffmpeg-v2.zip", asset_srv.base_url),
+        ff_sha.clone(),
+        Some(real_ffmpeg_zip.len() as u64),
+    );
+    let (m_rev2, s_rev2) = build_v2_manifest(
+        &minisign,
+        2,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        entry_rev2.clone(),
+    );
+
+    // 2. Replayed older manifest (revision 1) -> MUST BE REJECTED!
+    let (m_rev1, s_rev1) = build_v2_manifest(
+        &minisign,
+        1,
+        now - ChronoDuration::hours(2),
+        now + ChronoDuration::days(29),
+        entry_rev2.clone(),
+    );
+
+    // 3. Same revision 2 with mutated whitespace (equivocation) -> MUST BE REJECTED!
+    let mut m_rev2_mut = m_rev2.clone();
+    m_rev2_mut.push(b'\n');
+    let s_rev2_mut = minisign.sign(&m_rev2_mut);
+
+    // 4. Expired manifest (revision 3, expired 1 hour ago) -> MUST BE REJECTED!
+    let (m_expired, s_expired) = build_v2_manifest(
+        &minisign,
+        3,
+        now - ChronoDuration::days(10),
+        now - ChronoDuration::hours(1),
+        entry_rev2.clone(),
+    );
+
+    // 5. Future-dated manifest (revision 3, published 2 hours in the future) -> MUST BE REJECTED!
+    let (m_future, s_future) = build_v2_manifest(
+        &minisign,
+        3,
+        now + ChronoDuration::hours(2),
+        now + ChronoDuration::days(30),
+        entry_rev2.clone(),
+    );
+
+    // 6. Duplicate JSON keys (valid signature over crafted duplicate-key JSON) -> MUST BE REJECTED!
+    let dup_json = format!(
+        r#"{{"schema_version":2,"manifest_revision":3,"manifest_revision":99,"published_at":"{}","expires_at":"{}","signing_key_id":"{}"}}"#,
+        (now - ChronoDuration::minutes(1)).to_rfc3339(),
+        (now + ChronoDuration::days(30)).to_rfc3339(),
+        extract_minisign_key_id_hex(&minisign.pubkey_b64).unwrap()
+    );
+    assert!(reject_duplicate_json_keys(dup_json.as_bytes()).is_err());
+    let s_dup = minisign.sign(dup_json.as_bytes());
+
+    // 7. Wrong signing_key_id inside signed JSON -> MUST BE REJECTED!
+    let mut wrong_kid_manifest: SignedToolsManifest = serde_json::from_slice(&m_rev2).unwrap();
+    wrong_kid_manifest.manifest_revision = 3;
+    wrong_kid_manifest.signing_key_id = Some("DEADBEEF00000000".to_string());
+    let m_wrong_kid = serde_json::to_vec(&wrong_kid_manifest).unwrap();
+    let s_wrong_kid = minisign.sign(&m_wrong_kid);
+
+    // 8. Unsupported schema_version 99 -> MUST BE REJECTED!
+    let mut bad_schema: SignedToolsManifest = serde_json::from_slice(&m_rev2).unwrap();
+    bad_schema.schema_version = 99;
+    bad_schema.manifest_revision = 3;
+    let m_bad_schema = serde_json::to_vec(&bad_schema).unwrap();
+    let s_bad_schema = minisign.sign(&m_bad_schema);
+
+    // 9. Incompatible min_tori_version ("9.9.9") and max_tori_version ("1.0.5") -> MUST BE REJECTED!
+    let mut entry_min = entry_rev2.clone();
+    entry_min.min_tori_version = Some("9.9.9".to_string());
+    let (m_min_ver, s_min_ver) = build_v2_manifest(
+        &minisign,
+        3,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        entry_min,
+    );
+
+    let mut entry_max = entry_rev2.clone();
+    entry_max.max_tori_version = Some("1.0.5".to_string());
+    let (m_max_ver, s_max_ver) = build_v2_manifest(
+        &minisign,
+        4,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        entry_max,
+    );
+
+    // 10. Wrong expected_size in manifest (off by 1 byte) -> MUST BE REJECTED!
+    let mut entry_bad_size = entry_rev2.clone();
+    entry_bad_size.version = "N-129999-g9999999999-20261121".to_string();
+    entry_bad_size.size = Some(real_ffmpeg_zip.len() as u64 + 1);
+    let (m_bad_size, s_bad_size) = build_v2_manifest(
+        &minisign,
+        5,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        entry_bad_size,
+    );
+
+    // 11. Untrusted redirect target -> MUST BE REJECTED!
+    let mut entry_redir = entry_rev2.clone();
+    entry_redir.version = "N-129998-g8888888888-20261121".to_string();
+    entry_redir.url = format!("{}/redirect-evil", asset_srv.base_url);
+    let (m_redir, s_redir) = build_v2_manifest(
+        &minisign,
+        6,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        entry_redir,
+    );
+
+    // 12. Unauthorized downgrade (older version N-121000 with allow_rollback_to: false, rev 7) -> REJECTED!
+    let mut entry_unauth_down = entry_rev2.clone();
+    entry_unauth_down.version = "N-121000-g1111111111-20260101".to_string();
+    entry_unauth_down.allow_rollback_to = false;
+    let (m_unauth_down, s_unauth_down) = build_v2_manifest(
+        &minisign,
+        7,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        entry_unauth_down,
+    );
+
+    // 13. Authorized emergency rollback (older version N-121000 with allow_rollback_to: true AND higher rev 8) -> ACCEPTED!
+    let mut entry_auth_rb = entry_rev2.clone();
+    entry_auth_rb.version = "N-121000-g1111111111-20260101".to_string();
+    entry_auth_rb.allow_rollback_to = true;
+    let (m_auth_rb, s_auth_rb) = build_v2_manifest(
+        &minisign,
+        8,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        entry_auth_rb,
+    );
+
+    let mut api_r = HashMap::new();
+    api_r.insert("/ytdlp".into(), MockResponse::status_only(404, vec![]));
+    api_r.insert("/rev2.json".into(), MockResponse::ok_bytes(m_rev2.clone()));
+    api_r.insert("/rev2.json.sig".into(), MockResponse::ok_bytes(s_rev2.into_bytes()));
+    api_r.insert("/rev1.json".into(), MockResponse::ok_bytes(m_rev1));
+    api_r.insert("/rev1.json.sig".into(), MockResponse::ok_bytes(s_rev1.into_bytes()));
+    api_r.insert("/rev2_mut.json".into(), MockResponse::ok_bytes(m_rev2_mut));
+    api_r.insert("/rev2_mut.json.sig".into(), MockResponse::ok_bytes(s_rev2_mut.into_bytes()));
+    api_r.insert("/expired.json".into(), MockResponse::ok_bytes(m_expired));
+    api_r.insert("/expired.json.sig".into(), MockResponse::ok_bytes(s_expired.into_bytes()));
+    api_r.insert("/future.json".into(), MockResponse::ok_bytes(m_future));
+    api_r.insert("/future.json.sig".into(), MockResponse::ok_bytes(s_future.into_bytes()));
+    api_r.insert("/dup.json".into(), MockResponse::ok_bytes(dup_json.into_bytes()));
+    api_r.insert("/dup.json.sig".into(), MockResponse::ok_bytes(s_dup.into_bytes()));
+    api_r.insert("/wrong_kid.json".into(), MockResponse::ok_bytes(m_wrong_kid));
+    api_r.insert("/wrong_kid.json.sig".into(), MockResponse::ok_bytes(s_wrong_kid.into_bytes()));
+    api_r.insert("/bad_schema.json".into(), MockResponse::ok_bytes(m_bad_schema));
+    api_r.insert("/bad_schema.json.sig".into(), MockResponse::ok_bytes(s_bad_schema.into_bytes()));
+    api_r.insert("/missing_sig.json".into(), MockResponse::ok_bytes(m_rev2.clone()));
+    api_r.insert("/bad_b64_sig.json".into(), MockResponse::ok_bytes(m_rev2));
+    api_r.insert("/bad_b64_sig.json.sig".into(), MockResponse::ok_bytes(b"!!!not-base64!!!".to_vec()));
+    api_r.insert("/min_ver.json".into(), MockResponse::ok_bytes(m_min_ver));
+    api_r.insert("/min_ver.json.sig".into(), MockResponse::ok_bytes(s_min_ver.into_bytes()));
+    api_r.insert("/max_ver.json".into(), MockResponse::ok_bytes(m_max_ver));
+    api_r.insert("/max_ver.json.sig".into(), MockResponse::ok_bytes(s_max_ver.into_bytes()));
+    api_r.insert("/bad_size.json".into(), MockResponse::ok_bytes(m_bad_size));
+    api_r.insert("/bad_size.json.sig".into(), MockResponse::ok_bytes(s_bad_size.into_bytes()));
+    api_r.insert("/redir.json".into(), MockResponse::ok_bytes(m_redir));
+    api_r.insert("/redir.json.sig".into(), MockResponse::ok_bytes(s_redir.into_bytes()));
+    api_r.insert("/unauth_down.json".into(), MockResponse::ok_bytes(m_unauth_down));
+    api_r.insert("/unauth_down.json.sig".into(), MockResponse::ok_bytes(s_unauth_down.into_bytes()));
+    api_r.insert("/auth_rb.json".into(), MockResponse::ok_bytes(m_auth_rb));
+    api_r.insert("/auth_rb.json.sig".into(), MockResponse::ok_bytes(s_auth_rb.into_bytes()));
+    let api_srv = MockServer::start(api_r).await;
+
+    let make_mgr = |path: &str| {
+        let mut cfg = ToolsManagerConfig::default();
+        cfg.ytdlp_release_api_url = format!("{}/ytdlp", api_srv.base_url);
+        cfg.ffmpeg_release_api_url = format!("{}/ytdlp", api_srv.base_url);
+        cfg.signed_manifest_url = Some(format!("{}{}", api_srv.base_url, path));
+        cfg.tori_manifest_pubkey_b64 = minisign.pubkey_b64.clone();
+        cfg.current_tori_version = "1.0.6".to_string();
+        build_test_manager(data_dir.path(), bundled.path(), cfg)
+    };
+
+    // Step 1: Valid Schema v2 rev 2 installs cleanly!
+    let mgr_ok = make_mgr("/rev2.json");
+    let snap = mgr_ok.check_for_updates(false).await.unwrap();
+    let ff = snap.tools.iter().find(|t| t.tool_id == ToolId::Ffmpeg).unwrap();
+    assert_eq!(ff.installed_version.as_deref(), Some("N-126374-g089a48eb36-20260831"));
+    assert_eq!(ff.update_status, ToolUpdateStatus::Updated);
+
+    let db = Database::open(data_dir.path().join("tdm_storage.sqlite")).unwrap();
+    let state = tdm_core::tools::store::load_manifest_state(&db);
+    assert_eq!(state.highest_accepted_revision, 2);
+
+    // Step 2: Every single security attack MUST fail closed (`SourceUntrusted`) without touching active FFmpeg!
+    for (route, needle) in [
+        ("/rev1.json", "replay"),
+        ("/rev2_mut.json", "equivocation"),
+        ("/expired.json", "expired"),
+        ("/future.json", "future-dated"),
+        ("/dup.json", "duplicate JSON key"),
+        ("/wrong_kid.json", "signing_key_id"),
+        ("/bad_schema.json", "schema_version"),
+        ("/missing_sig.json", "missing (HTTP 404)"),
+        ("/bad_b64_sig.json", "Invalid Ed25519 signature"),
+        ("/min_ver.json", "requires TORI Desktop >= 9.9.9"),
+        ("/max_ver.json", "supports up to TORI Desktop 1.0.5"),
+    ] {
+        let mgr_bad = make_mgr(route);
+        let s = mgr_bad.check_for_updates(false).await.unwrap();
+        let ff_b = s.tools.iter().find(|t| t.tool_id == ToolId::Ffmpeg).unwrap();
+        assert_eq!(
+            ff_b.update_status,
+            ToolUpdateStatus::SourceUntrusted,
+            "Route {} must fail closed as SourceUntrusted (last_error={:?})",
+            route,
+            ff_b.last_error
+        );
+        assert!(
+            ff_b.last_error
+                .as_deref()
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                .contains(&needle.to_ascii_lowercase()),
+            "Route {} error {:?} should mention '{}'",
+            route,
+            ff_b.last_error,
+            needle
+        );
+        // Active managed binary remains completely intact!
+        assert_eq!(
+            ff_b.installed_version.as_deref(),
+            Some("N-126374-g089a48eb36-20260831")
+        );
+    }
+
+    // Step 3: Exact byte-size mismatch & untrusted redirect MUST fail during staged download!
+    let mgr_sz = make_mgr("/bad_size.json");
+    let err_sz = mgr_sz.update_tool(ToolId::Ffmpeg).await.unwrap_err();
+    assert!(
+        err_sz.to_string().contains("size mismatch"),
+        "Expected exact byte-size mismatch rejection: {}",
+        err_sz
+    );
+
+    let mgr_redir = make_mgr("/redir.json");
+    let err_redir = mgr_redir.update_tool(ToolId::Ffmpeg).await.unwrap_err();
+    assert!(
+        err_redir.to_string().contains("Untrusted")
+            || err_redir.to_string().contains("download failed"),
+        "Expected untrusted redirect rejection: {}",
+        err_redir
+    );
+
+    // Step 4: Unauthorized downgrade (rev 7, allow_rollback_to: false) MUST BE REJECTED!
+    let mgr_unauth = make_mgr("/unauth_down.json");
+    let err_unauth = mgr_unauth.update_tool(ToolId::Ffmpeg).await.unwrap_err();
+    assert!(
+        err_unauth.to_string().contains("Rejected downgrade"),
+        "Expected unauthorized downgrade rejection: {}",
+        err_unauth
+    );
+
+    // Step 5: Authorized emergency rollback (rev 8 > rev 7, allow_rollback_to: true) MUST SUCCEED!
+    let mgr_rb = make_mgr("/auth_rb.json");
+    let snap_rb = mgr_rb.update_tool(ToolId::Ffmpeg).await.unwrap();
+    let ff_rb = snap_rb.tools.iter().find(|t| t.tool_id == ToolId::Ffmpeg).unwrap();
+    assert_eq!(ff_rb.update_status, ToolUpdateStatus::Updated);
+    let final_st = tdm_core::tools::store::load_manifest_state(&db);
+    assert_eq!(final_st.highest_accepted_revision, 8);
+}
+
+#[tokio::test]
+async fn test_32_gate32_1_missing_ffprobe_corrupt_ffmpeg_and_failed_auto_rollback_fallback() {
+    let bundled = prepare_old_bundled_dir();
+    let f = test_exe_fixtures();
+    let minisign = EphemeralMinisignKey::generate();
+    let real_ff = fs::read(bundled_resources_bin().join("ffmpeg.exe")).unwrap();
+    let real_fp = fs::read(bundled_resources_bin().join("ffprobe.exe")).unwrap();
+    let broken_exe = fs::read(&f.ytdlp_broken).unwrap();
+
+    // 1. Signed ZIP missing ffprobe.exe -> rejected cleanly
+    let zip_missing_fp = create_zip_bundle(&[("bin/ffmpeg.exe", &real_ff, None)]);
+    let sha_missing_fp = hex::encode(Sha256::digest(&zip_missing_fp));
+
+    // 2. Signed ZIP containing corrupted/failing ffmpeg.exe + real ffprobe.exe -> rejected cleanly
+    let zip_corrupt_ff = create_zip_bundle(&[
+        ("bin/ffmpeg.exe", &broken_exe, None),
+        ("bin/ffprobe.exe", &real_fp, None),
+    ]);
+    let sha_corrupt_ff = hex::encode(Sha256::digest(&zip_corrupt_ff));
+
+    // 3. Valid real FFmpeg ZIP for failed-auto-rollback bundled fallback test
+    let zip_valid = build_real_ffmpeg_zip_bytes();
+    let sha_valid = hex::encode(Sha256::digest(&zip_valid));
+
+    let mut ar = HashMap::new();
+    ar.insert("/missing_fp.zip".into(), MockResponse::ok_bytes(zip_missing_fp.clone()));
+    ar.insert("/corrupt_ff.zip".into(), MockResponse::ok_bytes(zip_corrupt_ff.clone()));
+    ar.insert("/valid.zip".into(), MockResponse::ok_bytes(zip_valid.clone()));
+    let a_srv = MockServer::start(ar).await;
+
+    let now = Utc::now();
+    let (m1, s1) = build_v2_manifest(
+        &minisign,
+        1,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        make_manifest_entry(
+            "N-126374-g089a48eb36-20260831",
+            format!("{}/missing_fp.zip", a_srv.base_url),
+            sha_missing_fp,
+            Some(zip_missing_fp.len() as u64),
+        ),
+    );
+    let (m2, s2) = build_v2_manifest(
+        &minisign,
+        1,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        make_manifest_entry(
+            "N-126374-g089a48eb36-20260831",
+            format!("{}/corrupt_ff.zip", a_srv.base_url),
+            sha_corrupt_ff,
+            Some(zip_corrupt_ff.len() as u64),
+        ),
+    );
+    let (m3, s3) = build_v2_manifest(
+        &minisign,
+        1,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        make_manifest_entry(
+            "N-126374-g089a48eb36-20260831",
+            format!("{}/valid.zip", a_srv.base_url),
+            sha_valid.clone(),
+            Some(zip_valid.len() as u64),
+        ),
+    );
+    let (m4, s4) = build_v2_manifest(
+        &minisign,
+        2,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+        make_manifest_entry(
+            "N-129150-g7ddf7bc8a4-20261120",
+            format!("{}/valid.zip", a_srv.base_url),
+            sha_valid,
+            Some(zip_valid.len() as u64),
+        ),
+    );
+
+    let mut api_r = HashMap::new();
+    api_r.insert("/m1.json".into(), MockResponse::ok_bytes(m1));
+    api_r.insert("/m1.json.sig".into(), MockResponse::ok_bytes(s1.into_bytes()));
+    api_r.insert("/m2.json".into(), MockResponse::ok_bytes(m2));
+    api_r.insert("/m2.json.sig".into(), MockResponse::ok_bytes(s2.into_bytes()));
+    api_r.insert("/m3.json".into(), MockResponse::ok_bytes(m3));
+    api_r.insert("/m3.json.sig".into(), MockResponse::ok_bytes(s3.into_bytes()));
+    api_r.insert("/m4.json".into(), MockResponse::ok_bytes(m4));
+    api_r.insert("/m4.json.sig".into(), MockResponse::ok_bytes(s4.into_bytes()));
+    let api_srv = MockServer::start(api_r).await;
+
+    // Test 1: Missing ffprobe.exe inside ZIP rejected cleanly
+    {
+        let td = TempDir::new().unwrap();
+        let mut cfg = ToolsManagerConfig::default();
+        cfg.signed_manifest_url = Some(format!("{}/m1.json", api_srv.base_url));
+        cfg.tori_manifest_pubkey_b64 = minisign.pubkey_b64.clone();
+        let mgr = build_test_manager(td.path(), bundled.path(), cfg);
+        let err = mgr.update_tool(ToolId::Ffmpeg).await.unwrap_err();
+        assert!(err.to_string().contains("ffprobe.exe"), "Unexpected error: {}", err);
+        assert_eq!(mgr.coordinator().resolve_tool(ToolId::Ffmpeg).unwrap().source, "bundled");
+    }
+
+    // Test 2: Corrupted ffmpeg.exe inside ZIP rejected cleanly
+    {
+        let td = TempDir::new().unwrap();
+        let mut cfg = ToolsManagerConfig::default();
+        cfg.signed_manifest_url = Some(format!("{}/m2.json", api_srv.base_url));
+        cfg.tori_manifest_pubkey_b64 = minisign.pubkey_b64.clone();
+        let mgr = build_test_manager(td.path(), bundled.path(), cfg);
+        assert!(mgr.update_tool(ToolId::Ffmpeg).await.is_err());
+        assert_eq!(mgr.coordinator().resolve_tool(ToolId::Ffmpeg).unwrap().source, "bundled");
+    }
+
+    // Test 3: Phase 14 Scenario 20 — Failed automatic rollback (previous managed binary deleted before failed switch)
+    // MUST cleanly fall back to verified bundled binary instead of stranding tool on dead path!
+    {
+        let td = TempDir::new().unwrap();
+        let mut cfg = ToolsManagerConfig::default();
+        cfg.signed_manifest_url = Some(format!("{}/m3.json", api_srv.base_url));
+        cfg.tori_manifest_pubkey_b64 = minisign.pubkey_b64.clone();
+        let mgr1 = build_test_manager(td.path(), bundled.path(), cfg);
+        mgr1.update_tool(ToolId::Ffmpeg).await.unwrap();
+        let prev_managed_path = mgr1.coordinator().resolve_tool(ToolId::Ffmpeg).unwrap().path;
+        assert!(prev_managed_path.exists());
+
+        // Now start a second update (rev 2 -> N-129150), delete previous managed binary to simulate corrupted rollback target,
+        // and arm post-switch failure!
+        let mut cfg2 = ToolsManagerConfig::default();
+        cfg2.signed_manifest_url = Some(format!("{}/m4.json", api_srv.base_url));
+        cfg2.tori_manifest_pubkey_b64 = minisign.pubkey_b64.clone();
+        let mgr2 = build_test_manager(td.path(), bundled.path(), cfg2);
+        fs::remove_file(&prev_managed_path).unwrap();
+        mgr2.arm_simulated_post_switch_failure();
+        let err = mgr2.update_tool(ToolId::Ffmpeg).await.unwrap_err();
+        assert!(err.to_string().contains("Simulated FFmpeg bundle post-switch"));
+
+        // Must cleanly resolve verified bundled fallback for BOTH ffmpeg and ffprobe!
+        let resolved_ff = mgr2.coordinator().resolve_tool(ToolId::Ffmpeg).unwrap();
+        let resolved_fp = mgr2.coordinator().resolve_tool(ToolId::Ffprobe).unwrap();
+        assert_eq!(resolved_ff.source, "bundled");
+        assert_eq!(resolved_fp.source, "bundled");
+        assert!(resolved_ff.path.exists() && resolved_fp.path.exists());
+    }
 }

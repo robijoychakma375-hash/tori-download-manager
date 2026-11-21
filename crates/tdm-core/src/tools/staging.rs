@@ -102,6 +102,7 @@ pub async fn download_artifact_to_staging<F>(
     raw_url: &str,
     dest_path: &Path,
     expected_sha256: &str,
+    expected_size: Option<u64>,
     max_bytes: u64,
     timeout_secs: u64,
     allow_loopback_http: bool,
@@ -112,30 +113,6 @@ where
 {
     let safe_url = validate_trusted_url(raw_url, allow_loopback_http)?;
     let client = build_trusted_http_client(timeout_secs, allow_loopback_http)?;
-
-    let resp = client
-        .get(safe_url.as_str())
-        .send()
-        .await
-        .map_err(|e| EngineError::Other(format!("Tool artifact download failed: {}", e)))?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        return Err(EngineError::Other(format!(
-            "Tool artifact server returned HTTP {}",
-            status.as_u16()
-        )));
-    }
-
-    let total_bytes = resp.content_length();
-    if let Some(len) = total_bytes {
-        if len > max_bytes {
-            return Err(EngineError::Other(format!(
-                "Tool artifact size ({} bytes) exceeds maximum allowed limit ({} bytes)",
-                len, max_bytes
-            )));
-        }
-    }
 
     if let Some(parent) = dest_path.parent() {
         fs::create_dir_all(parent)?;
@@ -149,46 +126,142 @@ where
     let mut file = File::create(&part_path)?;
     let mut hasher = Sha256::new();
     let mut downloaded: u64 = 0;
+    let mut total_bytes: Option<u64> = expected_size;
     let start = Instant::now();
     let mut last_emit = Instant::now();
 
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk_res) = stream.next().await {
-        let chunk = match chunk_res {
-            Ok(c) => c,
+    let max_attempts = if allow_loopback_http { 1 } else { 3 };
+    let mut attempt = 0usize;
+
+    loop {
+        attempt += 1;
+        let mut req = client.get(safe_url.as_str());
+        let resuming_from = downloaded;
+        if resuming_from > 0 {
+            req = req.header(reqwest::header::RANGE, format!("bytes={}-", resuming_from));
+        }
+
+        let resp = match req.send().await {
+            Ok(r) => r,
             Err(e) => {
+                if attempt < max_attempts {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
                 drop(file);
                 let _ = fs::remove_file(&part_path);
                 return Err(EngineError::Other(format!(
-                    "Interrupted tool download stream: {}",
+                    "Tool artifact download failed: {}",
                     e
                 )));
             }
         };
 
-        downloaded = downloaded.saturating_add(chunk.len() as u64);
-        if downloaded > max_bytes {
+        let status = resp.status();
+        let is_partial = status == reqwest::StatusCode::PARTIAL_CONTENT;
+        if !status.is_success() {
             drop(file);
             let _ = fs::remove_file(&part_path);
             return Err(EngineError::Other(format!(
-                "Tool artifact download exceeded maximum allowed limit ({} bytes)",
-                max_bytes
+                "Tool artifact server returned HTTP {}",
+                status.as_u16()
             )));
         }
 
-        if let Err(e) = file.write_all(&chunk) {
+        // If we requested a Range resume but server returned full 200 OK, reset cleanly to offset 0
+        if resuming_from > 0 && !is_partial {
+            drop(file);
+            file = File::create(&part_path)?;
+            hasher = Sha256::new();
+            downloaded = 0;
+        }
+
+        if !is_partial {
+            if let Some(len) = resp.content_length() {
+                total_bytes = Some(len);
+                if len > max_bytes {
+                    drop(file);
+                    let _ = fs::remove_file(&part_path);
+                    return Err(EngineError::Other(format!(
+                        "Tool artifact size ({} bytes) exceeds maximum allowed limit ({} bytes)",
+                        len, max_bytes
+                    )));
+                }
+            }
+        } else if let Some(rem) = resp.content_length() {
+            let full_len = downloaded.saturating_add(rem);
+            if total_bytes.is_none() {
+                total_bytes = Some(full_len);
+            }
+            if full_len > max_bytes {
+                drop(file);
+                let _ = fs::remove_file(&part_path);
+                return Err(EngineError::Other(format!(
+                    "Tool artifact size ({} bytes) exceeds maximum allowed limit ({} bytes)",
+                    full_len, max_bytes
+                )));
+            }
+        }
+
+        let mut stream_interrupted: Option<String> = None;
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk_res) = stream.next().await {
+            let chunk = match chunk_res {
+                Ok(c) => c,
+                Err(e) => {
+                    stream_interrupted = Some(e.to_string());
+                    break;
+                }
+            };
+
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            if downloaded > max_bytes {
+                drop(file);
+                let _ = fs::remove_file(&part_path);
+                return Err(EngineError::Other(format!(
+                    "Tool artifact download exceeded maximum allowed limit ({} bytes)",
+                    max_bytes
+                )));
+            }
+
+            if let Err(e) = file.write_all(&chunk) {
+                drop(file);
+                let _ = fs::remove_file(&part_path);
+                return Err(EngineError::Io(e));
+            }
+            hasher.update(&chunk);
+
+            if last_emit.elapsed() >= Duration::from_millis(120) {
+                let elapsed = start.elapsed().as_secs_f64().max(0.05);
+                let speed_bps = (downloaded as f64 / elapsed) as u64;
+                on_progress(downloaded, total_bytes, speed_bps);
+                last_emit = Instant::now();
+            }
+        }
+
+        if let Some(err_str) = stream_interrupted {
+            let _ = file.flush();
+            if attempt < max_attempts {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
             drop(file);
             let _ = fs::remove_file(&part_path);
-            return Err(EngineError::Io(e));
+            return Err(EngineError::Other(format!(
+                "Interrupted tool download stream: {}",
+                err_str
+            )));
         }
-        hasher.update(&chunk);
 
-        if last_emit.elapsed() >= Duration::from_millis(120) {
-            let elapsed = start.elapsed().as_secs_f64().max(0.05);
-            let speed_bps = (downloaded as f64 / elapsed) as u64;
-            on_progress(downloaded, total_bytes, speed_bps);
-            last_emit = Instant::now();
+        if let Some(expected_len) = total_bytes {
+            if downloaded > 0 && downloaded < expected_len && attempt < max_attempts {
+                let _ = file.flush();
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
         }
+
+        break;
     }
 
     file.flush()?;
@@ -208,6 +281,16 @@ where
             return Err(EngineError::Other(format!(
                 "Truncated tool artifact: downloaded {} of {} bytes",
                 downloaded, expected_len
+            )));
+        }
+    }
+
+    if let Some(manifest_size) = expected_size {
+        if downloaded != manifest_size {
+            let _ = fs::remove_file(&part_path);
+            return Err(EngineError::Other(format!(
+                "Tool artifact size mismatch: expected {} bytes per verified metadata, downloaded {} bytes",
+                manifest_size, downloaded
             )));
         }
     }

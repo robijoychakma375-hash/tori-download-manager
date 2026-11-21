@@ -12,6 +12,14 @@ use crate::error::{EngineError, Result};
 /// TORI official Ed25519 minisign public key (matches src-tauri/tauri.conf.json key ID CDC23D8CC8DA5397).
 pub const TORI_ED25519_PUBKEY_B64: &str =
     "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEQzIzRDhDQzhEQTUzOTcKUldTWFU5cklqRDNDelRBOVAzOSs1L0RXN0FFLy9YWGFJc2NnUStaNktxSkNOQ1ZCeG01MjFTZzQK";
+pub const TORI_ED25519_KEY_ID: &str = "CDC23D8CC8DA5397";
+
+/// Default official HTTPS URL for TORI's Ed25519-signed external tools manifest.
+pub const TORI_DEFAULT_TOOLS_MANIFEST_URL: &str =
+    "https://toridownload.xyz/assets/tools/tools-manifest.json";
+/// Official HTTPS staging prefix allowed ONLY during isolated QA runs (`TORI_DATA_DIR` set).
+pub const TORI_STAGING_TOOLS_MANIFEST_PREFIX: &str =
+    "https://toridownload.xyz/assets/tools/staging/";
 
 /// Official yt-dlp OpenPGP RSA-4096 signing key (Simon Sawicki <contact@grub4k.xyz>).
 pub const YTDLP_PGP_PUBKEY_ASC: &str = include_str!("ytdlp_pubkey.asc");
@@ -84,6 +92,7 @@ pub fn build_trusted_http_client(
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .connect_timeout(std::time::Duration::from_secs(15))
+        .read_timeout(std::time::Duration::from_secs(timeout_secs.min(90).max(1)))
         .redirect(redirect_policy)
         .user_agent("TORI-Download-Manager/1.0.6 (ExternalToolsUpdater)")
         .build()
@@ -199,6 +208,144 @@ pub fn verify_minisign_ed25519(
 
     pk.verify(payload, &sig, true)
         .map_err(|e| EngineError::Other(format!("Ed25519 signature verification failed: {}", e)))
+}
+
+/// Extracts the uppercase 16-hex-character minisign key ID embedded in a public key (if valid).
+pub fn extract_minisign_key_id_hex(pubkey_input: &str) -> Option<String> {
+    let trimmed_key = pubkey_input.trim();
+    let key_line = if trimmed_key.contains('\n') || trimmed_key.starts_with("untrusted comment:") {
+        trimmed_key
+            .lines()
+            .find(|l| !l.trim().is_empty() && !l.trim().starts_with("untrusted comment:"))?
+            .trim()
+            .to_string()
+    } else if let Ok(decoded_bytes) = base64::engine::general_purpose::STANDARD.decode(trimmed_key)
+    {
+        if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
+            if decoded_str.contains("untrusted comment:") {
+                decoded_str
+                    .lines()
+                    .find(|l| !l.trim().is_empty() && !l.trim().starts_with("untrusted comment:"))?
+                    .trim()
+                    .to_string()
+            } else {
+                trimmed_key.to_string()
+            }
+        } else {
+            trimmed_key.to_string()
+        }
+    } else {
+        trimmed_key.to_string()
+    };
+
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(key_line.as_bytes())
+        .ok()?;
+    if raw.len() != 42 {
+        return None;
+    }
+    // Minisign stores key_id in little-endian bytes[2..10]; display format is big-endian hex u64
+    let id_le = u64::from_le_bytes([
+        raw[2], raw[3], raw[4], raw[5], raw[6], raw[7], raw[8], raw[9],
+    ]);
+    Some(format!("{:016X}", id_le))
+}
+
+/// Rejects any JSON document containing duplicate object keys at any nesting level
+/// (prevents JSON parser ambiguity / critical field shadowing attacks).
+pub fn reject_duplicate_json_keys(input: &[u8]) -> Result<()> {
+    use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
+    use std::collections::HashSet;
+    use std::fmt;
+
+    struct NoDupValue;
+    impl<'de> de::Deserialize<'de> for NoDupValue {
+        fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+        where
+            D: de::Deserializer<'de>,
+        {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = NoDupValue;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("a JSON value without duplicate object keys")
+                }
+                fn visit_bool<E>(self, _: bool) -> std::result::Result<NoDupValue, E> {
+                    Ok(NoDupValue)
+                }
+                fn visit_i64<E>(self, _: i64) -> std::result::Result<NoDupValue, E> {
+                    Ok(NoDupValue)
+                }
+                fn visit_u64<E>(self, _: u64) -> std::result::Result<NoDupValue, E> {
+                    Ok(NoDupValue)
+                }
+                fn visit_f64<E>(self, _: f64) -> std::result::Result<NoDupValue, E> {
+                    Ok(NoDupValue)
+                }
+                fn visit_str<E>(self, _: &str) -> std::result::Result<NoDupValue, E> {
+                    Ok(NoDupValue)
+                }
+                fn visit_unit<E>(self) -> std::result::Result<NoDupValue, E> {
+                    Ok(NoDupValue)
+                }
+                fn visit_seq<A>(self, mut seq: A) -> std::result::Result<NoDupValue, A::Error>
+                where
+                    A: SeqAccess<'de>,
+                {
+                    while seq.next_element::<NoDupValue>()?.is_some() {}
+                    Ok(NoDupValue)
+                }
+                fn visit_map<A>(self, mut map: A) -> std::result::Result<NoDupValue, A::Error>
+                where
+                    A: MapAccess<'de>,
+                {
+                    let mut seen = HashSet::new();
+                    while let Some(key) = map.next_key::<String>()? {
+                        if !seen.insert(key.clone()) {
+                            return Err(de::Error::custom(format!(
+                                "duplicate JSON key '{}'",
+                                key
+                            )));
+                        }
+                        let _ = map.next_value::<NoDupValue>()?;
+                    }
+                    Ok(NoDupValue)
+                }
+            }
+            deserializer.deserialize_any(V)
+        }
+    }
+
+    let mut de = serde_json::Deserializer::from_slice(input);
+    let seed = std::marker::PhantomData::<NoDupValue>;
+    seed.deserialize(&mut de)
+        .map_err(|e| EngineError::Other(format!("Strict JSON validation failed: {}", e)))?;
+    de.end()
+        .map_err(|e| EngineError::Other(format!("Trailing garbage after JSON manifest: {}", e)))?;
+    Ok(())
+}
+
+/// Compares two SemVer-style TORI versions (e.g., "1.0.6" vs "1.0.7").
+pub fn compare_semver_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let parse = |s: &str| -> Option<[u64; 3]> {
+        let clean = s
+            .trim()
+            .trim_start_matches('v')
+            .split('-')
+            .next()?
+            .split('+')
+            .next()?;
+        let parts: Vec<&str> = clean.split('.').collect();
+        if parts.is_empty() || parts.len() > 3 {
+            return None;
+        }
+        let mut nums = [0u64; 3];
+        for (i, p) in parts.iter().enumerate() {
+            nums[i] = p.parse::<u64>().ok()?;
+        }
+        Some(nums)
+    };
+    Some(parse(a)?.cmp(&parse(b)?))
 }
 
 // ============================================================================

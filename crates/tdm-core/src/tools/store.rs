@@ -4,12 +4,13 @@ use rusqlite::{params, OptionalExtension};
 use crate::db::Database;
 use crate::error::Result;
 use crate::tools::types::{
-    ExternalToolHistoryEntry, ExternalToolRecord, ExternalToolsSettings, SchedulerState, ToolId,
-    ToolUpdateStatus,
+    ExternalToolHistoryEntry, ExternalToolRecord, ExternalToolsSettings, ManifestAntiReplayState,
+    SchedulerState, ToolId, ToolUpdateStatus,
 };
 
 const SETTINGS_KEY: &str = "external_tools_settings";
 const SCHEDULER_STATE_KEY: &str = "external_tools_scheduler_state";
+const MANIFEST_STATE_KEY: &str = "external_tools_manifest_state";
 
 fn parse_dt(s: Option<String>) -> Option<DateTime<Utc>> {
     s.and_then(|v| {
@@ -48,6 +49,21 @@ pub fn save_scheduler_state(db: &Database, state: &SchedulerState) -> Result<()>
     let json = serde_json::to_string(state)
         .map_err(|e| crate::error::EngineError::Other(e.to_string()))?;
     db.set_setting(SCHEDULER_STATE_KEY, &json)?;
+    Ok(())
+}
+
+pub fn load_manifest_state(db: &Database) -> ManifestAntiReplayState {
+    db.get_setting(MANIFEST_STATE_KEY)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<ManifestAntiReplayState>(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_manifest_state(db: &Database, state: &ManifestAntiReplayState) -> Result<()> {
+    let json = serde_json::to_string(state)
+        .map_err(|e| crate::error::EngineError::Other(e.to_string()))?;
+    db.set_setting(MANIFEST_STATE_KEY, &json)?;
     Ok(())
 }
 

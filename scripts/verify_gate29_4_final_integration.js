@@ -18,7 +18,11 @@ const http = require('http');
 const net = require('net');
 const crypto = require('crypto');
 const { spawn, execSync, execFileSync } = require('child_process');
-const { QaOemStateGuard } = require('./lib/qa_oem_state_guard');
+const {
+  QaOemStateGuard,
+  snapshotOemDatabase,
+  compareOemDatabaseSnapshots,
+} = require('./lib/qa_oem_state_guard');
 
 const ROOT = path.resolve(__dirname, '..');
 const TARGET_VER = process.env.TORI_QA_VERSION || JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8')).version || '1.0.5';
@@ -557,7 +561,6 @@ async function main() {
   console.log('========================================================================\n');
 
   const initialOemPids = getRunningToriPids();
-  const initialOemDbHash = sha256File(OEM_DB_PATH);
   const initialXpiHash = sha256File(SIGNED_V107_XPI);
 
   record('G294-PRE-01', 'Signed Firefox v1.0.7 XPI preserved untouched', initialXpiHash === EXPECTED_V107_SHA256, `sha256=${initialXpiHash}`);
@@ -585,6 +588,10 @@ async function main() {
     await sleep(600);
   }
   for (const stray of getRunningToriPids()) killProcTree(stray);
+  // Capture logical WAL-safe SQLite snapshot AFTER pausing idle OEM Desktop so live WAL checkpoints
+  // or browser companion heartbeats during pre-pause cannot produce false raw-file-hash drift.
+  const initialOemDbSnap = snapshotOemDatabase(OEM_DB_PATH);
+  let finalOemDbSnap = null;
 
   // Prepare deterministic fixture buffers
   const bufZip2m = makePatternBuffer(2 * 1024 * 1024, '504b0304');
@@ -1523,13 +1530,19 @@ exit 1
   } finally {
     cleanupProcs();
     if (fixtureServer) try { fixtureServer.close(); } catch {}
-    finalOemDbHash = sha256File(OEM_DB_PATH);
+    finalOemDbSnap = snapshotOemDatabase(OEM_DB_PATH);
     const regParity = restoreOemState();
     record('G294-SAFETY-REG', 'OEM Windows Registry, Native Messaging manifests, and shortcuts restored with exact parity', Boolean(regParity && regParity.ok), JSON.stringify(regParity));
   }
 
+  const dbCmp = compareOemDatabaseSnapshots(initialOemDbSnap, finalOemDbSnap);
   const finalXpiHash = sha256File(SIGNED_V107_XPI);
-  record('G294-SAFETY-DB', 'OEM production SQLite database untouched across entire Gate 29.4 suite', finalOemDbHash === initialOemDbHash, `sha256=${finalOemDbHash}`);
+  record(
+    'G294-SAFETY-DB',
+    'OEM production SQLite database & .tdm-part files preserved with PRAGMA integrity_check=ok across Gate 29.4',
+    Boolean(dbCmp && dbCmp.ok),
+    JSON.stringify(dbCmp)
+  );
   record('G294-SAFETY-XPI', 'Mozilla-signed Firefox v1.0.7 XPI untouched across entire Gate 29.4 suite', finalXpiHash === initialXpiHash, `sha256=${finalXpiHash}`);
 
   console.log('\n========================================================================');
