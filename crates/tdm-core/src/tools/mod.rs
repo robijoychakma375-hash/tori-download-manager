@@ -25,7 +25,8 @@ pub use trust::{
     extract_minisign_sig_key_id_hex, parse_and_pin_openpgp_rsa_pubkey, reject_duplicate_json_keys,
     validate_trusted_url, validate_windows_x64_pe_bytes, validate_windows_x64_pe_file,
     verify_minisign_ed25519, verify_minisign_with_keyring, verify_openpgp_detached_rsa_signature,
-    VerifiedKeyringSignature, TORI_DEFAULT_TOOLS_MANIFEST_URL, TORI_ED25519_KEY_ID,
+    VerifiedKeyringSignature, TORI_DEDICATED_TOOLS_ED25519_KEY_ID,
+    TORI_DEDICATED_TOOLS_ED25519_PUBKEY_B64, TORI_DEFAULT_TOOLS_MANIFEST_URL, TORI_ED25519_KEY_ID,
     TORI_ED25519_PUBKEY_B64, TORI_STAGING_GATE33_TOOLS_MANIFEST_PREFIX,
     TORI_STAGING_TOOLS_MANIFEST_PREFIX, YTDLP_PGP_FINGERPRINT_HEX, YTDLP_PGP_PUBKEY_ASC,
 };

@@ -59,10 +59,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     return initialTab || 'engine';
   });
-  const [appVersion, setAppVersion] = useState<string>('1.0.7');
+  const [appVersion, setAppVersion] = useState<string>('1.0.8');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
     state: 'idle',
-    currentVersion: '1.0.7',
+    currentVersion: '1.0.8',
     downloadedBytes: 0,
     totalBytes: 0,
   });
@@ -1272,11 +1272,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   whiteSpace: 'pre-wrap',
                 }}
               >
-                {`TORI Download Manager v${appVersion} (Independent External Tools Updater & Stability Release)
-• Independent External Tools Auto-Update Manager for yt-dlp, FFmpeg, and FFprobe (Settings → External Tools)
-• Automatic 24-hour background checks with OpenPGP RSA-4096 verification for yt-dlp and TORI Ed25519 signed manifests for FFmpeg & FFprobe
-• Atomic FFmpeg/FFprobe bundle activation, active download protection (deferred activation), automatic & manual rollback, and bundled fallback
-• Resumable HTTP Range downloads for large tool archives with manifest anti-replay, expiry, and anti-downgrade protection
+                {`TORI Download Manager v${appVersion} (External Tools Security Hardening & Stage 1 Key-Separation Readiness)
+• Versioned, purpose-bound External Tools TrustedToolsKeyring supporting safe Stage 1 dual-key transition, key revocation, and wrong-purpose rejection
+• Consumer-safe Signed Manifest verification status, current revision, expiration, and next scheduled check inside Settings → External Tools
+• Independent External Tools Auto-Update Manager for yt-dlp (OpenPGP RSA-4096), FFmpeg & FFprobe (TORI Ed25519 signed manifests) with atomic activation, active-use deferral, automatic/manual rollback, and bundled fallback
+• Hardened anti-replay, equivocation detection, duplicate JSON key rejection, and unauthorized trust-escalation rejection
 • Standalone IDM-style Download Progress Window with Pause/Resume, completion options, and compact mode
 • Instant NTFS sparse file allocation (FSCTL_SET_SPARSE), multi-connection HTTP ranges, HLS/DASH remuxing, and BitTorrent/magnet support
 • Browser Companion v1.0.10 compatibility across Chrome, Edge, and Firefox with Close-to-Tray lifecycle and signed Desktop Auto-Updater`}

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * TORI Download Manager — Gate 33 External Tools Manifest Expiry Monitor & Alert Scheduler
+ * TORI Download Manager — Gate 33 / 33.1 External Tools Manifest Expiry Monitor & Alert Scheduler
  *
  * UTC-based operational monitoring for TORI's Ed25519-signed External Tools Manifest:
  *  - Evaluates configurable thresholds (30d renewal due, 14d warning, 7d high, 48h critical, expired)
@@ -9,7 +9,10 @@
  *  - Deduplicates repeated alerts at the same severity within alert_dedup_cooldown_hours
  *    while escalating immediately when severity worsens
  *  - Applies bounded exponential backoff on network/fetch outages (15m -> 1h -> 4h -> 12h)
- *  - Detects signature failures, CDN stale manifests, unexpected artifact drift, and stalled approvals
+ *  - Detects: signature failures, unexpected untrusted redirects, CDN stale manifests,
+ *    higher-revision drift vs registry, unexpected artifact drift, future-dated manifests,
+ *    system clock skew, missing/expired approval tokens, and stalled approvals
+ *  - Emits GitHub Actions step summary when GITHUB_STEP_SUMMARY is set
  *  - Strictly read-only monitoring: NEVER holds private keys or auto-publishes to production!
  */
 
@@ -25,6 +28,15 @@ const DEFAULT_REGISTRY_PATH = path.join(ROOT, 'docs', 'security', 'tools-manifes
 const DEFAULT_PROD_PUBKEY_B64 =
   'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEQzIzRDhDQzhEQTUzOTcKUldTWFU5cklqRDNDelRBOVAzOSs1L0RXN0FFLy9YWGFJc2NnUStaNktxSkNOQ1ZCeG01MjFTZzQK';
 const DEFAULT_PROD_KEY_ID = 'CDC23D8CC8DA5397';
+
+const ALLOWED_HTTPS_HOSTS = new Set([
+  'toridownload.xyz',
+  'github.com',
+  'api.github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+  'github-releases.githubusercontent.com',
+]);
 
 const SEVERITY_ORDER = {
   HEALTHY: 0,
@@ -58,12 +70,29 @@ function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-function httpGet(rawUrl, { method = 'GET', allowLoopback = false } = {}) {
+function validateAllowedUrl(rawUrl, allowLoopback) {
+  const u = new URL(rawUrl);
+  const host = u.hostname.toLowerCase();
+  const isLoopback = host === '127.0.0.1' || host === 'localhost';
+  if (allowLoopback && isLoopback && (u.protocol === 'http:' || u.protocol === 'https:')) {
+    return u;
+  }
+  if (u.protocol !== 'https:') {
+    throw new Error(`UNEXPECTED_REDIRECT_OR_SCHEME: Refused non-HTTPS URL ${rawUrl}`);
+  }
+  if (!ALLOWED_HTTPS_HOSTS.has(host)) {
+    throw new Error(`UNEXPECTED_REDIRECT_HOST: Untrusted host '${host}' in ${rawUrl}`);
+  }
+  return u;
+}
+
+function httpGet(rawUrl, { method = 'GET', allowLoopback = false, maxRedirects = 6 } = {}) {
   return new Promise((resolve, reject) => {
-    const u = new URL(rawUrl);
-    const isLoopback = u.hostname === '127.0.0.1' || u.hostname === 'localhost';
-    if (u.protocol !== 'https:' && !(allowLoopback && isLoopback && u.protocol === 'http:')) {
-      return reject(new Error(`Refused non-HTTPS URL: ${rawUrl}`));
+    let u;
+    try {
+      u = validateAllowedUrl(rawUrl, allowLoopback);
+    } catch (e) {
+      return reject(e);
     }
     const mod = u.protocol === 'https:' ? https : http;
     const req = mod.request(
@@ -74,7 +103,7 @@ function httpGet(rawUrl, { method = 'GET', allowLoopback = false } = {}) {
         method,
         timeout: 15000,
         headers: {
-          'User-Agent': 'TORI-Expiry-Monitor/1.0.7',
+          'User-Agent': 'TORI-Expiry-Monitor/1.0.8',
           'Cache-Control': 'no-cache, no-store, max-age=0',
           Pragma: 'no-cache',
         },
@@ -82,8 +111,11 @@ function httpGet(rawUrl, { method = 'GET', allowLoopback = false } = {}) {
       (res) => {
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
           res.resume();
+          if (maxRedirects <= 0) {
+            return reject(new Error(`UNEXPECTED_REDIRECT_LOOP: Too many redirects for ${rawUrl}`));
+          }
           const next = new URL(res.headers.location, rawUrl).toString();
-          return resolve(httpGet(next, { method, allowLoopback }));
+          return resolve(httpGet(next, { method, allowLoopback, maxRedirects: maxRedirects - 1 }));
         }
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -163,6 +195,27 @@ function classifyExpiry(expiresAt, config, nowMs) {
   return { level, remainingHours: Number(remHours.toFixed(2)), remainingDays: Number((remHours / 24).toFixed(2)) };
 }
 
+function writeGithubStepSummary(report) {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryPath) return;
+  try {
+    const lines = [
+      '### TORI External Tools Manifest Expiry Monitor (UTC)',
+      `- **Status:** \`${report.status}\` | **Alert Level:** \`${report.effectiveAlertLevel || 'N/A'}\``,
+      `- **Checked (UTC):** \`${report.nowUtc}\``,
+      `- **Manifest Revision:** \`${report.manifestRevision ?? 'N/A'}\` | **Signature Valid:** \`${report.signatureValid ?? false}\``,
+      report.expiry
+        ? `- **Remaining Validity:** \`${report.expiry.remainingDays} days\` (\`${report.expiry.remainingHours} hours\`)`
+        : '',
+      report.anomalies && report.anomalies.length > 0
+        ? `- **Anomalies:** ${report.anomalies.map((a) => `\`${a}\``).join(', ')}`
+        : '- **Anomalies:** None',
+      '',
+    ].filter(Boolean);
+    fs.appendFileSync(summaryPath, lines.join('\n') + '\n', 'utf8');
+  } catch {}
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const config = JSON.parse(fs.readFileSync(args.config || DEFAULT_CONFIG_PATH, 'utf8'));
@@ -172,29 +225,33 @@ async function main() {
   const nowMs = now.getTime();
   const state = loadState(stateFile);
 
+  // Detect severe backward system-clock skew relative to last known good UTC check (>5 minutes)
+  let clockSkewDetected = false;
+  if (state.last_success_utc) {
+    const lastOkMs = new Date(state.last_success_utc).getTime();
+    if (Number.isFinite(lastOkMs) && nowMs + 5 * 60000 < lastOkMs) {
+      clockSkewDetected = true;
+    }
+  }
+
   // Deduplicate runs within min_check_interval_minutes unless --force
-  if (!args.force && state.last_check_utc) {
+  if (!args.force && !clockSkewDetected && state.last_check_utc) {
     const minIntervalMs = (config.scheduler.min_check_interval_minutes || 60) * 60000;
     const elapsedMs = nowMs - new Date(state.last_check_utc).getTime();
     if (elapsedMs >= 0 && elapsedMs < minIntervalMs) {
-      console.log(
-        JSON.stringify(
-          {
-            status: 'SKIPPED_DEDUP',
-            nowUtc: now.toISOString(),
-            lastCheckUtc: state.last_check_utc,
-            nextEligibleInMinutes: Number(((minIntervalMs - elapsedMs) / 60000).toFixed(1)),
-          },
-          null,
-          2
-        )
-      );
+      const out = {
+        status: 'SKIPPED_DEDUP',
+        nowUtc: now.toISOString(),
+        lastCheckUtc: state.last_check_utc,
+        nextEligibleInMinutes: Number(((minIntervalMs - elapsedMs) / 60000).toFixed(1)),
+      };
+      console.log(JSON.stringify(out, null, 2));
       return;
     }
   }
 
   // Respect active retry backoff unless --force
-  if (!args.force && state.next_retry_after_utc && nowMs < new Date(state.next_retry_after_utc).getTime()) {
+  if (!args.force && !clockSkewDetected && state.next_retry_after_utc && nowMs < new Date(state.next_retry_after_utc).getTime()) {
     console.log(
       JSON.stringify(
         {
@@ -227,6 +284,10 @@ async function main() {
     }
 
     const anomalies = [];
+    if (clockSkewDetected) {
+      anomalies.push(`CLOCK_SKEW_DETECTED: current UTC (${now.toISOString()}) precedes last successful check (${state.last_success_utc})`);
+    }
+
     let sigOk = true;
     try {
       verifySignature(mRes.body, sRes.text, pubkeyB64, expectedKeyId);
@@ -238,11 +299,23 @@ async function main() {
     const manifest = JSON.parse(mRes.text);
     const activeReg = (registry.revisions || []).find((r) => r.publication_status === 'active');
 
-    if (activeReg && !args['manifest-url']) {
+    // Future-dated manifest detection (> 15 min clock skew)
+    const pubMs = new Date(manifest.published_at || manifest.generated_at).getTime();
+    if (Number.isFinite(pubMs) && pubMs > nowMs + 15 * 60000) {
+      anomalies.push(`FUTURE_DATED_MANIFEST: published_at ${manifest.published_at} exceeds current UTC + 15m`);
+    }
+
+    // Registry drift checks (stale CDN vs higher unrecorded revision vs unexpected artifact change)
+    if (activeReg && !args['skip-registry-compare']) {
       if (manifest.manifest_revision < activeReg.manifest_revision) {
         anomalies.push(`CDN_STALE_MANIFEST: live rev ${manifest.manifest_revision} < registry rev ${activeReg.manifest_revision}`);
+      } else if (manifest.manifest_revision > activeReg.manifest_revision) {
+        anomalies.push(`UNRECORDED_HIGHER_REVISION: live rev ${manifest.manifest_revision} > registry rev ${activeReg.manifest_revision}`);
       }
-      if (manifest.ffmpeg_bundle.sha256 !== activeReg.tools.ffmpeg_bundle.artifact_sha256) {
+      if (
+        !args['manifest-url'] &&
+        manifest.ffmpeg_bundle.sha256 !== activeReg.tools.ffmpeg_bundle.artifact_sha256
+      ) {
         anomalies.push('UNEXPECTED_ARTIFACT_HASH_CHANGE');
       }
     }
@@ -255,7 +328,7 @@ async function main() {
       }
     }
 
-    // Detect stalled unapproved staging proposal if --proposal-file supplied
+    // Stalled proposal & approval token checks
     let stalledApproval = false;
     if (args['proposal-file'] && fs.existsSync(args['proposal-file'])) {
       const prop = JSON.parse(fs.readFileSync(args['proposal-file'], 'utf8'));
@@ -265,14 +338,34 @@ async function main() {
         anomalies.push(`STALLED_APPROVAL: proposal rev ${prop.manifest_revision} awaiting approval for ${ageHours.toFixed(1)}h`);
         if (!state.stalled_approval_since_utc) state.stalled_approval_since_utc = prop.prepared_at_utc;
       }
+      if (args['require-approval-token'] && !args['approval-token-file']) {
+        anomalies.push('MISSING_APPROVAL_TOKEN: proposal has no operator approval token');
+      }
     } else {
       state.stalled_approval_since_utc = null;
     }
 
+    if (args['approval-token-file']) {
+      if (!fs.existsSync(args['approval-token-file'])) {
+        anomalies.push(`MISSING_APPROVAL_TOKEN: file not found (${args['approval-token-file']})`);
+      } else {
+        const tok = JSON.parse(fs.readFileSync(args['approval-token-file'], 'utf8'));
+        if (!tok.approved_by) {
+          anomalies.push('MISSING_APPROVAL_TOKEN: missing approved_by field');
+        }
+        if (tok.expires_at && new Date(tok.expires_at).getTime() <= nowMs) {
+          anomalies.push(`EXPIRED_APPROVAL_TOKEN: approval token expired at ${tok.expires_at}`);
+        }
+      }
+    }
+
     const expiry = classifyExpiry(manifest.expires_at, config, nowMs);
-    const effectiveLevel = !sigOk || anomalies.some((a) => a.startsWith('CDN_STALE') || a.startsWith('UNEXPECTED_ARTIFACT'))
-      ? 'SECURITY_INCIDENT'
-      : expiry.level;
+    const hasSecurityAnomaly =
+      !sigOk ||
+      anomalies.some((a) =>
+        /^(CDN_STALE|UNEXPECTED_ARTIFACT|FUTURE_DATED|CLOCK_SKEW|ARTIFACT_AVAILABILITY)/.test(a)
+      );
+    const effectiveLevel = hasSecurityAnomaly ? 'SECURITY_INCIDENT' : expiry.level;
 
     // Alert deduplication: emit immediately on escalation or after cooldown; suppress noisy repeats
     const cooldownMs = (config.scheduler.alert_dedup_cooldown_hours || 12) * 3600000;
@@ -281,7 +374,9 @@ async function main() {
       !state.last_alert_emitted_utc || nowMs - new Date(state.last_alert_emitted_utc).getTime() >= cooldownMs;
     const emitAlert = effectiveLevel !== 'HEALTHY' && (escalated || cooldownElapsed);
 
-    state.last_success_utc = now.toISOString();
+    if (!clockSkewDetected) {
+      state.last_success_utc = now.toISOString();
+    }
     state.consecutive_failures = 0;
     state.next_retry_after_utc = null;
     state.observed_revision = manifest.manifest_revision;
@@ -303,34 +398,48 @@ async function main() {
       emitAlert,
       alertSuppressedByDedup: effectiveLevel !== 'HEALTHY' && !emitAlert,
       stalledApproval,
+      clockSkewDetected,
       anomalies,
       stateFile,
     };
+    writeGithubStepSummary(output);
+    if (args['report-file']) {
+      fs.mkdirSync(path.dirname(args['report-file']), { recursive: true });
+      fs.writeFileSync(args['report-file'], JSON.stringify(output, null, 2) + '\n', 'utf8');
+    }
     console.log(JSON.stringify(output, null, 2));
-    if (args['strict-exit'] && (effectiveLevel === 'EXPIRED_INCIDENT' || effectiveLevel === 'SECURITY_INCIDENT' || effectiveLevel === 'CRITICAL_ALERT')) {
+    if (
+      args['strict-exit'] &&
+      (effectiveLevel === 'EXPIRED_INCIDENT' ||
+        effectiveLevel === 'SECURITY_INCIDENT' ||
+        effectiveLevel === 'CRITICAL_ALERT')
+    ) {
       process.exit(2);
     }
   } catch (err) {
+    const isSecurityRedirect = String(err.message || '').includes('UNEXPECTED_REDIRECT');
     state.consecutive_failures = (state.consecutive_failures || 0) + 1;
     const backoffs = config.scheduler.backoff_minutes || [15, 60, 240, 720];
     const mins = backoffs[Math.min(state.consecutive_failures - 1, backoffs.length - 1)];
     state.next_retry_after_utc = new Date(nowMs + mins * 60000).toISOString();
     saveState(stateFile, state);
-    console.log(
-      JSON.stringify(
-        {
-          status: 'NETWORK_OR_FETCH_FAILURE',
-          nowUtc: now.toISOString(),
-          error: err.message,
-          consecutiveFailures: state.consecutive_failures,
-          nextRetryAfterUtc: state.next_retry_after_utc,
-          backoffMinutes: mins,
-        },
-        null,
-        2
-      )
-    );
-    if (args['strict-exit']) process.exit(3);
+    const out = {
+      status: isSecurityRedirect ? 'SECURITY_REDIRECT_BLOCKED' : 'NETWORK_OR_FETCH_FAILURE',
+      effectiveAlertLevel: isSecurityRedirect ? 'SECURITY_INCIDENT' : 'WARNING',
+      nowUtc: now.toISOString(),
+      error: err.message,
+      consecutiveFailures: state.consecutive_failures,
+      nextRetryAfterUtc: state.next_retry_after_utc,
+      backoffMinutes: mins,
+      anomalies: isSecurityRedirect ? [err.message] : [],
+    };
+    writeGithubStepSummary(out);
+    if (args['report-file']) {
+      fs.mkdirSync(path.dirname(args['report-file']), { recursive: true });
+      fs.writeFileSync(args['report-file'], JSON.stringify(out, null, 2) + '\n', 'utf8');
+    }
+    console.log(JSON.stringify(out, null, 2));
+    if (args['strict-exit']) process.exit(isSecurityRedirect ? 2 : 3);
   }
 }
 

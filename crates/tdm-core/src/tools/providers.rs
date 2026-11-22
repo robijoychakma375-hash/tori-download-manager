@@ -387,6 +387,27 @@ pub async fn fetch_signed_tools_manifest(
         return ManifestFetchOutcome::RejectedSecurity(e.to_string());
     }
 
+    // 2b. Reject unauthorized manifest self-escalation / inline trust-root injection fields
+    if let Ok(raw_val) = serde_json::from_slice::<serde_json::Value>(&manifest_bytes) {
+        if let Some(obj) = raw_val.as_object() {
+            for forbidden in [
+                "trusted_keys",
+                "add_trusted_key",
+                "authorize_new_key",
+                "replace_keyring",
+                "rotate_pubkey",
+                "new_trusted_pubkey",
+            ] {
+                if obj.contains_key(forbidden) {
+                    return ManifestFetchOutcome::RejectedSecurity(format!(
+                        "Unauthorized manifest trust-escalation field '{}' rejected: manifests cannot self-authorize signing keys",
+                        forbidden
+                    ));
+                }
+            }
+        }
+    }
+
     // 3. Parse verified JSON manifest
     let manifest: SignedToolsManifest = match serde_json::from_slice(&manifest_bytes) {
         Ok(m) => m,

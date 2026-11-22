@@ -305,6 +305,8 @@ async function main() {
     let mockMode = 'partial_missing_sig';
     const mockManifestObj = JSON.parse(fs.readFileSync(path.join(outRev2, 'tools-manifest.json'), 'utf8'));
     mockManifestObj.manifest_revision = 2;
+    mockManifestObj.generated_at = '2026-11-01T00:00:00.000Z';
+    mockManifestObj.published_at = '2026-11-01T00:00:00.000Z';
     mockManifestObj.expires_at = '2026-12-01T00:00:00.000Z';
     const mockArtifactBytes = Buffer.from('mock-zip-bytes-for-head-check');
     mockManifestObj.ffmpeg_bundle.size = mockArtifactBytes.length;

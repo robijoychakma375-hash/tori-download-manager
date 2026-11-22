@@ -518,7 +518,15 @@ fn test_v107_release_candidate_signature_draft_updater_and_production_tools_mani
     let conf_path = root.join("src-tauri").join("tauri.conf.json");
     let conf: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&conf_path).unwrap()).unwrap();
-    assert_eq!(conf["version"].as_str(), Some("1.0.7"));
+    let current_ver = conf["version"].as_str().unwrap();
+    assert!(
+        matches!(
+            tdm_core::tools::compare_semver_versions(current_ver, "1.0.7"),
+            Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
+        ),
+        "Current workspace version ({}) must be >= 1.0.7",
+        current_ver
+    );
     let pubkey_base64 = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
     assert_eq!(pubkey_base64, tdm_core::tools::TORI_ED25519_PUBKEY_B64);
 
@@ -539,7 +547,7 @@ fn test_v107_release_candidate_signature_draft_updater_and_production_tools_mani
         tools_cfg.expected_manifest_key_id.as_deref(),
         Some(tdm_core::tools::TORI_ED25519_KEY_ID)
     );
-    assert_eq!(tools_cfg.current_tori_version, "1.0.7");
+    assert_eq!(tools_cfg.current_tori_version, current_ver);
 
     // 2. Verify signed v1.0.7 RC NSIS installer & detached .sig
     assert!(installer_path.exists(), "v1.0.7 RC installer missing: {:?}", installer_path);
@@ -643,4 +651,136 @@ fn test_v107_release_candidate_signature_draft_updater_and_production_tools_mani
         &pm_sig,
     )
     .is_err());
+}
+
+#[test]
+fn test_v108_release_candidate_signature_draft_updater_stage1_keyring_and_rev2_candidate() {
+    let root = get_project_root();
+    let rc_dir = root.join("release").join("v1.0.8-rc");
+    let installer_path = rc_dir.join("TORI Download Manager_1.0.8_x64-setup.exe");
+    let sig_path = rc_dir.join("TORI Download Manager_1.0.8_x64-setup.exe.sig");
+    let draft_latest_path = rc_dir.join("draft_latest.json");
+    let rev2_dir = rc_dir.join("tools-manifest-rev2-candidate");
+    let rev2_manifest_path = rev2_dir.join("tools-manifest.json");
+    let rev2_sig_path = rev2_dir.join("tools-manifest.json.sig");
+    let rev2_tools_sig_path = rev2_dir.join("tools-manifest.json.tools.sig");
+    let rev2_race_policy_path = rev2_dir.join("RACE_PRECHECK_POLICY.json");
+
+    // 1. Verify v1.0.8 workspace config, production defaults & Stage 1 TrustedToolsKeyring safety
+    let conf_path = root.join("src-tauri").join("tauri.conf.json");
+    let conf: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&conf_path).unwrap()).unwrap();
+    assert_eq!(conf["version"].as_str(), Some("1.0.8"));
+    let pubkey_base64 = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
+    assert_eq!(pubkey_base64, tdm_core::tools::TORI_ED25519_PUBKEY_B64);
+
+    let tools_cfg = tdm_core::tools::ToolsManagerConfig::default();
+    assert_eq!(tools_cfg.current_tori_version, "1.0.8");
+    assert_eq!(
+        tools_cfg.signed_manifest_url.as_deref(),
+        Some("https://toridownload.xyz/assets/tools/tools-manifest.json")
+    );
+    assert!(
+        !tools_cfg.signed_manifest_url.as_deref().unwrap().contains("/staging/"),
+        "v1.0.8-rc must never default to /staging/"
+    );
+    let effective_kr = tools_cfg.effective_tools_keyring();
+    effective_kr
+        .validate_safety(chrono::Utc::now(), tools_cfg.max_clock_skew_secs)
+        .expect("Default Stage 1 transition keyring must pass safety validation");
+    assert!(
+        effective_kr.allow_legacy_shared_key,
+        "Stage 1 v1.0.8 must preserve legacy shared key compatibility for rev 1 / rev 2"
+    );
+
+    // 2. Verify signed v1.0.8-rc NSIS installer & detached Ed25519 .sig
+    assert!(installer_path.exists(), "v1.0.8-rc installer missing: {:?}", installer_path);
+    assert!(sig_path.exists(), "v1.0.8-rc .sig missing: {:?}", sig_path);
+
+    let installer_bytes = fs::read(&installer_path).expect("read v1.0.8 installer");
+    assert!(installer_bytes.starts_with(b"MZ"), "v1.0.8 installer must be Windows PE");
+
+    let sig_str = fs::read_to_string(&sig_path).expect("read v1.0.8 .sig");
+    let sig_text = String::from_utf8(decode_base64_str(&sig_str)).expect("utf8 sig");
+    let signature = Signature::decode(&sig_text).expect("minisign signature decode");
+    let decoded_pubkey = String::from_utf8(decode_base64_str(pubkey_base64)).unwrap();
+    let public_key = PublicKey::decode(&decoded_pubkey).expect("pubkey decode");
+
+    public_key
+        .verify(&installer_bytes, &signature, true)
+        .expect("v1.0.8-rc installer Ed25519 verification must pass");
+    assert!(
+        signature
+            .trusted_comment()
+            .contains("file:TORI Download Manager_1.0.8_x64-setup.exe"),
+        "Trusted comment mismatch: {}",
+        signature.trusted_comment()
+    );
+
+    let mut tampered = installer_bytes.clone();
+    let mid = tampered.len() / 2;
+    tampered[mid] ^= 0x5A;
+    assert!(
+        public_key.verify(&tampered, &signature, true).is_err(),
+        "Tampered v1.0.8-rc installer must be rejected"
+    );
+
+    // 3. Verify local unpublished draft_latest.json schema, SemVer ordering & exact signature parity
+    assert!(draft_latest_path.exists(), "draft_latest.json missing");
+    let draft: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&draft_latest_path).unwrap()).unwrap();
+    assert_eq!(draft["version"].as_str(), Some("1.0.8"));
+    assert_eq!(
+        tdm_core::tools::compare_semver_versions("1.0.7", draft["version"].as_str().unwrap()),
+        Some(std::cmp::Ordering::Less)
+    );
+    assert_eq!(
+        tdm_core::tools::compare_semver_versions("1.0.8", draft["version"].as_str().unwrap()),
+        Some(std::cmp::Ordering::Equal)
+    );
+    for key in ["windows-x86_64", "windows-x86_64-nsis"] {
+        assert_eq!(
+            draft["platforms"][key]["signature"].as_str().map(str::trim),
+            Some(sig_str.trim())
+        );
+        let url = draft["platforms"][key]["url"].as_str().unwrap();
+        assert!(
+            url.starts_with(
+                "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/"
+            ),
+            "Unexpected draft v1.0.8 URL: {}",
+            url
+        );
+    }
+
+    // 4. Verify unpublished UNSIGNED production manifest revision 2 candidate & race guard policy
+    assert!(rev2_manifest_path.exists(), "rev 2 candidate tools-manifest.json missing");
+    assert!(rev2_race_policy_path.exists(), "rev 2 RACE_PRECHECK_POLICY.json missing");
+    assert!(
+        !rev2_sig_path.exists() && !rev2_tools_sig_path.exists(),
+        "Production manifest rev 2 candidate must remain UNSIGNED during Gate 33.1 (never place test-key signatures in production candidate dir)"
+    );
+
+    let rev2_bytes = fs::read(&rev2_manifest_path).expect("read rev 2 candidate");
+    tdm_core::tools::reject_duplicate_json_keys(&rev2_bytes)
+        .expect("rev 2 candidate must have no duplicate JSON keys");
+    let rev2: tdm_core::tools::SignedToolsManifest =
+        serde_json::from_slice(&rev2_bytes).expect("parse rev 2 candidate");
+    assert_eq!(rev2.schema_version, 2);
+    assert_eq!(rev2.manifest_revision, 2);
+    assert_eq!(
+        rev2.signing_key_id.as_deref(),
+        Some(tdm_core::tools::TORI_ED25519_KEY_ID)
+    );
+    assert_eq!(rev2.key_purpose.as_deref(), Some("external_tools_manifest"));
+    let ff = rev2.ffmpeg_bundle.expect("ffmpeg_bundle required");
+    assert_eq!(ff.version, "N-129150-g7ddf7bc8a4-20261120");
+    assert_eq!(
+        ff.sha256,
+        "03d33066832e7149a8577bed73713c5d5344aed14199063e521b798cf1b60076"
+    );
+    assert_eq!(ff.size, Some(205_445_856));
+    assert_eq!(ff.platform.as_deref(), Some("windows"));
+    assert_eq!(ff.architecture.as_deref(), Some("x86_64"));
+    assert_eq!(ff.min_tori_version.as_deref(), Some("1.0.6"));
 }

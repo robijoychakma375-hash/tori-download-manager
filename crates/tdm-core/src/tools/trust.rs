@@ -16,6 +16,14 @@ pub const TORI_ED25519_PUBKEY_B64: &str =
     "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEQzIzRDhDQzhEQTUzOTcKUldTWFU5cklqRDNDelRBOVAzOSs1L0RXN0FFLy9YWGFJc2NnUStaNktxSkNOQ1ZCeG01MjFTZzQK";
 pub const TORI_ED25519_KEY_ID: &str = "CDC23D8CC8DA5397";
 
+/// Stage 1 dedicated External Tools Ed25519 public key slot (`tori-tools.key.pub`).
+/// Remains `None` while `PRODUCTION_KEY_PROVISIONING_PENDING`; once the operator provisions
+/// production `tori-tools.key` offline via `scripts/provision_dedicated_tools_key.ps1`, embed
+/// ONLY the public key box and 16-hex Key ID here to activate Stage 1 dual-key trust in Desktop
+/// without touching `src-tauri/tauri.conf.json`'s Desktop Auto-Updater trust anchor.
+pub const TORI_DEDICATED_TOOLS_ED25519_PUBKEY_B64: Option<&str> = None;
+pub const TORI_DEDICATED_TOOLS_ED25519_KEY_ID: Option<&str> = None;
+
 /// Default official HTTPS URL for TORI's Ed25519-signed external tools manifest.
 pub const TORI_DEFAULT_TOOLS_MANIFEST_URL: &str =
     "https://toridownload.xyz/assets/tools/tools-manifest.json";

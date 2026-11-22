@@ -449,21 +449,73 @@ pub struct TrustedToolsKeyring {
 }
 
 impl TrustedToolsKeyring {
-    /// Default Stage 0 production keyring: preserves full compatibility with live
-    /// Desktop v1.0.7 manifests signed by shared key `CDC23D8CC8DA5397` until an
-    /// operator-approved dedicated `tori-tools.key` is added in a future release.
+    /// Default production transition keyring:
+    /// - Always trusts legacy shared key `CDC23D8CC8DA5397` (`ExternalToolsLegacyShared / TransitionLegacy`)
+    ///   for full Stage 0–1 compatibility with existing public Desktop `v1.0.7` manifests.
+    /// - Automatically activates Stage 1 dual-key trust whenever the operator embeds
+    ///   `TORI_DEDICATED_TOOLS_ED25519_PUBKEY_B64` + `TORI_DEDICATED_TOOLS_ED25519_KEY_ID`
+    ///   in `crates/tdm-core/src/tools/trust.rs` after offline key provisioning.
     pub fn default_production_transition() -> Self {
-        Self {
-            keyring_version: 1,
-            keys: vec![TrustedSigningKey {
-                key_id: crate::tools::trust::TORI_ED25519_KEY_ID.to_string(),
-                pubkey_b64: crate::tools::trust::TORI_ED25519_PUBKEY_B64.to_string(),
-                purpose: SigningKeyPurpose::ExternalToolsLegacyShared,
-                status: TrustedKeyStatus::TransitionLegacy,
-                label: "TORI Production Legacy Shared Key (Pre-Separation Transition)".to_string(),
+        let mut keys = vec![TrustedSigningKey {
+            key_id: crate::tools::trust::TORI_ED25519_KEY_ID.to_string(),
+            pubkey_b64: crate::tools::trust::TORI_ED25519_PUBKEY_B64.to_string(),
+            purpose: SigningKeyPurpose::ExternalToolsLegacyShared,
+            status: TrustedKeyStatus::TransitionLegacy,
+            label: "TORI Production Legacy Shared Key (Stage 0-1 Transition)".to_string(),
+            valid_from: None,
+            retired_after: None,
+        }];
+        if let (Some(ded_kid), Some(ded_pub)) = (
+            crate::tools::trust::TORI_DEDICATED_TOOLS_ED25519_KEY_ID,
+            crate::tools::trust::TORI_DEDICATED_TOOLS_ED25519_PUBKEY_B64,
+        ) {
+            keys.push(TrustedSigningKey {
+                key_id: ded_kid.trim().to_ascii_uppercase(),
+                pubkey_b64: ded_pub.to_string(),
+                purpose: SigningKeyPurpose::ExternalToolsManifest,
+                status: TrustedKeyStatus::Active,
+                label: "TORI Production Dedicated External Tools Key (Stage 1 Active)".to_string(),
                 valid_from: None,
                 retired_after: None,
-            }],
+            });
+        }
+        Self {
+            keyring_version: 1,
+            keys,
+            revoked_key_ids: Vec::new(),
+            allow_legacy_shared_key: true,
+        }
+    }
+
+    /// Builds an explicit Stage 1 dual-key keyring combining the production legacy shared key
+    /// (`CDC23D8CC8DA5397`) with a dedicated External Tools public key (`tori-tools.key.pub`).
+    pub fn stage1_dual_key_transition(
+        dedicated_key_id: impl Into<String>,
+        dedicated_pubkey_b64: impl Into<String>,
+        dedicated_label: impl Into<String>,
+    ) -> Self {
+        Self {
+            keyring_version: 1,
+            keys: vec![
+                TrustedSigningKey {
+                    key_id: crate::tools::trust::TORI_ED25519_KEY_ID.to_string(),
+                    pubkey_b64: crate::tools::trust::TORI_ED25519_PUBKEY_B64.to_string(),
+                    purpose: SigningKeyPurpose::ExternalToolsLegacyShared,
+                    status: TrustedKeyStatus::TransitionLegacy,
+                    label: "TORI Legacy Shared Key (Stage 1 Transition)".to_string(),
+                    valid_from: None,
+                    retired_after: None,
+                },
+                TrustedSigningKey {
+                    key_id: dedicated_key_id.into().trim().to_ascii_uppercase(),
+                    pubkey_b64: dedicated_pubkey_b64.into(),
+                    purpose: SigningKeyPurpose::ExternalToolsManifest,
+                    status: TrustedKeyStatus::Active,
+                    label: dedicated_label.into(),
+                    valid_from: None,
+                    retired_after: None,
+                },
+            ],
             revoked_key_ids: Vec::new(),
             allow_legacy_shared_key: true,
         }

@@ -904,3 +904,191 @@ async fn test_gate33_tampered_missing_artifact_downgrade_and_prod_keyring_defaul
 
     handle.abort();
 }
+
+/// Gate 33.1 Phase 3 (Scenarios 1–10) & Phase 15 (Security Regression Scenarios 1–25):
+/// Explicitly tests Stage 1 dual-key transition API (`stage1_dual_key_transition`),
+/// unauthorized manifest self-escalation (`trusted_keys` / `rotate_pubkey`),
+/// invalid `.tools.sig` dedicated signature, revoked legacy key, invalid public key rejection,
+/// and strict `v1.0.7` vs Stage 1 `v1.0.8` behavioral boundary.
+#[tokio::test]
+async fn test_gate33_1_stage1_dual_key_and_unauthorized_trust_escalation_rejection() {
+    let legacy_key = TestMinisignKey::generate(0x81);
+    let dedicated_key = TestMinisignKey::generate(0x82);
+    let rogue_key = TestMinisignKey::generate(0x83);
+    let now = Utc::now();
+    let routes = Arc::new(Mutex::new(HashMap::new()));
+    let (port, handle) = start_mock_server(routes.clone()).await;
+    let fake_sha = hex::encode(Sha256::digest(b"stage1-artifact"));
+
+    // Verify production Stage 1 helper constructs valid dual-key keyring with legacy CDC23D8CC8DA5397 + dedicated key
+    let prod_stage1 = TrustedToolsKeyring::stage1_dual_key_transition(
+        &dedicated_key.key_id_hex,
+        &dedicated_key.pubkey_b64,
+        "Dedicated Stage 1 Test Key",
+    );
+    assert_eq!(prod_stage1.keys.len(), 2);
+    assert!(prod_stage1.allow_legacy_shared_key);
+    assert!(prod_stage1.has_dedicated_active_key());
+    assert!(prod_stage1.validate_safety(now, 900).is_ok());
+
+    // Build test Stage 1 dual-key keyring using our test legacy + dedicated keys
+    let stage1_kr = TrustedToolsKeyring {
+        keyring_version: 1,
+        allow_legacy_shared_key: true,
+        revoked_key_ids: vec![],
+        keys: vec![
+            legacy_key.as_trusted_key(
+                SigningKeyPurpose::ExternalToolsLegacyShared,
+                TrustedKeyStatus::TransitionLegacy,
+                "Legacy Shared Key",
+            ),
+            dedicated_key.as_trusted_key(
+                SigningKeyPurpose::ExternalToolsManifest,
+                TrustedKeyStatus::Active,
+                "Dedicated Tools Key",
+            ),
+        ],
+    };
+
+    let cfg = ToolsManagerConfig {
+        signed_manifest_url: Some(format!("http://127.0.0.1:{}/tools-manifest.json", port)),
+        allow_loopback_http: true,
+        tools_keyring: Some(stage1_kr.clone()),
+        ..Default::default()
+    };
+
+    // Phase 3 #9 / Phase 15 #7: Unauthorized trust escalation (manifest tries to inject `trusted_keys`) -> REJECTED!
+    let escalated_json = format!(
+        r#"{{
+          "schema_version": 2,
+          "manifest_revision": 2,
+          "published_at": "{}",
+          "expires_at": "{}",
+          "signing_key_id": "{}",
+          "trusted_keys": [{{"key_id": "{}", "pubkey_b64": "{}"}}]
+        }}"#,
+        (now - ChronoDuration::minutes(2)).to_rfc3339(),
+        (now + ChronoDuration::days(30)).to_rfc3339(),
+        legacy_key.key_id_hex,
+        rogue_key.key_id_hex,
+        rogue_key.pubkey_b64
+    );
+    {
+        let mut r = routes.lock().await;
+        r.insert(
+            "/tools-manifest.json".into(),
+            json_ok(escalated_json.as_bytes().to_vec()),
+        );
+        r.insert(
+            "/tools-manifest.json.sig".into(),
+            text_ok(legacy_key.sign_b64(escalated_json.as_bytes())),
+        );
+    }
+    let esc_res = fetch_signed_tools_manifest(&cfg, &ManifestAntiReplayState::default(), now).await;
+    assert!(
+        matches!(esc_res, ManifestFetchOutcome::RejectedSecurity(ref e) if e.contains("trust-escalation")),
+        "Unauthorized manifest trust-escalation field must be rejected, got {:?}",
+        esc_res
+    );
+
+    // Phase 3 #6: Dual-signed manifest with valid legacy .sig BUT invalid dedicated .tools.sig -> REJECTED on Stage 1!
+    let mut m_dual = build_manifest(
+        2,
+        &legacy_key.key_id_hex,
+        port,
+        &fake_sha,
+        15,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+    );
+    m_dual.dedicated_signing_key_id = Some(dedicated_key.key_id_hex.clone());
+    let m_dual_bytes = serde_json::to_vec(&m_dual).unwrap();
+    {
+        let mut r = routes.lock().await;
+        r.insert("/tools-manifest.json".into(), json_ok(m_dual_bytes.clone()));
+        r.insert(
+            "/tools-manifest.json.sig".into(),
+            text_ok(legacy_key.sign_b64(&m_dual_bytes)),
+        );
+        // Tampered / wrong-key sidecar .tools.sig!
+        r.insert(
+            "/tools-manifest.json.tools.sig".into(),
+            text_ok(rogue_key.sign_b64(&m_dual_bytes)),
+        );
+    }
+    let bad_dual_res =
+        fetch_signed_tools_manifest(&cfg, &ManifestAntiReplayState::default(), now).await;
+    assert!(
+        matches!(bad_dual_res, ManifestFetchOutcome::RejectedSecurity(ref e) if e.contains(".tools.sig")),
+        "Invalid dedicated .tools.sig must fail closed on Stage 1 client, got {:?}",
+        bad_dual_res
+    );
+
+    // Phase 3 #7: Revoked legacy key rejected even when allow_legacy_shared_key = true
+    let mut revoked_legacy_kr = stage1_kr.clone();
+    revoked_legacy_kr
+        .revoked_key_ids
+        .push(legacy_key.key_id_hex.clone());
+    let cfg_rev_leg = ToolsManagerConfig {
+        signed_manifest_url: Some(format!("http://127.0.0.1:{}/tools-manifest.json", port)),
+        allow_loopback_http: true,
+        tools_keyring: Some(revoked_legacy_kr),
+        ..Default::default()
+    };
+    let rev_leg_res =
+        fetch_signed_tools_manifest(&cfg_rev_leg, &ManifestAntiReplayState::default(), now).await;
+    assert!(
+        matches!(rev_leg_res, ManifestFetchOutcome::RejectedSecurity(ref e) if e.contains("revoked")),
+        "Revoked legacy key must be rejected, got {:?}",
+        rev_leg_res
+    );
+
+    // Phase 15 #22: Invalid / malformed public key inside keyring -> rejected cleanly
+    let malformed_kr = TrustedToolsKeyring {
+        keyring_version: 1,
+        allow_legacy_shared_key: false,
+        revoked_key_ids: vec![],
+        keys: vec![TrustedSigningKey {
+            key_id: dedicated_key.key_id_hex.clone(),
+            pubkey_b64: "NOT_A_VALID_MINISIGN_PUBKEY!!!".to_string(),
+            purpose: SigningKeyPurpose::ExternalToolsManifest,
+            status: TrustedKeyStatus::Active,
+            label: "Corrupted Pubkey".to_string(),
+            valid_from: None,
+            retired_after: None,
+        }],
+    };
+    let ded_sig = dedicated_key.sign_b64(b"test");
+    assert!(
+        verify_minisign_with_keyring(&malformed_kr, b"test", &ded_sig, now, 900).is_err(),
+        "Phase 15 #22: malformed public key must fail closed"
+    );
+
+    // Phase 3 #10: Invalid manifest revision (schema v2 with manifest_revision = 0) -> REJECTED
+    let m_rev0 = build_manifest(
+        0,
+        &dedicated_key.key_id_hex,
+        port,
+        &fake_sha,
+        15,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+    );
+    let m_rev0_bytes = serde_json::to_vec(&m_rev0).unwrap();
+    {
+        let mut r = routes.lock().await;
+        r.insert("/tools-manifest.json".into(), json_ok(m_rev0_bytes.clone()));
+        r.insert(
+            "/tools-manifest.json.sig".into(),
+            text_ok(dedicated_key.sign_b64(&m_rev0_bytes)),
+        );
+    }
+    let rev0_res = fetch_signed_tools_manifest(&cfg, &ManifestAntiReplayState::default(), now).await;
+    assert!(
+        matches!(rev0_res, ManifestFetchOutcome::RejectedSecurity(ref e) if e.contains("manifest_revision >= 1")),
+        "Schema v2 manifest_revision=0 must be rejected, got {:?}",
+        rev0_res
+    );
+
+    handle.abort();
+}
