@@ -35,8 +35,20 @@ const EXPECTED_V107_SIG_SIZE = 436;
 const EXPECTED_V107_SIG_SHA = '945b5efdcc69edf85373c54cfdb603d50976f5ba6be75bef5e130ca5350224e8';
 const EXPECTED_V107_HOST_SHA = '2a88db0c749dac21cf69fce1580e674cef7d4478d6b98728858277141db60c41';
 
-const EXPECTED_PROD_MANIFEST_SHA = '9fa61a38bb77bb8cdf05364565db2cf3b2b3ab8d0c7af98dfd7c50b2ee287662';
-const EXPECTED_PROD_SIG_SHA = 'e0e23db79990f885c0745165299b20befd41f5dc8a73f7b00ca0476502955eb4';
+const ACTIVE_PROD_REGISTRY_ENTRY = (() => {
+  try {
+    const reg = JSON.parse(
+      fs.readFileSync(path.join(ROOT, 'docs', 'security', 'tools-manifest-registry', 'registry.json'), 'utf8')
+    );
+    return (reg.revisions || []).find((r) => r.publication_status === 'active') || null;
+  } catch {
+    return null;
+  }
+})();
+const EXPECTED_PROD_MANIFEST_SHA =
+  ACTIVE_PROD_REGISTRY_ENTRY?.manifest_sha256 || '9fa61a38bb77bb8cdf05364565db2cf3b2b3ab8d0c7af98dfd7c50b2ee287662';
+const EXPECTED_PROD_SIG_SHA =
+  ACTIVE_PROD_REGISTRY_ENTRY?.signature_sha256 || 'e0e23db79990f885c0745165299b20befd41f5dc8a73f7b00ca0476502955eb4';
 const EXPECTED_FFMPEG_VER = 'N-129150-g7ddf7bc8a4-20261120';
 const EXPECTED_FFMPEG_BUNDLED = 'N-126374-g089a48eb36-20260831';
 

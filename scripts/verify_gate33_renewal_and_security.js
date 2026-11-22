@@ -128,21 +128,28 @@ async function main() {
       )
     );
 
-    // 1. Live production --check + durable immutable registry integrity check
+    // 1. Live production --check + durable immutable registry integrity check (rev 1 immutable + active revision match)
     const liveCheck = runNode(RENEW_SCRIPT, ['--check']);
     const liveObj = liveCheck.status === 0 ? JSON.parse(liveCheck.stdout) : null;
     const regObj = JSON.parse(fs.readFileSync(REGISTRY_PATH, 'utf8'));
-    const archSha = crypto.createHash('sha256').update(fs.readFileSync(ARCHIVED_REV1)).digest('hex');
-    const archSigSha = crypto.createHash('sha256').update(fs.readFileSync(ARCHIVED_REV1_SIG)).digest('hex');
+    const rev1ArchSha = crypto.createHash('sha256').update(fs.readFileSync(ARCHIVED_REV1)).digest('hex');
+    const activeEntry = (regObj.revisions || []).find((r) => r.publication_status === 'active') || regObj.revisions?.[0];
+    const activeRev = activeEntry?.manifest_revision || 1;
+    const nextTestRev = activeRev + 1;
+    const activeArchM = path.join(ROOT, activeEntry.archived_manifest_path);
+    const activeArchS = path.join(ROOT, activeEntry.archived_signature_path);
+    const activeArchSha = crypto.createHash('sha256').update(fs.readFileSync(activeArchM)).digest('hex');
+    const activeArchSigSha = crypto.createHash('sha256').update(fs.readFileSync(activeArchS)).digest('hex');
     record(
       'G33S-01',
       'Live production manifest --check passes & immutable registry archive matches byte-for-byte',
       liveCheck.status === 0 &&
         liveObj?.status === 'OK' &&
-        liveObj?.manifestRevision === 1 &&
-        liveObj?.manifestSha256 === archSha &&
-        liveObj?.signatureSha256 === archSigSha &&
-        regObj?.revisions?.[0]?.manifest_sha256 === archSha,
+        liveObj?.manifestRevision === activeRev &&
+        liveObj?.manifestSha256 === activeArchSha &&
+        liveObj?.signatureSha256 === activeArchSigSha &&
+        activeEntry?.manifest_sha256 === activeArchSha &&
+        regObj?.revisions?.[0]?.manifest_sha256 === rev1ArchSha,
       `rev=${liveObj?.manifestRevision}, remainingDays=${liveObj?.expiry?.remainingDays}, alert=${liveObj?.expiry?.alertLevel}`
     );
 
@@ -151,7 +158,7 @@ async function main() {
       '--dry-run',
       '--offline-manifest', ARCHIVED_REV1,
       '--offline-sig', ARCHIVED_REV1_SIG,
-      '--revision', '1',
+      '--revision', String(activeRev),
       '--lock-file', path.join(tmpDir, 'lock1'),
     ]);
     record(
@@ -187,12 +194,12 @@ async function main() {
     );
 
     // Scenario 28 & 26: Offline renewal preparation + signed verification + duplicate suppression
-    const outRev2 = path.join(tmpDir, 'prep_rev2');
+    const outRev2 = path.join(tmpDir, `prep_rev${nextTestRev}`);
     const prep1 = runNode(RENEW_SCRIPT, [
       '--prepare',
       '--offline-manifest', ARCHIVED_REV1,
       '--offline-sig', ARCHIVED_REV1_SIG,
-      '--revision', '2',
+      '--revision', String(nextTestRev),
       '--ttl-days', '45',
       '--target-key-id', keyA.keyIdHex,
       '--test-key-file', keyA.keyFile,
@@ -210,7 +217,7 @@ async function main() {
       '--prepare',
       '--offline-manifest', ARCHIVED_REV1,
       '--offline-sig', ARCHIVED_REV1_SIG,
-      '--revision', '2',
+      '--revision', String(nextTestRev),
       '--ttl-days', '45',
       '--target-key-id', keyA.keyIdHex,
       '--test-key-file', keyA.keyFile,
@@ -220,7 +227,7 @@ async function main() {
     const prepDupObj = prepDup.status === 0 ? JSON.parse(prepDup.stdout) : null;
     record(
       'G33S-05',
-      'Scenarios 28 & 26: Offline renewal prepares & verifies rev 2 cleanly, and suppresses duplicate runs',
+      `Scenarios 28 & 26: Offline renewal prepares & verifies rev ${nextTestRev} cleanly, and suppresses duplicate runs`,
       prep1.status === 0 &&
         prep1Obj?.signed === true &&
         verifyRev2.status === 0 &&
@@ -248,7 +255,7 @@ async function main() {
     const mismatchRes = runNode(RENEW_SCRIPT, [
       '--prepare',
       '--offline-manifest', ARCHIVED_REV1,
-      '--revision', '3',
+      '--revision', String(nextTestRev + 1),
       '--target-key-id', keyA.keyIdHex,
       '--test-key-file', keyB.keyFile,
       '--out-dir', path.join(tmpDir, 'prep_mismatch'),
@@ -265,7 +272,7 @@ async function main() {
     const badCreds = runNode(RENEW_SCRIPT, [
       '--prepare',
       '--offline-manifest', ARCHIVED_REV1,
-      '--revision', '3',
+      '--revision', String(nextTestRev + 1),
       '--sign-with-tauri-key',
       '--priv-key-file', path.join(tmpDir, 'nonexistent.key'),
       '--pub-key-file', path.join(tmpDir, 'nonexistent.pub'),
@@ -283,7 +290,7 @@ async function main() {
     // Scenario 33: Dual-authorization guard on --publish-production
     const prodNoAuth = runNode(RENEW_SCRIPT, ['--publish-production', '--manifest-file', path.join(outRev2, 'tools-manifest.json')]);
     const badTokenPath = path.join(tmpDir, 'bad_approval.json');
-    fs.writeFileSync(badTokenPath, JSON.stringify({ approved_by: 'test', manifest_sha256: '0'.repeat(64), manifest_revision: 2, signing_key_id: keyA.keyIdHex }));
+    fs.writeFileSync(badTokenPath, JSON.stringify({ approved_by: 'test', manifest_sha256: '0'.repeat(64), manifest_revision: nextTestRev, signing_key_id: keyA.keyIdHex }));
     const prodBadToken = runNode(RENEW_SCRIPT, [
       '--publish-production',
       '--i-authorize-production-manifest',
@@ -304,7 +311,7 @@ async function main() {
     // alert cooldown deduplication, backoff on outage, and stalled approval detection!
     let mockMode = 'partial_missing_sig';
     const mockManifestObj = JSON.parse(fs.readFileSync(path.join(outRev2, 'tools-manifest.json'), 'utf8'));
-    mockManifestObj.manifest_revision = 2;
+    mockManifestObj.manifest_revision = activeRev;
     mockManifestObj.generated_at = '2026-11-01T00:00:00.000Z';
     mockManifestObj.published_at = '2026-11-01T00:00:00.000Z';
     mockManifestObj.expires_at = '2026-12-01T00:00:00.000Z';
@@ -405,17 +412,17 @@ async function main() {
       '--rollback-plan',
       '--offline',
       '--target-revision', '1',
-      '--revision', '2',
+      '--revision', String(nextTestRev),
       '--target-key-id', keyA.keyIdHex,
       '--test-key-file', keyA.keyFile,
-      '--out-dir', path.join(tmpDir, 'rb_rev2'),
+      '--out-dir', path.join(tmpDir, `rb_rev${nextTestRev}`),
     ]);
     const rbPlanObj = rbPlanRes.status === 0 ? JSON.parse(rbPlanRes.stdout) : null;
     record(
       'G33S-12',
       'Emergency rollback plan generates strictly higher signed revision with allow_rollback_to=true from immutable registry',
       rbPlanRes.status === 0 &&
-        rbPlanObj?.emergencyRollbackRevision === 2 &&
+        rbPlanObj?.emergencyRollbackRevision === nextTestRev &&
         rbPlanObj?.allowRollbackTo === true &&
         rbPlanObj?.signed === true &&
         rbPlanObj?.restoringArtifactSha256 === '03d33066832e7149a8577bed73713c5d5344aed14199063e521b798cf1b60076',

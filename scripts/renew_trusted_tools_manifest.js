@@ -1002,8 +1002,8 @@ async function cmdPublishStaging(args, config) {
   }
 }
 
-async function cmdPublishProduction(args) {
-  // Strictly fail-closed dual-authorization guard (Phase 7):
+async function cmdPublishProduction(args, config, registry) {
+  // Strictly fail-closed dual-authorization guard (Phase 5 / Gate 33.2):
   // Automated monitoring or expiry threshold alerts MUST NEVER auto-publish to production.
   if (args['i-authorize-production-manifest'] !== true || !args['approval-token-file']) {
     throw new Error(
@@ -1019,20 +1019,157 @@ async function cmdPublishProduction(args) {
   if (!manifestPath || !fs.existsSync(manifestPath) || !fs.existsSync(sigPath)) {
     throw new Error('Missing --manifest-file or .sig for production promotion');
   }
-  const manifestBuf = fs.readFileSync(manifestPath);
-  const actualSha = sha256Buf(manifestBuf);
-  const manifest = JSON.parse(manifestBuf.toString('utf8'));
-  if (
-    !approval.approved_by ||
-    approval.manifest_sha256 !== actualSha ||
-    approval.manifest_revision !== manifest.manifest_revision ||
-    String(approval.signing_key_id || '').toUpperCase() !== String(manifest.signing_key_id || '').toUpperCase()
-  ) {
-    throw new Error('PRODUCTION_APPROVAL_MISMATCH: Approval token does not match exact manifest SHA-256, revision, or signing_key_id');
+
+  const lockPath = args['lock-file'] || DEFAULT_LOCK_FILE;
+  const releaseLock = acquireLock(lockPath);
+  try {
+    const manifestBuf = fs.readFileSync(manifestPath);
+    const sigText = fs.readFileSync(sigPath, 'utf8');
+    const actualSha = sha256Buf(manifestBuf);
+    const actualSigSha = sha256Buf(Buffer.from(sigText, 'utf8'));
+    rejectDuplicateJsonKeys(manifestBuf.toString('utf8'));
+    const manifest = JSON.parse(manifestBuf.toString('utf8'));
+
+    if (
+      !approval.approved_by ||
+      approval.manifest_sha256 !== actualSha ||
+      approval.manifest_revision !== manifest.manifest_revision ||
+      String(approval.signing_key_id || '').toUpperCase() !== String(manifest.signing_key_id || '').toUpperCase() ||
+      (approval.signature_sha256 && approval.signature_sha256 !== actualSigSha)
+    ) {
+      throw new Error(
+        'PRODUCTION_APPROVAL_MISMATCH: Approval token does not match exact manifest SHA-256, signature SHA-256, revision, or signing_key_id'
+      );
+    }
+    if (approval.expires_at && new Date(approval.expires_at).getTime() <= Date.now()) {
+      throw new Error(`PRODUCTION_APPROVAL_EXPIRED: Approval token expired at ${approval.expires_at}`);
+    }
+
+    // Cryptographic signature & metadata validation against trusted production keyring
+    const keyring = defaultKeyring(args);
+    const verified = verifyMinisignAgainstKeyring(manifestBuf, sigText, keyring);
+    if (String(manifest.signing_key_id || '').toUpperCase() !== verified.keyId) {
+      throw new Error(`Signing key ID mismatch: manifest=${manifest.signing_key_id}, verified=${verified.keyId}`);
+    }
+    if (manifest.schema_version !== 2) {
+      throw new Error(`Unsupported schema_version: ${manifest.schema_version}`);
+    }
+    const pubMs = new Date(manifest.published_at).getTime();
+    const expMs = new Date(manifest.expires_at).getTime();
+    const ttlDays = (expMs - pubMs) / 86400000;
+    const minTtl = config.renewal_ttl_policy.min_ttl_days || 7;
+    const maxTtl = config.renewal_ttl_policy.max_ttl_days || 90;
+    if (!Number.isFinite(ttlDays) || ttlDays < minTtl || ttlDays > maxTtl + 0.1 || expMs <= Date.now()) {
+      throw new Error(`Invalid expiration window (${ttlDays.toFixed(2)} days; expires_at=${manifest.expires_at})`);
+    }
+
+    // Live race-condition guard & unchanged-artifact check against current production manifest
+    const live = await fetchOrLoadManifest({ ...args, 'offline-manifest': null }, config);
+    const liveManifest = JSON.parse(live.manifestBuf.toString('utf8'));
+    if (
+      approval.expected_live_revision !== undefined &&
+      liveManifest.manifest_revision !== approval.expected_live_revision
+    ) {
+      throw new Error(
+        `PRODUCTION_RACE_ABORT: Expected live revision ${approval.expected_live_revision}, observed live revision ${liveManifest.manifest_revision}`
+      );
+    }
+    if (manifest.manifest_revision <= liveManifest.manifest_revision) {
+      throw new Error(
+        `Anti-replay violation: candidate revision ${manifest.manifest_revision} <= live revision ${liveManifest.manifest_revision}`
+      );
+    }
+    const isEmergencyRollback = Boolean(manifest.ffmpeg_bundle?.allow_rollback_to);
+    if (!isEmergencyRollback) {
+      if (expMs <= new Date(liveManifest.expires_at).getTime()) {
+        throw new Error(
+          `Renewal expiration (${manifest.expires_at}) must strictly exceed live expiration (${liveManifest.expires_at})`
+        );
+      }
+      const prevFf = liveManifest.ffmpeg_bundle;
+      const nextFf = manifest.ffmpeg_bundle;
+      if (
+        nextFf.version !== prevFf.version ||
+        nextFf.url !== prevFf.url ||
+        nextFf.sha256 !== prevFf.sha256 ||
+        nextFf.size !== prevFf.size
+      ) {
+        throw new Error(
+          'POLICY_VIOLATION: Metadata-only production renewal cannot modify approved FFmpeg/FFprobe version, URL, SHA-256, or byte size'
+        );
+      }
+    }
+
+    const artifactCheck = await verifyArtifactAvailability(manifest.ffmpeg_bundle, {
+      offline: Boolean(args.offline),
+      allowLoopback: Boolean(args['allow-loopback']),
+      expectedSha256: liveManifest.ffmpeg_bundle.sha256,
+    });
+
+    // Atomic copy ONLY into production assets/tools/ (strictly refusing any website page or staging changes)
+    const websiteRepo = args['website-repo'] || DEFAULT_WEBSITE_REPO;
+    const preStatus = execFileSync('git', ['status', '--short'], { cwd: websiteRepo, encoding: 'utf8' }).trim();
+    if (preStatus.length > 0) {
+      throw new Error(`SAFETY_ABORT: Website repository has uncommitted changes prior to production promotion:\n${preStatus}`);
+    }
+
+    const prodDir = path.join(websiteRepo, 'assets', 'tools');
+    fs.mkdirSync(prodDir, { recursive: true });
+    fs.writeFileSync(path.join(prodDir, 'tools-manifest.json'), manifestBuf);
+    fs.writeFileSync(path.join(prodDir, 'tools-manifest.json.sig'), sigText);
+
+    const changedLines = execFileSync('git', ['status', '--short'], { cwd: websiteRepo, encoding: 'utf8' })
+      .trim()
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const allowedSet = new Set(['assets/tools/tools-manifest.json', 'assets/tools/tools-manifest.json.sig']);
+    for (const line of changedLines) {
+      const rel = line.replace(/^[A-Z?]+\s+/, '').trim();
+      if (!allowedSet.has(rel)) {
+        throw new Error(`SAFETY_ABORT: Unexpected file modified in website repository: '${rel}'`);
+      }
+    }
+
+    let websiteCommit = null;
+    if (!args['no-git-push']) {
+      execFileSync('git', ['add', 'assets/tools/tools-manifest.json', 'assets/tools/tools-manifest.json.sig'], {
+        cwd: websiteRepo,
+        stdio: 'inherit',
+      });
+      const commitMsg =
+        args['commit-message'] ||
+        `Gate 33.2: renew signed production external tools manifest rev ${manifest.manifest_revision} (expires ${manifest.expires_at.slice(0, 10)}, unchanged FFmpeg ${manifest.ffmpeg_bundle.version})`;
+      execFileSync('git', ['commit', '-m', commitMsg], { cwd: websiteRepo, stdio: 'inherit' });
+      websiteCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: websiteRepo, encoding: 'utf8' }).trim();
+      execFileSync('git', ['push', 'origin', 'main'], { cwd: websiteRepo, stdio: 'inherit' });
+    }
+
+    console.log(
+      JSON.stringify(
+        {
+          mode: 'publish-production',
+          status: args['no-git-push'] ? 'PRODUCTION_STAGED_LOCAL_ONLY' : 'PUBLISHED_PRODUCTION',
+          previousRevision: liveManifest.manifest_revision,
+          manifestRevision: manifest.manifest_revision,
+          publishedAt: manifest.published_at,
+          expiresAt: manifest.expires_at,
+          ttlDays: Number(ttlDays.toFixed(2)),
+          manifestSha256: actualSha,
+          signatureSha256: actualSigSha,
+          verifiedSigner: verified,
+          artifactCheck,
+          websiteCommit,
+          approvalRef: approval.approval_id || path.basename(args['approval-token-file']),
+          approvedBy: approval.approved_by,
+        },
+        null,
+        2
+      )
+    );
+  } finally {
+    releaseLock();
   }
-  throw new Error(
-    'PRODUCTION_PUBLISH_GUARD_ACTIVE: Gate 33 forbids production manifest modification; execute production deployment only during an explicitly authorized production maintenance gate.'
-  );
 }
 
 async function main() {
@@ -1046,7 +1183,7 @@ async function main() {
   if (args.verify) return cmdVerify(args, config, registry);
   if (args['rollback-plan']) return cmdRollbackPlan(args, config, registry);
   if (args['publish-staging']) return cmdPublishStaging(args, config);
-  if (args['publish-production']) return cmdPublishProduction(args);
+  if (args['publish-production']) return cmdPublishProduction(args, config, registry);
 
   console.log(
     'Usage: node scripts/renew_trusted_tools_manifest.js [--check | --prepare | --verify | --dry-run | --publish-staging | --rollback-plan | --publish-production]'
