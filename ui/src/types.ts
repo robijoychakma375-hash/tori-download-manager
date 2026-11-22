@@ -271,6 +271,19 @@ export interface ExternalToolsSchedulerState {
   last_error: string | null;
 }
 
+export interface ExternalToolsManifestStatus {
+  verification_status: string;
+  current_revision: number | null;
+  last_verified_at: string | null;
+  published_at: string | null;
+  expires_at: string | null;
+  trusted_source_status: string;
+  signing_key_id: string | null;
+  signing_key_purpose: string | null;
+  next_scheduled_check_at: string | null;
+  last_failure: string | null;
+}
+
 export interface ExternalToolsSnapshot {
   tools: ExternalToolRecord[];
   settings: ExternalToolsSettings;
@@ -279,6 +292,7 @@ export interface ExternalToolsSnapshot {
   active_yt_dlp_leases: number;
   active_ffmpeg_leases: number;
   active_ffprobe_leases: number;
+  manifest_status?: ExternalToolsManifestStatus;
 }
 
 export interface ExternalToolProgressEvent {

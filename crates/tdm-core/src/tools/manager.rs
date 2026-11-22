@@ -28,8 +28,8 @@ use crate::tools::store;
 use crate::tools::trust::compute_file_sha256;
 use crate::tools::types::{
     ExternalToolHistoryEntry, ExternalToolRecord, ExternalToolsSettings, ExternalToolsSnapshot,
-    ManifestAntiReplayState, ToolBundleId, ToolId, ToolNotificationEvent, ToolNotificationKind,
-    ToolProgressEvent, ToolUpdateStatus, ToolsManagerConfig, TrustLevel,
+    ManifestAntiReplayState, SchedulerState, ToolBundleId, ToolId, ToolNotificationEvent,
+    ToolNotificationKind, ToolProgressEvent, ToolUpdateStatus, ToolsManagerConfig, TrustLevel,
 };
 use crate::tools::version::{
     compare_tool_versions, probe_tool_version, sanitize_version_dir_name, VersionComparison,
@@ -452,6 +452,8 @@ impl ExternalToolsManager {
         let tools = store::list_tool_records(&self.db)?;
         let settings = self.get_settings();
         let scheduler = store::load_scheduler_state(&self.db);
+        let manifest_state = store::load_manifest_state(&self.db);
+        let manifest_status = self.build_manifest_health_summary(&manifest_state, &scheduler, &settings, &tools);
         Ok(ExternalToolsSnapshot {
             tools,
             settings,
@@ -460,7 +462,88 @@ impl ExternalToolsManager {
             active_yt_dlp_leases: self.coordinator.active_leases(ToolId::YtDlp),
             active_ffmpeg_leases: self.coordinator.active_leases(ToolId::Ffmpeg),
             active_ffprobe_leases: self.coordinator.active_leases(ToolId::Ffprobe),
+            manifest_status,
         })
+    }
+
+    fn build_manifest_health_summary(
+        &self,
+        ms: &ManifestAntiReplayState,
+        sched: &SchedulerState,
+        settings: &ExternalToolsSettings,
+        tools: &[ExternalToolRecord],
+    ) -> crate::tools::types::ManifestHealthSummary {
+        let verification_status = ms
+            .last_verification_status
+            .clone()
+            .unwrap_or_else(|| {
+                if ms.highest_accepted_revision > 0 {
+                    "verified".to_string()
+                } else {
+                    "not_checked".to_string()
+                }
+            });
+
+        let next_scheduled_check_at = if !settings.background_checks_enabled() {
+            None
+        } else if let Some(retry) = sched.next_retry_after {
+            Some(retry)
+        } else {
+            sched
+                .last_successful_check_at
+                .map(|last| last + ChronoDuration::hours(settings.check_interval_hours as i64))
+        };
+
+        let trusted_source_status = match verification_status.as_str() {
+            "verified" => {
+                if ms.last_signing_key_purpose.as_deref() == Some("external_tools_manifest") {
+                    "yt-dlp: OpenPGP RSA-4096 · FFmpeg/FFprobe: TORI Dedicated Ed25519 Manifest"
+                        .to_string()
+                } else {
+                    "yt-dlp: OpenPGP RSA-4096 · FFmpeg/FFprobe: TORI Ed25519 Signed Manifest"
+                        .to_string()
+                }
+            }
+            "rejected_security" => {
+                "Manifest verification blocked (fail-closed); existing verified tools preserved"
+                    .to_string()
+            }
+            "unpublished" => {
+                "yt-dlp: OpenPGP RSA-4096 · FFmpeg/FFprobe: Direct unsigned upstream blocked"
+                    .to_string()
+            }
+            "network_unavailable" => {
+                "Signed manifest temporarily unreachable; existing verified tools active"
+                    .to_string()
+            }
+            _ => "yt-dlp: OpenPGP RSA-4096 · FFmpeg/FFprobe: TORI Ed25519 Signed Manifest"
+                .to_string(),
+        };
+
+        let last_failure = ms
+            .last_verification_error
+            .clone()
+            .or_else(|| sched.last_error.clone())
+            .or_else(|| {
+                tools
+                    .iter()
+                    .find(|t| t.update_status == ToolUpdateStatus::UpdateFailed)
+                    .and_then(|t| t.last_error.clone())
+            });
+
+        crate::tools::types::ManifestHealthSummary {
+            verification_status,
+            current_revision: (ms.highest_accepted_revision > 0)
+                .then_some(ms.highest_accepted_revision),
+            last_verified_at: ms.last_accepted_at,
+            published_at: ms.last_accepted_published_at,
+            expires_at: ms.last_accepted_expires_at,
+            trusted_source_status,
+            signing_key_id: ms.last_signing_key_id.clone(),
+            signing_key_purpose: ms.last_signing_key_purpose.clone(),
+            next_scheduled_check_at,
+            last_failure,
+        }
     }
 
     pub fn get_update_history(&self, limit: usize) -> Result<Vec<ExternalToolHistoryEntry>> {
@@ -587,6 +670,7 @@ impl ExternalToolsManager {
                 }
                 ManifestFetchOutcome::NotConfigured => None,
                 ManifestFetchOutcome::NotPublishedYet => {
+                    self.record_manifest_non_security_status(&prior_manifest_state, "unpublished", None);
                     append_tools_log(
                         &self.layout,
                         "INFO",
@@ -596,6 +680,11 @@ impl ExternalToolsManager {
                     None
                 }
                 ManifestFetchOutcome::NetworkUnavailable(reason) => {
+                    self.record_manifest_non_security_status(
+                        &prior_manifest_state,
+                        "network_unavailable",
+                        Some(&reason),
+                    );
                     append_tools_log(
                         &self.layout,
                         "WARN",
@@ -605,7 +694,7 @@ impl ExternalToolsManager {
                     None
                 }
                 ManifestFetchOutcome::RejectedSecurity(reason) => {
-                    self.record_manifest_security_rejection(&reason);
+                    self.record_manifest_security_rejection(&prior_manifest_state, &reason);
                     manifest_security_rejection = Some(reason);
                     None
                 }
@@ -730,24 +819,48 @@ impl ExternalToolsManager {
             next.last_accepted_manifest_sha256 = Some(validated.raw_sha256.clone());
         }
         next.last_accepted_published_at = validated.published_at;
+        next.last_accepted_expires_at = validated.expires_at;
         next.last_accepted_at = Some(now);
         next.last_signing_key_id = validated.verified_key_id.clone();
+        next.last_signing_key_purpose = validated
+            .verified_key_purpose
+            .map(|p| p.as_str().to_string());
+        next.last_verification_status = Some("verified".to_string());
+        next.last_verification_error = None;
         let _ = store::save_manifest_state(&self.db, &next);
         append_tools_log(
             &self.layout,
             "INFO",
             "SIGNED_MANIFEST_VERIFIED",
             &format!(
-                "Verified TORI signed tools manifest schema_v{} rev={} key_id={:?} sha256={}",
+                "Verified TORI signed tools manifest schema_v{} rev={} key_id={:?} purpose={:?} dual_key={:?} sha256={}",
                 validated.manifest.schema_version,
                 rev,
                 validated.verified_key_id,
+                next.last_signing_key_purpose,
+                validated.dual_signature_verified_key_id,
                 &validated.raw_sha256[..16]
             ),
         );
     }
 
-    fn record_manifest_security_rejection(&self, reason: &str) {
+    fn record_manifest_non_security_status(
+        &self,
+        prior: &ManifestAntiReplayState,
+        status: &str,
+        error: Option<&str>,
+    ) {
+        let mut next = prior.clone();
+        next.last_verification_status = Some(status.to_string());
+        next.last_verification_error = error.map(|s| s.to_string());
+        let _ = store::save_manifest_state(&self.db, &next);
+    }
+
+    fn record_manifest_security_rejection(&self, prior: &ManifestAntiReplayState, reason: &str) {
+        let mut next = prior.clone();
+        next.last_verification_status = Some("rejected_security".to_string());
+        next.last_verification_error = Some(reason.to_string());
+        let _ = store::save_manifest_state(&self.db, &next);
         append_tools_log(
             &self.layout,
             "ERROR",
@@ -1041,7 +1154,7 @@ impl ExternalToolsManager {
                             Some(validated)
                         }
                         ManifestFetchOutcome::RejectedSecurity(reason) => {
-                            self.record_manifest_security_rejection(&reason);
+                            self.record_manifest_security_rejection(&prior, &reason);
                             if bundle == ToolBundleId::FfmpegBundle {
                                 self.set_bundle_status(
                                     bundle,

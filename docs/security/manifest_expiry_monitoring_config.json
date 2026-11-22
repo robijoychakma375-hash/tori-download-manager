@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "description": "TORI Download Manager — Configurable External Tools Signed Manifest Expiry Monitoring & Renewal Policy (UTC)",
+  "production_manifest_url": "https://toridownload.xyz/assets/tools/tools-manifest.json",
+  "production_signature_url": "https://toridownload.xyz/assets/tools/tools-manifest.json.sig",
+  "staging_manifest_url": "https://toridownload.xyz/assets/tools/staging/tools-manifest.json",
+  "registry_path": "docs/security/tools-manifest-registry/registry.json",
+  "state_file": "target/tools_renewal_state/expiry_monitor_state.json",
+  "thresholds_hours": {
+    "renewal_due": 720,
+    "warning": 336,
+    "high_priority_alert": 168,
+    "critical_alert": 48,
+    "expired": 0
+  },
+  "renewal_ttl_policy": {
+    "default_ttl_days": 45,
+    "min_ttl_days": 7,
+    "max_ttl_days": 90
+  },
+  "scheduler": {
+    "use_utc": true,
+    "min_check_interval_minutes": 60,
+    "alert_dedup_cooldown_hours": 12,
+    "stalled_approval_warn_hours": 72,
+    "backoff_minutes": [15, 60, 240, 720]
+  },
+  "security_policy": {
+    "auto_sign_production": false,
+    "auto_publish_production": false,
+    "require_explicit_operator_approval": true,
+    "allow_artifact_change_during_metadata_renewal": false,
+    "verify_remote_artifact_head": true,
+    "verify_signature_cryptographically": true
+  }
+}

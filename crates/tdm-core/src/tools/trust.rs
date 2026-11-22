@@ -1,4 +1,5 @@
 use base64::Engine as _;
+use chrono::{DateTime, Utc};
 use rsa::{BigUint, Pkcs1v15Sign, RsaPublicKey};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
@@ -8,6 +9,7 @@ use std::path::Path;
 use url::Url;
 
 use crate::error::{EngineError, Result};
+use crate::tools::types::{SigningKeyPurpose, TrustedKeyStatus, TrustedToolsKeyring};
 
 /// TORI official Ed25519 minisign public key (matches src-tauri/tauri.conf.json key ID CDC23D8CC8DA5397).
 pub const TORI_ED25519_PUBKEY_B64: &str =
@@ -20,6 +22,10 @@ pub const TORI_DEFAULT_TOOLS_MANIFEST_URL: &str =
 /// Official HTTPS staging prefix allowed ONLY during isolated QA runs (`TORI_DATA_DIR` set).
 pub const TORI_STAGING_TOOLS_MANIFEST_PREFIX: &str =
     "https://toridownload.xyz/assets/tools/staging/";
+/// Isolated Gate 33 HTTPS key-transition staging prefix allowed to accept test-only keyring overrides
+/// strictly when `TORI_DATA_DIR` is set (never affects production or Gate 32.1 staging).
+pub const TORI_STAGING_GATE33_TOOLS_MANIFEST_PREFIX: &str =
+    "https://toridownload.xyz/assets/tools/staging/gate33/";
 
 /// Official yt-dlp OpenPGP RSA-4096 signing key (Simon Sawicki <contact@grub4k.xyz>).
 pub const YTDLP_PGP_PUBKEY_ASC: &str = include_str!("ytdlp_pubkey.asc");
@@ -253,6 +259,175 @@ pub fn extract_minisign_key_id_hex(pubkey_input: &str) -> Option<String> {
         raw[2], raw[3], raw[4], raw[5], raw[6], raw[7], raw[8], raw[9],
     ]);
     Some(format!("{:016X}", id_le))
+}
+
+/// Extracts the uppercase 16-hex-character signer key ID directly from a Minisign detached signature.
+pub fn extract_minisign_sig_key_id_hex(sig_text: &str) -> Option<String> {
+    let trimmed = sig_text.trim();
+    let decoded_text = if trimmed.contains('\n') || trimmed.starts_with("untrusted comment:") {
+        trimmed.to_string()
+    } else if let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(trimmed) {
+        String::from_utf8(raw).ok()?
+    } else {
+        trimmed.to_string()
+    };
+
+    let sig_line = decoded_text
+        .lines()
+        .find(|l| {
+            let t = l.trim();
+            !t.is_empty()
+                && !t.starts_with("untrusted comment:")
+                && !t.starts_with("trusted comment:")
+        })?
+        .trim();
+
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(sig_line.as_bytes())
+        .ok()?;
+    if raw.len() < 74 {
+        return None;
+    }
+    let id_le = u64::from_le_bytes([
+        raw[2], raw[3], raw[4], raw[5], raw[6], raw[7], raw[8], raw[9],
+    ]);
+    Some(format!("{:016X}", id_le))
+}
+
+#[derive(Debug, Clone)]
+pub struct VerifiedKeyringSignature {
+    pub key_id: String,
+    pub purpose: SigningKeyPurpose,
+    pub status: TrustedKeyStatus,
+    pub label: String,
+}
+
+/// Verifies a detached Minisign Ed25519 signature against a versioned, purpose-bound,
+/// revocation-aware `TrustedToolsKeyring` (Gate 33).
+///
+/// Security guarantees:
+/// 1. Refuses unsafe keyrings with zero active trusted keys.
+/// 2. Extracts the signer's exact key ID directly from the signature header before key selection.
+/// 3. Rejects revoked keys, retired keys, unknown keys, and wrong-purpose (DesktopAppUpdater) keys.
+/// 4. Rejects legacy shared keys when `allow_legacy_shared_key == false`.
+/// 5. Verifies the cryptographic Ed25519 signature over the exact payload bytes.
+pub fn verify_minisign_with_keyring(
+    keyring: &TrustedToolsKeyring,
+    payload: &[u8],
+    sig_text: &str,
+    now: DateTime<Utc>,
+    max_clock_skew_secs: i64,
+) -> Result<VerifiedKeyringSignature> {
+    keyring.validate_safety(now, max_clock_skew_secs)?;
+
+    let sig_key_id = extract_minisign_sig_key_id_hex(sig_text).ok_or_else(|| {
+        EngineError::Other(
+            "Invalid Ed25519 signature format: could not extract signer key ID".to_string(),
+        )
+    })?;
+
+    if keyring.is_revoked(&sig_key_id) {
+        return Err(EngineError::Other(format!(
+            "Rejected signature from revoked External Tools signing key {}",
+            sig_key_id
+        )));
+    }
+
+    let key = keyring
+        .keys
+        .iter()
+        .find(|k| k.key_id.trim().eq_ignore_ascii_case(&sig_key_id))
+        .ok_or_else(|| {
+            EngineError::Other(format!(
+                "Rejected signature from unknown untrusted signing key {}",
+                sig_key_id
+            ))
+        })?;
+
+    // Verify configured key_id matches the public key bytes (prevents misconfigured key substitution)
+    let pub_key_id = extract_minisign_key_id_hex(&key.pubkey_b64).ok_or_else(|| {
+        EngineError::Other(format!(
+            "Configured public key '{}' has invalid Minisign format",
+            key.key_id
+        ))
+    })?;
+    if !pub_key_id.eq_ignore_ascii_case(&sig_key_id) {
+        return Err(EngineError::Other(format!(
+            "Keyring configuration mismatch: key_id '{}' does not match embedded public key ID '{}'",
+            key.key_id, pub_key_id
+        )));
+    }
+
+    match key.status {
+        TrustedKeyStatus::Revoked => {
+            return Err(EngineError::Other(format!(
+                "Rejected signature from revoked signing key {}",
+                sig_key_id
+            )));
+        }
+        TrustedKeyStatus::Retired => {
+            return Err(EngineError::Other(format!(
+                "Rejected signature from retired signing key {}",
+                sig_key_id
+            )));
+        }
+        TrustedKeyStatus::TransitionLegacy => {
+            if !keyring.allow_legacy_shared_key {
+                return Err(EngineError::Other(format!(
+                    "Rejected legacy transition signing key {}: legacy shared keys are retired",
+                    sig_key_id
+                )));
+            }
+        }
+        TrustedKeyStatus::Active => {}
+    }
+
+    match key.purpose {
+        SigningKeyPurpose::DesktopAppUpdater => {
+            return Err(EngineError::Other(format!(
+                "Rejected wrong-purpose signing key {}: DesktopAppUpdater keys cannot verify External Tools manifests",
+                sig_key_id
+            )));
+        }
+        SigningKeyPurpose::ExternalToolsLegacyShared => {
+            if !keyring.allow_legacy_shared_key {
+                return Err(EngineError::Other(format!(
+                    "Rejected legacy shared signing key {}: dedicated External Tools key required",
+                    sig_key_id
+                )));
+            }
+        }
+        SigningKeyPurpose::ExternalToolsManifest => {}
+    }
+
+    let skew = chrono::Duration::seconds(max_clock_skew_secs.max(0));
+    if let Some(vf) = key.valid_from {
+        if now + skew < vf {
+            return Err(EngineError::Other(format!(
+                "Rejected signing key {}: key is not yet valid (valid_from={})",
+                sig_key_id,
+                vf.to_rfc3339()
+            )));
+        }
+    }
+    if let Some(ra) = key.retired_after {
+        if now > ra + skew {
+            return Err(EngineError::Other(format!(
+                "Rejected signing key {}: key retired after {}",
+                sig_key_id,
+                ra.to_rfc3339()
+            )));
+        }
+    }
+
+    verify_minisign_ed25519(&key.pubkey_b64, payload, sig_text)?;
+
+    Ok(VerifiedKeyringSignature {
+        key_id: sig_key_id,
+        purpose: key.purpose,
+        status: key.status,
+        label: key.label.clone(),
+    })
 }
 
 /// Rejects any JSON document containing duplicate object keys at any nesting level

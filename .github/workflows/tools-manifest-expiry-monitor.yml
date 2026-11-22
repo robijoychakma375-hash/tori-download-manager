@@ -1,0 +1,26 @@
+name: External Tools Manifest Expiry Monitor (Read-Only UTC)
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC (read-only monitoring; NEVER holds signing keys or auto-publishes)
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  monitor-expiry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run UTC External Tools Manifest Expiry & Integrity Check
+        run: |
+          node scripts/monitor_tools_manifest_expiry.js --force --strict-exit

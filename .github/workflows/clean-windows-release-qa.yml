@@ -1,0 +1,55 @@
+name: Clean Windows Release QA (Manual / Release Preflight)
+
+on:
+  workflow_dispatch:
+    inputs:
+      installer_url:
+        description: "HTTPS URL to NSIS installer (defaults to GitHub Latest Stable v1.0.7)"
+        required: false
+        default: "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.7/TORI.Download.Manager_1.0.7_x64-setup.exe"
+      expected_sha256:
+        description: "Expected SHA-256 hex digest of installer"
+        required: false
+        default: "142e4528410a70c43cf7166acda87d8b27e293348237113b2350a025467966cb"
+
+permissions:
+  contents: read
+
+jobs:
+  clean-windows-qa:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download and verify installer SHA-256
+        shell: pwsh
+        run: |
+          $outDir = "$env:RUNNER_TEMP\tori_qa"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $inst = Join-Path $outDir "TORI_Setup.exe"
+          Invoke-WebRequest -Uri "${{ inputs.installer_url }}" -OutFile $inst
+          $actual = (Get-FileHash $inst -Algorithm SHA256).Hash.ToLower()
+          if ("${{ inputs.expected_sha256 }}" -and ($actual -ne "${{ inputs.expected_sha256 }}".ToLower())) {
+            throw "Installer SHA-256 mismatch: expected=${{ inputs.expected_sha256 }}, actual=$actual"
+          }
+          echo "INSTALLER_PATH=$inst" >> $env:GITHUB_ENV
+
+      - name: Execute clean Windows guest QA harness
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\clean_windows_qa_guest.ps1 `
+            -InstallerPath "$env:INSTALLER_PATH" `
+            -OutputDir "$env:RUNNER_TEMP\tori_qa_out" `
+            -AllowCleanMachineMutation
+
+      - name: Upload clean Windows QA report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean-windows-qa-${{ matrix.os }}
+          path: ${{ runner.temp }}\tori_qa_out\clean_windows_qa_report.json

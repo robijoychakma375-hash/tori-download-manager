@@ -107,12 +107,15 @@ pub fn run() {
     // - Official HTTPS staging prefix `https://toridownload.xyz/assets/tools/staging/`
     //   STRICTLY preserves embedded production Ed25519 public key (key ID CDC23D8CC8DA5397).
     if std::env::var("TORI_DATA_DIR").is_ok() {
+        let mut is_gate33_staging_url = false;
         if let Ok(manifest_url) = std::env::var("TORI_TEST_TOOLS_MANIFEST_URL") {
             let trimmed = manifest_url.trim().to_string();
             if trimmed.starts_with("http://127.0.0.1:") {
                 tools_cfg.signed_manifest_url = Some(trimmed);
                 tools_cfg.allow_loopback_http = true;
             } else if trimmed.starts_with(tdm_core::tools::TORI_STAGING_TOOLS_MANIFEST_PREFIX) {
+                is_gate33_staging_url =
+                    trimmed.starts_with(tdm_core::tools::TORI_STAGING_GATE33_TOOLS_MANIFEST_PREFIX);
                 tools_cfg.signed_manifest_url = Some(trimmed);
                 tools_cfg.allow_loopback_http = false;
             }
@@ -121,6 +124,19 @@ pub fn run() {
             if !pubkey.trim().is_empty() && tools_cfg.allow_loopback_http {
                 tools_cfg.tori_manifest_pubkey_b64 = pubkey;
                 tools_cfg.expected_manifest_key_id = None;
+            }
+        }
+        // Isolated multi-key keyring QA override (strictly restricted to loopback tests or
+        // isolated Gate 33 HTTPS staging prefix; NEVER applies to production or Gate 32.1 staging).
+        if let Ok(keyring_json) = std::env::var("TORI_TEST_TOOLS_KEYRING_JSON") {
+            if !keyring_json.trim().is_empty()
+                && (tools_cfg.allow_loopback_http || is_gate33_staging_url)
+            {
+                if let Ok(parsed_kr) =
+                    serde_json::from_str::<tdm_core::tools::TrustedToolsKeyring>(&keyring_json)
+                {
+                    tools_cfg.tools_keyring = Some(parsed_kr);
+                }
             }
         }
     }

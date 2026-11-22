@@ -145,6 +145,30 @@ export const ExternalToolsPanel: React.FC<ExternalToolsPanelProps> = ({ onFlash 
 
   const settings = snapshot?.settings ?? DEFAULT_TOOLS_SETTINGS;
   const tools: ExternalToolRecord[] = snapshot?.tools ?? [];
+  const manifestStatus = snapshot?.manifest_status;
+
+  const manifestTone: 'ok' | 'info' | 'warn' | 'bad' | 'muted' =
+    manifestStatus?.verification_status === 'verified'
+      ? 'ok'
+      : manifestStatus?.verification_status === 'rejected_security'
+        ? 'bad'
+        : manifestStatus?.verification_status === 'network_unavailable' ||
+            manifestStatus?.verification_status === 'unpublished'
+          ? 'warn'
+          : 'muted';
+
+  const manifestStatusLabel =
+    manifestStatus?.verification_status === 'verified'
+      ? manifestStatus.current_revision
+        ? `Manifest Verified · Rev ${manifestStatus.current_revision}`
+        : 'Manifest Verified'
+      : manifestStatus?.verification_status === 'rejected_security'
+        ? 'Manifest Blocked (Security)'
+        : manifestStatus?.verification_status === 'network_unavailable'
+          ? 'Manifest Unreachable'
+          : manifestStatus?.verification_status === 'unpublished'
+            ? 'Direct Verification Mode'
+            : 'Manifest Pending Check';
 
   const updatePolicy = async (patch: Partial<ExternalToolsSettings>) => {
     const next: ExternalToolsSettings = { ...settings, ...patch };
@@ -288,6 +312,11 @@ export const ExternalToolsPanel: React.FC<ExternalToolsPanelProps> = ({ onFlash 
           </div>
           <div style={{ fontSize: 11, color: 'var(--mut)', textAlign: 'right', flex: 'none' }}>
             <div>Last check: {formatTimestamp(snapshot?.scheduler.last_successful_check_at ?? null)}</div>
+            {manifestStatus?.next_scheduled_check_at && (
+              <div style={{ marginTop: 2 }} data-testid="external-tools-next-check">
+                Next check: {formatTimestamp(manifestStatus.next_scheduled_check_at)}
+              </div>
+            )}
             {snapshot && (snapshot.active_yt_dlp_leases > 0 || snapshot.active_ffmpeg_leases > 0 || snapshot.active_ffprobe_leases > 0) && (
               <div style={{ color: 'var(--a3)', fontWeight: 600, marginTop: 2 }}>
                 Tools active in use (updates deferred safely)
@@ -295,6 +324,43 @@ export const ExternalToolsPanel: React.FC<ExternalToolsPanelProps> = ({ onFlash 
             )}
           </div>
         </div>
+
+        {/* Consumer-Safe Signed Manifest & Trust Verification Summary (Phase 15) */}
+        {manifestStatus && (
+          <div className="et-trust-strip" data-testid="external-tools-manifest-status">
+            <div className="et-trust-row">
+              <span
+                className={`et-badge et-tone-${manifestTone}`}
+                data-testid="manifest-verification-badge"
+              >
+                {manifestStatusLabel}
+              </span>
+              <span className="et-trust-source" title={manifestStatus.trusted_source_status}>
+                {manifestStatus.trusted_source_status}
+              </span>
+            </div>
+            <div className="et-trust-meta">
+              <span data-testid="manifest-last-verified">
+                Last manifest verify: {formatTimestamp(manifestStatus.last_verified_at)}
+              </span>
+              {manifestStatus.current_revision !== null && (
+                <span data-testid="manifest-revision-meta">
+                  Revision: {manifestStatus.current_revision}
+                </span>
+              )}
+              {manifestStatus.expires_at && (
+                <span data-testid="manifest-expires-meta">
+                  Valid until: {formatTimestamp(manifestStatus.expires_at)}
+                </span>
+              )}
+            </div>
+            {manifestStatus.last_failure && (
+              <div className="et-trust-failure" data-testid="manifest-last-failure">
+                Last failure: {manifestStatus.last_failure}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Accessible Scrollable Semantic Status Table */}
         <div

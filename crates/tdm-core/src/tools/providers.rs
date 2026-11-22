@@ -6,12 +6,11 @@ use std::time::Duration;
 
 use crate::error::{EngineError, Result};
 use crate::tools::trust::{
-    build_trusted_http_client, compare_semver_versions, extract_minisign_key_id_hex,
-    reject_duplicate_json_keys, validate_trusted_url, verify_minisign_ed25519,
-    verify_openpgp_detached_rsa_signature,
+    build_trusted_http_client, compare_semver_versions, reject_duplicate_json_keys,
+    validate_trusted_url, verify_minisign_with_keyring, verify_openpgp_detached_rsa_signature,
 };
 use crate::tools::types::{
-    ManifestAntiReplayState, ToolBundleId, ToolsManagerConfig, TrustLevel,
+    ManifestAntiReplayState, SigningKeyPurpose, ToolBundleId, ToolsManagerConfig, TrustLevel,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +118,12 @@ pub struct SignedToolsManifest {
     pub expires_at: Option<String>,
     #[serde(default)]
     pub signing_key_id: Option<String>,
+    /// Optional explicit domain binding (must be "external_tools_manifest" if supplied).
+    #[serde(default)]
+    pub key_purpose: Option<String>,
+    /// Optional Stage 1–2 dual-signature transition key ID for `.tools.sig` sidecar verification.
+    #[serde(default)]
+    pub dedicated_signing_key_id: Option<String>,
     #[serde(default)]
     pub yt_dlp: Option<SignedManifestToolEntry>,
     #[serde(default)]
@@ -130,7 +135,10 @@ pub struct ValidatedSignedManifest {
     pub manifest: SignedToolsManifest,
     pub raw_sha256: String,
     pub verified_key_id: Option<String>,
+    pub verified_key_purpose: Option<SigningKeyPurpose>,
+    pub dual_signature_verified_key_id: Option<String>,
     pub published_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<DateTime<Utc>>,
     pub is_higher_revision: bool,
 }
 
@@ -359,11 +367,18 @@ pub async fn fetch_signed_tools_manifest(
         }
     };
 
-    // 1. Cryptographic Ed25519 signature verification over exact serialized bytes BEFORE parsing JSON
-    if let Err(e) = verify_minisign_ed25519(&config.tori_manifest_pubkey_b64, &manifest_bytes, &sig_text)
-    {
-        return ManifestFetchOutcome::RejectedSecurity(e.to_string());
-    }
+    // 1. Cryptographic Ed25519 keyring verification over exact serialized bytes BEFORE parsing JSON
+    let keyring = config.effective_tools_keyring();
+    let verified_sig = match verify_minisign_with_keyring(
+        &keyring,
+        &manifest_bytes,
+        &sig_text,
+        now,
+        config.max_clock_skew_secs,
+    ) {
+        Ok(v) => v,
+        Err(e) => return ManifestFetchOutcome::RejectedSecurity(e.to_string()),
+    };
 
     let raw_sha256 = hex::encode(Sha256::digest(&manifest_bytes));
 
@@ -391,15 +406,17 @@ pub async fn fetch_signed_tools_manifest(
         ));
     }
 
-    // 5. Signing Key ID enforcement
-    let actual_key_id = extract_minisign_key_id_hex(&config.tori_manifest_pubkey_b64);
-    if let Some(ref expected_kid) = config.expected_manifest_key_id {
-        let exp_norm = expected_kid.trim().to_ascii_uppercase();
-        if actual_key_id.as_deref() != Some(exp_norm.as_str()) {
-            return ManifestFetchOutcome::RejectedSecurity(format!(
-                "Configured public key ID ({:?}) does not match expected TORI key ID {}",
-                actual_key_id, exp_norm
-            ));
+    // 5. Signing Key ID & Key-Purpose domain enforcement
+    let actual_key_id = Some(verified_sig.key_id.clone());
+    if config.tools_keyring.is_none() {
+        if let Some(ref expected_kid) = config.expected_manifest_key_id {
+            let exp_norm = expected_kid.trim().to_ascii_uppercase();
+            if actual_key_id.as_deref() != Some(exp_norm.as_str()) {
+                return ManifestFetchOutcome::RejectedSecurity(format!(
+                    "Verified public key ID ({:?}) does not match expected TORI key ID {}",
+                    actual_key_id, exp_norm
+                ));
+            }
         }
     }
     if let Some(ref declared_kid) = manifest.signing_key_id {
@@ -414,6 +431,88 @@ pub async fn fetch_signed_tools_manifest(
         return ManifestFetchOutcome::RejectedSecurity(
             "Schema v2 signed manifest missing required signing_key_id".to_string(),
         );
+    }
+    if let Some(ref kp) = manifest.key_purpose {
+        if !kp.trim().eq_ignore_ascii_case("external_tools_manifest") {
+            return ManifestFetchOutcome::RejectedSecurity(format!(
+                "Manifest key_purpose '{}' is invalid for External Tools (expected 'external_tools_manifest')",
+                kp
+            ));
+        }
+    }
+
+    // Optional Stage 1–2 dual-signature sidecar verification (`.tools.sig`):
+    // If the manifest declares `dedicated_signing_key_id` AND our keyring trusts an active
+    // dedicated `ExternalToolsManifest` key with that ID, verify `{manifest_url}.tools.sig`
+    // over the exact same raw manifest bytes!
+    let mut dual_signature_verified_key_id: Option<String> = None;
+    if let Some(ref ded_kid_raw) = manifest.dedicated_signing_key_id {
+        let ded_kid = ded_kid_raw.trim().to_ascii_uppercase();
+        if !ded_kid.is_empty() && Some(ded_kid.as_str()) != actual_key_id.as_deref() {
+            let client_trusts_dedicated = keyring.keys.iter().any(|k| {
+                k.key_id.trim().eq_ignore_ascii_case(&ded_kid)
+                    && k.purpose == SigningKeyPurpose::ExternalToolsManifest
+                    && keyring.key_is_currently_usable(k, now, config.max_clock_skew_secs)
+            });
+            if client_trusts_dedicated {
+                let sidecar_url_str = format!("{}.tools.sig", manifest_url.as_str());
+                let sidecar_url = match validate_trusted_url(&sidecar_url_str, config.allow_loopback_http) {
+                    Ok(u) => u,
+                    Err(e) => return ManifestFetchOutcome::RejectedSecurity(e.to_string()),
+                };
+                let sidecar_resp = match client.get(sidecar_url.as_str()).send().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return ManifestFetchOutcome::NetworkUnavailable(format!(
+                            "Failed fetching dual-signature sidecar .tools.sig: {}",
+                            e
+                        ))
+                    }
+                };
+                if sidecar_resp.status() == reqwest::StatusCode::NOT_FOUND {
+                    return ManifestFetchOutcome::RejectedSecurity(
+                        "Dual-signed manifest declared dedicated_signing_key_id but .tools.sig is missing (HTTP 404)"
+                            .to_string(),
+                    );
+                }
+                if let Err(e) = check_response_status(&sidecar_resp, "TORI dedicated tools manifest signature") {
+                    return ManifestFetchOutcome::NetworkUnavailable(e.to_string());
+                }
+                let sidecar_text = match sidecar_resp.text().await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        return ManifestFetchOutcome::NetworkUnavailable(format!(
+                            "Failed reading .tools.sig: {}",
+                            e
+                        ))
+                    }
+                };
+                let ded_verified = match verify_minisign_with_keyring(
+                    &keyring,
+                    &manifest_bytes,
+                    &sidecar_text,
+                    now,
+                    config.max_clock_skew_secs,
+                ) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return ManifestFetchOutcome::RejectedSecurity(format!(
+                            "Dedicated dual-signature (.tools.sig) verification failed: {}",
+                            e
+                        ))
+                    }
+                };
+                if ded_verified.purpose != SigningKeyPurpose::ExternalToolsManifest
+                    || !ded_verified.key_id.eq_ignore_ascii_case(&ded_kid)
+                {
+                    return ManifestFetchOutcome::RejectedSecurity(format!(
+                        "Dedicated .tools.sig signer ({}/{:?}) does not match declared dedicated_signing_key_id {}",
+                        ded_verified.key_id, ded_verified.purpose, ded_kid
+                    ));
+                }
+                dual_signature_verified_key_id = Some(ded_verified.key_id);
+            }
+        }
     }
 
     // 6. Freshness, expiry, future-date & monotonic anti-replay checks
@@ -430,6 +529,7 @@ pub async fn fetch_signed_tools_manifest(
             }
         });
     let published_dt = published_raw.and_then(parse_rfc3339_utc);
+    let mut expires_dt: Option<DateTime<Utc>> = None;
 
     if manifest.schema_version >= 2 {
         if manifest.manifest_revision < 1 {
@@ -472,6 +572,7 @@ pub async fn fetch_signed_tools_manifest(
                 exp_dt.to_rfc3339()
             ));
         }
+        expires_dt = Some(exp_dt);
     } else if let Some(exp_str) = manifest.expires_at.as_deref() {
         let Some(exp_dt) = parse_rfc3339_utc(exp_str) else {
             return ManifestFetchOutcome::RejectedSecurity(format!(
@@ -485,6 +586,7 @@ pub async fn fetch_signed_tools_manifest(
                 exp_dt.to_rfc3339()
             ));
         }
+        expires_dt = Some(exp_dt);
     }
 
     // Anti-replay monotonicity check (enforced whenever manifest_revision > 0 or schema_version >= 2)
@@ -516,7 +618,10 @@ pub async fn fetch_signed_tools_manifest(
         manifest,
         raw_sha256,
         verified_key_id: actual_key_id,
+        verified_key_purpose: Some(verified_sig.purpose),
+        dual_signature_verified_key_id,
         published_at: published_dt,
+        expires_at: expires_dt,
         is_higher_revision,
     })
 }

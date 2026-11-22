@@ -661,6 +661,8 @@ async fn test_01_valid_ytdlp_openpgp_and_ffmpeg_ed25519_bundle_updates_and_rollb
         published_at: None,
         expires_at: None,
         signing_key_id: None,
+        key_purpose: None,
+        dedicated_signing_key_id: None,
         yt_dlp: None,
         ffmpeg_bundle: Some(make_manifest_entry(
             "N-126374-g089a48eb36-20260831",
@@ -1259,6 +1261,8 @@ async fn test_12_to_15_and_24_validation_health_limits_mismatch_and_zip_security
             published_at: None,
             expires_at: None,
             signing_key_id: None,
+            key_purpose: None,
+            dedicated_signing_key_id: None,
             yt_dlp: None,
             ffmpeg_bundle: Some(make_manifest_entry(
                 "N-126374-g089a48eb36-20260831",
@@ -1475,6 +1479,8 @@ async fn test_20_to_23_active_usage_deferral_and_concurrency_guards() {
         published_at: None,
         expires_at: None,
         signing_key_id: None,
+        key_purpose: None,
+        dedicated_signing_key_id: None,
         yt_dlp: None,
         ffmpeg_bundle: Some(make_manifest_entry(
             "N-126374-g089a48eb36-20260831",
@@ -1742,6 +1748,8 @@ fn build_v2_manifest(
         published_at: Some(published_at.to_rfc3339()),
         expires_at: Some(expires_at.to_rfc3339()),
         signing_key_id: Some(key_id),
+        key_purpose: None,
+        dedicated_signing_key_id: None,
         yt_dlp: None,
         ffmpeg_bundle: Some(entry),
     };

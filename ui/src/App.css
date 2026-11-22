@@ -1611,6 +1611,48 @@ label.cb {
   color: var(--bad);
 }
 
+.et-trust-strip {
+  border: 1px solid var(--pline);
+  background: var(--win);
+  border-radius: 6px;
+  padding: 7px 10px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--mut);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.et-trust-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.et-trust-source {
+  color: var(--txt);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.et-trust-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 10.5px;
+  color: var(--mut);
+}
+
+.et-trust-failure {
+  color: var(--bad);
+  font-size: 10.5px;
+  word-break: break-word;
+}
+
 .et-modal-backdrop {
   position: absolute;
   inset: 0;
