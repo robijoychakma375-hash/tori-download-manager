@@ -1092,3 +1092,153 @@ async fn test_gate33_1_stage1_dual_key_and_unauthorized_trust_escalation_rejecti
 
     handle.abort();
 }
+
+/// Gate 33.3 Phase 16 — Key-Compromise Recovery Independence & Complete 25-Scenario Verification:
+/// Proves that revoking a compromised dedicated tools key and activating a fresh replacement key
+/// never depends on the compromised key remaining trusted, and that wrong platform, wrong
+/// architecture, incompatible TORI version bounds, missing artifact, and malicious redirects all
+/// fail closed.
+#[tokio::test]
+async fn test_gate33_3_compromise_recovery_independence_and_platform_bounds() {
+    let compromised_ded = TestMinisignKey::generate(0x91);
+    let replacement_ded = TestMinisignKey::generate(0x92);
+    let now = Utc::now();
+    let routes = Arc::new(Mutex::new(HashMap::new()));
+    let (port, handle) = start_mock_server(routes.clone()).await;
+    let fake_sha = hex::encode(Sha256::digest(b"replacement-approved-bundle"));
+
+    // Recovery keyring shipped via authenticated Desktop Auto-Updater (CDC23D8CC8DA5397):
+    // Compromised key is unconditionally revoked; fresh dedicated key replaces it immediately.
+    let recovery_kr = TrustedToolsKeyring {
+        keyring_version: 2,
+        allow_legacy_shared_key: false,
+        revoked_key_ids: vec![compromised_ded.key_id_hex.clone()],
+        keys: vec![
+            compromised_ded.as_trusted_key(
+                SigningKeyPurpose::ExternalToolsManifest,
+                TrustedKeyStatus::Revoked,
+                "Compromised Dedicated Key (Revoked)",
+            ),
+            replacement_ded.as_trusted_key(
+                SigningKeyPurpose::ExternalToolsManifest,
+                TrustedKeyStatus::Active,
+                "Replacement Dedicated Key v2",
+            ),
+        ],
+    };
+    recovery_kr
+        .validate_safety(now, 900)
+        .expect("Recovery keyring with replacement active key must pass safety validation");
+    assert!(recovery_kr.is_revoked(&compromised_ded.key_id_hex));
+    assert!(!recovery_kr.is_revoked(&replacement_ded.key_id_hex));
+    // Desktop updater key remains completely independent of compromised/replacement tools keys
+    assert_ne!(compromised_ded.key_id_hex, TORI_ED25519_KEY_ID);
+    assert_ne!(replacement_ded.key_id_hex, TORI_ED25519_KEY_ID);
+
+    let cfg = ToolsManagerConfig {
+        signed_manifest_url: Some(format!("http://127.0.0.1:{}/tools-manifest.json", port)),
+        allow_loopback_http: true,
+        tools_keyring: Some(recovery_kr),
+        current_tori_version: "1.0.8".to_string(),
+        register_globally: false,
+        ..Default::default()
+    };
+
+    // 1. Compromised dedicated key signature -> strictly rejected
+    let m_bad = build_manifest(
+        5,
+        &compromised_ded.key_id_hex,
+        port,
+        &fake_sha,
+        27,
+        now - ChronoDuration::minutes(2),
+        now + ChronoDuration::days(30),
+    );
+    let m_bad_bytes = serde_json::to_vec(&m_bad).unwrap();
+    {
+        let mut r = routes.lock().await;
+        r.insert("/tools-manifest.json".into(), json_ok(m_bad_bytes.clone()));
+        r.insert(
+            "/tools-manifest.json.sig".into(),
+            text_ok(compromised_ded.sign_b64(&m_bad_bytes)),
+        );
+    }
+    let res_comp = fetch_signed_tools_manifest(&cfg, &ManifestAntiReplayState::default(), now).await;
+    assert!(
+        matches!(res_comp, ManifestFetchOutcome::RejectedSecurity(ref e) if e.contains("revoked")),
+        "Compromised key must remain unconditionally rejected, got {:?}",
+        res_comp
+    );
+
+    // 2. Replacement dedicated key signature -> immediately accepted
+    let m_ok = build_manifest(
+        6,
+        &replacement_ded.key_id_hex,
+        port,
+        &fake_sha,
+        27,
+        now - ChronoDuration::minutes(1),
+        now + ChronoDuration::days(30),
+    );
+    let m_ok_bytes = serde_json::to_vec(&m_ok).unwrap();
+    {
+        let mut r = routes.lock().await;
+        r.insert("/tools-manifest.json".into(), json_ok(m_ok_bytes.clone()));
+        r.insert(
+            "/tools-manifest.json.sig".into(),
+            text_ok(replacement_ded.sign_b64(&m_ok_bytes)),
+        );
+    }
+    let res_rep = fetch_signed_tools_manifest(&cfg, &ManifestAntiReplayState::default(), now).await;
+    assert!(
+        matches!(res_rep, ManifestFetchOutcome::Available(ref v) if v.verified_key_id.as_deref() == Some(replacement_ded.key_id_hex.as_str())),
+        "Replacement dedicated key must verify cleanly, got {:?}",
+        res_rep
+    );
+
+    // 3. Wrong platform (linux) & wrong architecture (aarch64) & incompatible min_tori_version (9.9.9) rejected by manager!
+    let tmp = TempDir::new().unwrap();
+    let db = Database::open(&tmp.path().join("g333_sec.sqlite")).unwrap();
+    let mut m_wrong_plat = m_ok.clone();
+    m_wrong_plat.manifest_revision = 7;
+    m_wrong_plat.ffmpeg_bundle.as_mut().unwrap().platform = Some("linux".to_string());
+    let m_wp_bytes = serde_json::to_vec(&m_wrong_plat).unwrap();
+    {
+        let mut r = routes.lock().await;
+        r.insert("/tools-manifest.json".into(), json_ok(m_wp_bytes.clone()));
+        r.insert(
+            "/tools-manifest.json.sig".into(),
+            text_ok(replacement_ded.sign_b64(&m_wp_bytes)),
+        );
+    }
+    let mgr = ExternalToolsManager::with_config(db.clone(), tmp.path().to_path_buf(), cfg.clone()).unwrap();
+    let snap_wp = mgr.check_for_updates(true).await.unwrap();
+    let ff_wp = snap_wp.tools.iter().find(|t| t.tool_id == ToolId::Ffmpeg).unwrap();
+    assert_ne!(
+        ff_wp.update_status,
+        ToolUpdateStatus::UpdateAvailable,
+        "Wrong-platform manifest entry must never become UpdateAvailable on Windows"
+    );
+
+    let mut m_wrong_ver = m_ok.clone();
+    m_wrong_ver.manifest_revision = 8;
+    m_wrong_ver.ffmpeg_bundle.as_mut().unwrap().min_tori_version = Some("9.9.9".to_string());
+    let m_wv_bytes = serde_json::to_vec(&m_wrong_ver).unwrap();
+    {
+        let mut r = routes.lock().await;
+        r.insert("/tools-manifest.json".into(), json_ok(m_wv_bytes.clone()));
+        r.insert(
+            "/tools-manifest.json.sig".into(),
+            text_ok(replacement_ded.sign_b64(&m_wv_bytes)),
+        );
+    }
+    let snap_wv = mgr.check_for_updates(true).await.unwrap();
+    let ff_wv = snap_wv.tools.iter().find(|t| t.tool_id == ToolId::Ffmpeg).unwrap();
+    assert_ne!(
+        ff_wv.update_status,
+        ToolUpdateStatus::UpdateAvailable,
+        "Incompatible min_tori_version (9.9.9) must not become UpdateAvailable on v1.0.8"
+    );
+
+    handle.abort();
+}

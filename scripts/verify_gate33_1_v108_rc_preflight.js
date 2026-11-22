@@ -45,8 +45,22 @@ const EXPECTED_CHR_SHA = 'f220fab2e26fd54ef7f85fd7e40613faad79e7f9a7f44fadf228cc
 const EXPECTED_GECKO_ID = 'tori-download-manager@toridm.org';
 
 const PROD_MANIFEST_URL = 'https://toridownload.xyz/assets/tools/tools-manifest.json';
+const ACTIVE_PROD_REG = (() => {
+  try {
+    const reg = JSON.parse(
+      fs.readFileSync(path.join(ROOT, 'docs', 'security', 'tools-manifest-registry', 'registry.json'), 'utf8')
+    );
+    return (reg.revisions || []).find((r) => r.publication_status === 'active') || null;
+  } catch {
+    return null;
+  }
+})();
+const EXPECTED_ACTIVE_PROD_REV = ACTIVE_PROD_REG?.manifest_revision || 1;
+const EXPECTED_ACTIVE_PROD_SHA =
+  ACTIVE_PROD_REG?.manifest_sha256 || '9fa61a38bb77bb8cdf05364565db2cf3b2b3ab8d0c7af98dfd7c50b2ee287662';
+const EXPECTED_ACTIVE_PROD_SIG_SHA =
+  ACTIVE_PROD_REG?.signature_sha256 || 'e0e23db79990f885c0745165299b20befd41f5dc8a73f7b00ca0476502955eb4';
 const EXPECTED_PROD_REV1_SHA = '9fa61a38bb77bb8cdf05364565db2cf3b2b3ab8d0c7af98dfd7c50b2ee287662';
-const EXPECTED_PROD_REV1_SIG_SHA = 'e0e23db79990f885c0745165299b20befd41f5dc8a73f7b00ca0476502955eb4';
 const EXPECTED_FFMPEG_URL =
   'https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/tools-ffmpeg-N-129150-g7ddf7bc8a4/ffmpeg-N-129150-g7ddf7bc8a4-win64-gpl.zip';
 const EXPECTED_FFMPEG_SHA = '03d33066832e7149a8577bed73713c5d5344aed14199063e521b798cf1b60076';
@@ -695,14 +709,14 @@ async function main() {
   const liveProdSig = await httpsRequest(`${PROD_MANIFEST_URL}.sig?cb=${Date.now()}`);
   record(
     'G331-02',
-    'Draft v1.0.8 latest.json valid while public GitHub latest.json remains 1.0.7 and public tools-manifest remains rev 1',
+    `Draft v1.0.8 latest.json valid while public GitHub latest.json remains 1.0.7 and public tools-manifest matches active registry rev ${EXPECTED_ACTIVE_PROD_REV}`,
     draftLatest.version === '1.0.8' &&
       draftLatest.platforms?.['windows-x86_64']?.signature?.trim() === sigText &&
       draftLatest.platforms?.['windows-x86_64-nsis']?.signature?.trim() === sigText &&
       liveLatest?.version === '1.0.7' &&
-      sha256Buf(liveProdManifest.body) === EXPECTED_PROD_REV1_SHA &&
-      sha256Buf(liveProdSig.body) === EXPECTED_PROD_REV1_SIG_SHA,
-    `draft=${draftLatest.version}, liveLatest=${liveLatest?.version}, prodRev1Match=${sha256Buf(liveProdManifest.body) === EXPECTED_PROD_REV1_SHA}`
+      sha256Buf(liveProdManifest.body) === EXPECTED_ACTIVE_PROD_SHA &&
+      sha256Buf(liveProdSig.body) === EXPECTED_ACTIVE_PROD_SIG_SHA,
+    `draft=${draftLatest.version}, liveLatest=${liveLatest?.version}, prodRev${EXPECTED_ACTIVE_PROD_REV}Match=${sha256Buf(liveProdManifest.body) === EXPECTED_ACTIVE_PROD_SHA}`
   );
 
   const xpiSha = sha256File(SIGNED_FF_XPI);
@@ -1159,14 +1173,14 @@ async function main() {
 
     record(
       'G331-10',
-      'Close-to-Tray works & Settings -> External Tools verifies live prod rev 1 with trust status UI (Light & Dark, zero secrets)',
+      `Close-to-Tray works & Settings -> External Tools verifies live prod rev ${EXPECTED_ACTIVE_PROD_REV} with trust status UI (Light & Dark, zero secrets)`,
       aliveHidden &&
         trustUi.hasStrip &&
-        trustUi.badge.includes('Rev 1') &&
+        trustUi.badge.includes(`Rev ${EXPECTED_ACTIVE_PROD_REV}`) &&
         trustUi.hasNextCheck &&
         noUiSecrets &&
         prodSnap.manifest_status?.verification_status === 'verified' &&
-        prodSnap.manifest_status?.current_revision === 1,
+        prodSnap.manifest_status?.current_revision === EXPECTED_ACTIVE_PROD_REV,
       `trayAlive=${aliveHidden}, badge="${trustUi.badge}", key=${prodSnap.manifest_status?.signing_key_id}`
     );
 
