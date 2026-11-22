@@ -476,7 +476,6 @@ fn test_v106_release_candidate_signature_cryptographic_verification() {
     let conf_path = root.join("src-tauri").join("tauri.conf.json");
     let conf: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&conf_path).unwrap()).unwrap();
-    assert_eq!(conf["version"].as_str(), Some("1.0.6"));
     let pubkey_base64 = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
     let decoded_pubkey = String::from_utf8(decode_base64_str(pubkey_base64)).unwrap();
     let public_key = PublicKey::decode(&decoded_pubkey).expect("Public key decode failed");
@@ -502,4 +501,146 @@ fn test_v106_release_candidate_signature_cryptographic_verification() {
         public_key.verify(&tampered, &signature, true).is_err(),
         "Tampered v1.0.6 RC payload must be rejected by Ed25519 Minisign verification"
     );
+}
+
+#[test]
+fn test_v107_release_candidate_signature_draft_updater_and_production_tools_manifest() {
+    let root = get_project_root();
+    let rc_dir = root.join("release").join("v1.0.7-rc");
+    let installer_path = rc_dir.join("TORI Download Manager_1.0.7_x64-setup.exe");
+    let sig_path = rc_dir.join("TORI Download Manager_1.0.7_x64-setup.exe.sig");
+    let draft_latest_path = rc_dir.join("draft_latest.json");
+    let prod_manifest_dir = rc_dir.join("tools-manifest-production");
+    let prod_manifest_path = prod_manifest_dir.join("tools-manifest.json");
+    let prod_manifest_sig_path = prod_manifest_dir.join("tools-manifest.json.sig");
+
+    // 1. Verify Tauri & ToolsManagerConfig production defaults never point to /staging/
+    let conf_path = root.join("src-tauri").join("tauri.conf.json");
+    let conf: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&conf_path).unwrap()).unwrap();
+    assert_eq!(conf["version"].as_str(), Some("1.0.7"));
+    let pubkey_base64 = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
+    assert_eq!(pubkey_base64, tdm_core::tools::TORI_ED25519_PUBKEY_B64);
+
+    let tools_cfg = tdm_core::tools::ToolsManagerConfig::default();
+    assert_eq!(
+        tools_cfg.signed_manifest_url.as_deref(),
+        Some("https://toridownload.xyz/assets/tools/tools-manifest.json")
+    );
+    assert!(
+        !tools_cfg
+            .signed_manifest_url
+            .as_deref()
+            .unwrap()
+            .contains("/staging/"),
+        "Production ToolsManagerConfig must never default to /staging/"
+    );
+    assert_eq!(
+        tools_cfg.expected_manifest_key_id.as_deref(),
+        Some(tdm_core::tools::TORI_ED25519_KEY_ID)
+    );
+    assert_eq!(tools_cfg.current_tori_version, "1.0.7");
+
+    // 2. Verify signed v1.0.7 RC NSIS installer & detached .sig
+    assert!(installer_path.exists(), "v1.0.7 RC installer missing: {:?}", installer_path);
+    assert!(sig_path.exists(), "v1.0.7 RC .sig missing: {:?}", sig_path);
+
+    let installer_bytes = fs::read(&installer_path).expect("read v1.0.7 installer");
+    assert!(installer_bytes.starts_with(b"MZ"), "v1.0.7 installer must be Windows PE");
+
+    let sig_str = fs::read_to_string(&sig_path).expect("read v1.0.7 .sig");
+    let sig_text = String::from_utf8(decode_base64_str(&sig_str)).expect("utf8 sig");
+    let signature = Signature::decode(&sig_text).expect("minisign signature decode");
+    let decoded_pubkey = String::from_utf8(decode_base64_str(pubkey_base64)).unwrap();
+    let public_key = PublicKey::decode(&decoded_pubkey).expect("pubkey decode");
+
+    public_key
+        .verify(&installer_bytes, &signature, true)
+        .expect("v1.0.7 RC installer Ed25519 verification must pass");
+    assert!(
+        signature
+            .trusted_comment()
+            .contains("file:TORI Download Manager_1.0.7_x64-setup.exe"),
+        "Trusted comment mismatch: {}",
+        signature.trusted_comment()
+    );
+
+    let mut tampered = installer_bytes.clone();
+    let mid = tampered.len() / 2;
+    tampered[mid] ^= 0xA5;
+    assert!(
+        public_key.verify(&tampered, &signature, true).is_err(),
+        "Tampered v1.0.7 RC installer must be rejected"
+    );
+
+    // 3. Verify local unpublished draft_latest.json schema, SemVer ordering & exact signature parity
+    assert!(draft_latest_path.exists(), "draft_latest.json missing");
+    let draft: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&draft_latest_path).unwrap()).unwrap();
+    assert_eq!(draft["version"].as_str(), Some("1.0.7"));
+    assert_eq!(
+        tdm_core::tools::compare_semver_versions("1.0.6", draft["version"].as_str().unwrap()),
+        Some(std::cmp::Ordering::Less)
+    );
+    assert_eq!(
+        tdm_core::tools::compare_semver_versions("1.0.7", draft["version"].as_str().unwrap()),
+        Some(std::cmp::Ordering::Equal)
+    );
+    assert_eq!(
+        tdm_core::tools::compare_semver_versions("1.0.8", draft["version"].as_str().unwrap()),
+        Some(std::cmp::Ordering::Greater)
+    );
+    for key in ["windows-x86_64", "windows-x86_64-nsis"] {
+        assert_eq!(
+            draft["platforms"][key]["signature"].as_str().map(str::trim),
+            Some(sig_str.trim())
+        );
+        let url = draft["platforms"][key]["url"].as_str().unwrap();
+        assert!(
+            url.starts_with(
+                "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.7/"
+            ),
+            "Unexpected draft v1.0.7 URL: {}",
+            url
+        );
+    }
+
+    // 4. Verify staged production tools-manifest.json + .sig (unpublished, ready for Gate 32.3 promotion)
+    assert!(prod_manifest_path.exists(), "production tools-manifest.json missing");
+    assert!(prod_manifest_sig_path.exists(), "production tools-manifest.json.sig missing");
+    let pm_bytes = fs::read(&prod_manifest_path).expect("read prod tools manifest");
+    let pm_sig = fs::read_to_string(&prod_manifest_sig_path).expect("read prod tools sig");
+    tdm_core::tools::verify_minisign_ed25519(
+        tdm_core::tools::TORI_ED25519_PUBKEY_B64,
+        &pm_bytes,
+        &pm_sig,
+    )
+    .expect("Production tools manifest Ed25519 signature must verify");
+    tdm_core::tools::reject_duplicate_json_keys(&pm_bytes)
+        .expect("Production tools manifest must have no duplicate JSON keys");
+    let pm: tdm_core::tools::SignedToolsManifest =
+        serde_json::from_slice(&pm_bytes).expect("parse prod tools manifest");
+    assert_eq!(pm.schema_version, 2);
+    assert!(pm.manifest_revision >= 1);
+    assert_eq!(
+        pm.signing_key_id.as_deref(),
+        Some(tdm_core::tools::TORI_ED25519_KEY_ID)
+    );
+    let ff = pm.ffmpeg_bundle.expect("ffmpeg_bundle required");
+    assert_eq!(ff.platform.as_deref(), Some("windows"));
+    assert_eq!(ff.architecture.as_deref(), Some("x86_64"));
+    assert!(ff.url.starts_with("https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/tools-ffmpeg-"));
+    assert!(!ff.url.contains("/latest/"), "Artifact URL must be immutable");
+    assert_eq!(
+        tdm_core::tools::compare_semver_versions("1.0.7", ff.min_tori_version.as_deref().unwrap()),
+        Some(std::cmp::Ordering::Greater)
+    );
+    let mut pm_tampered = pm_bytes.clone();
+    pm_tampered[10] ^= 0x01;
+    assert!(tdm_core::tools::verify_minisign_ed25519(
+        tdm_core::tools::TORI_ED25519_PUBKEY_B64,
+        &pm_tampered,
+        &pm_sig,
+    )
+    .is_err());
 }

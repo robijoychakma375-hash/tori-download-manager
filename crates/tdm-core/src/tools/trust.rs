@@ -94,7 +94,11 @@ pub fn build_trusted_http_client(
         .connect_timeout(std::time::Duration::from_secs(15))
         .read_timeout(std::time::Duration::from_secs(timeout_secs.min(90).max(1)))
         .redirect(redirect_policy)
-        .user_agent("TORI-Download-Manager/1.0.6 (ExternalToolsUpdater)")
+        .user_agent(concat!(
+            "TORI-Download-Manager/",
+            env!("CARGO_PKG_VERSION"),
+            " (ExternalToolsUpdater)"
+        ))
         .build()
         .map_err(|e| EngineError::Other(format!("Failed building trusted HTTP client: {}", e)))
 }

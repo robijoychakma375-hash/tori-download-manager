@@ -4,7 +4,6 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use crate::error::{EngineError, Result};
-use crate::resolver::discovery::find_ffmpeg;
 
 pub const DEFAULT_RESOLVER_TIMEOUT: Duration = Duration::from_secs(30);
 pub const GENERIC_RESOLVER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -38,9 +37,11 @@ pub async fn execute_yt_dlp_dump(
         "--no-color".to_string(),
     ];
 
-    // If FFmpeg is found, provide --ffmpeg-location
-    if let Some(ffmpeg_bin) = find_ffmpeg() {
-        if let Some(parent) = ffmpeg_bin.parent() {
+    // Acquire FFmpeg/FFprobe leases alongside yt-dlp so --ffmpeg-location cannot race an active update
+    let ffmpeg_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffmpeg);
+    let _ffprobe_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffprobe);
+    if let Some(ref lease) = ffmpeg_lease {
+        if let Some(parent) = lease.path().parent() {
             args.push("--ffmpeg-location".to_string());
             args.push(parent.to_string_lossy().to_string());
         }
@@ -173,8 +174,10 @@ pub async fn execute_yt_dlp_playlist_dump(
         args.push(max_items.to_string());
     }
 
-    if let Some(ffmpeg_bin) = find_ffmpeg() {
-        if let Some(parent) = ffmpeg_bin.parent() {
+    let ffmpeg_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffmpeg);
+    let _ffprobe_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffprobe);
+    if let Some(ref lease) = ffmpeg_lease {
+        if let Some(parent) = lease.path().parent() {
             args.push("--ffmpeg-location".to_string());
             args.push(parent.to_string_lossy().to_string());
         }

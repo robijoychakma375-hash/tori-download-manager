@@ -866,6 +866,85 @@ async function main() {
     return;
   }
 
+  if (args['prepare-production-manifest']) {
+    const revision = parseInt(args.revision || '1', 10);
+    const ttlDays = parseInt(args['ttl-days'] || '45', 10);
+    const outDir = args['out-dir'] || path.join(ROOT, 'release', 'v1.0.7-rc', 'tools-manifest-production');
+    const staged = await stageCandidate(args['release-tag'] || 'autobuild-2026-11-20-12-40');
+
+    const shortVer = staged.compat.ffmpegVersion.replace(/-\d{8}$/, '');
+    const ghTag = `tools-ffmpeg-${shortVer}`;
+    const remoteZipUrl = `https://github.com/${OWNER}/${REPO}/releases/download/${ghTag}/${staged.info.assetName}`;
+
+    // Verify the immutable remote GitHub artifact is live & matches exact expected size via HTTPS HEAD
+    const head = await httpsRequest(remoteZipUrl, { method: 'HEAD' });
+    if (head.status !== 200 || parseInt(head.headers['content-length'] || '0', 10) !== staged.info.assetSize) {
+      throw new Error(`Immutable artifact URL check failed: status=${head.status}, length=${head.headers['content-length']}`);
+    }
+
+    fs.mkdirSync(outDir, { recursive: true });
+    const manifestObj = buildSchemaV2Manifest({
+      revision,
+      ttlDays,
+      version: staged.compat.ffmpegVersion,
+      ffmpegVersion: staged.compat.ffmpegVersion,
+      ffprobeVersion: staged.compat.ffprobeVersion,
+      url: remoteZipUrl,
+      sha256: staged.info.expectedSha256,
+      size: staged.info.assetSize,
+      allowRollbackTo: false,
+      provenance: {
+        upstream_provider: staged.info.provider,
+        upstream_release: staged.info.releaseTag,
+        upstream_url: staged.info.releaseUrl,
+        approved_by: 'TORI Release Engineering (Gate 32.2 Preflight)',
+        approved_at: staged.provenance.approved_at,
+      },
+    });
+
+    const manifestPath = path.join(outDir, 'tools-manifest.json');
+    const manifestBytes = Buffer.from(JSON.stringify(manifestObj, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(manifestPath, manifestBytes);
+    const signed = signManifestBytes(manifestPath);
+    const sigBytes = fs.readFileSync(signed.sigPath);
+
+    const manifestSha = crypto.createHash('sha256').update(manifestBytes).digest('hex');
+    const sigSha = crypto.createHash('sha256').update(sigBytes).digest('hex');
+    fs.writeFileSync(
+      path.join(outDir, 'SHA256SUMS.txt'),
+      `${manifestSha}  tools-manifest.json\n${sigSha}  tools-manifest.json.sig\n`,
+      'utf8'
+    );
+    const plan = {
+      status: 'PREPARED_LOCAL_UNPUBLISHED',
+      published_to_production: false,
+      target_production_manifest_url: 'https://toridownload.xyz/assets/tools/tools-manifest.json',
+      target_production_signature_url: 'https://toridownload.xyz/assets/tools/tools-manifest.json.sig',
+      deployment_repo: 'robijoychakma375-hash/tori-website-private',
+      deployment_paths: [
+        'assets/tools/tools-manifest.json',
+        'assets/tools/tools-manifest.json.sig',
+      ],
+      cache_control_policy: 'public, max-age=300, must-revalidate',
+      manifest_revision: revision,
+      published_at: manifestObj.published_at,
+      expires_at: manifestObj.expires_at,
+      signing_key_id: signed.signingKeyId,
+      manifest_sha256: manifestSha,
+      signature_sha256: sigSha,
+      artifact_url: remoteZipUrl,
+      artifact_size_bytes: staged.info.assetSize,
+      artifact_sha256: staged.info.expectedSha256,
+      ffmpeg_version: staged.compat.ffmpegVersion,
+      ffprobe_version: staged.compat.ffprobeVersion,
+      min_tori_version: manifestObj.ffmpeg_bundle.min_tori_version,
+      promotion_gate: 'Gate 32.3 (Requires Explicit Operator Approval)',
+    };
+    fs.writeFileSync(path.join(outDir, 'PROMOTION_PLAN.json'), JSON.stringify(plan, null, 2) + '\n', 'utf8');
+    console.log(JSON.stringify(plan, null, 2));
+    return;
+  }
+
   if (args['publish-staging']) {
     const revision = parseInt(args.revision || '1', 10);
     const ttlDays = parseInt(args['ttl-days'] || '30', 10);

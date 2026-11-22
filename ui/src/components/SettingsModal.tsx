@@ -59,10 +59,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     return initialTab || 'engine';
   });
-  const [appVersion, setAppVersion] = useState<string>('1.0.6');
+  const [appVersion, setAppVersion] = useState<string>('1.0.7');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
     state: 'idle',
-    currentVersion: '1.0.6',
+    currentVersion: '1.0.7',
     downloadedBytes: 0,
     totalBytes: 0,
   });
@@ -1272,15 +1272,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   whiteSpace: 'pre-wrap',
                 }}
               >
-                {`TORI Download Manager v${appVersion} (Production Stability & Large-File Release)
-• Instant NTFS sparse file allocation (FSCTL_SET_SPARSE) for 1 GB to 50+ GB downloads with zero pre-allocation stall
-• 256 KiB buffered worker writes, bounded straggler tail-splitting, and Presigned CDN (S3/R2/CloudFront) concurrency protection
-• 4-second HEAD probe timeout with automatic GET Range: bytes=0-0 fallback and first-byte transition to Downloading
-• Server-side in-flight and recent-URL browser handoff deduplication eliminating duplicate (1) downloads across Firefox & Chromium
-• Windows Job Object breakaway (CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS) preventing unexpected exit after Native Host spawn
-• Synchronized Close-to-Tray lifecycle with background download continuation, Tray restoration, and explicit Exit support
-• High-performance multi-connection partitioned HTTP ranges, HLS/DASH remuxing, and BitTorrent/magnet support
-• Signed auto-updater with Ed25519 verification and active download collision guards`}
+                {`TORI Download Manager v${appVersion} (Independent External Tools Updater & Stability Release)
+• Independent External Tools Auto-Update Manager for yt-dlp, FFmpeg, and FFprobe (Settings → External Tools)
+• Automatic 24-hour background checks with OpenPGP RSA-4096 verification for yt-dlp and TORI Ed25519 signed manifests for FFmpeg & FFprobe
+• Atomic FFmpeg/FFprobe bundle activation, active download protection (deferred activation), automatic & manual rollback, and bundled fallback
+• Resumable HTTP Range downloads for large tool archives with manifest anti-replay, expiry, and anti-downgrade protection
+• Standalone IDM-style Download Progress Window with Pause/Resume, completion options, and compact mode
+• Instant NTFS sparse file allocation (FSCTL_SET_SPARSE), multi-connection HTTP ranges, HLS/DASH remuxing, and BitTorrent/magnet support
+• Browser Companion v1.0.10 compatibility across Chrome, Edge, and Firefox with Close-to-Tray lifecycle and signed Desktop Auto-Updater`}
               </div>
               <div style={{ textAlign: 'right', marginTop: 12 }}>
                 <button className="btn def" onClick={() => setShowNotesModal(false)}>

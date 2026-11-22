@@ -164,7 +164,7 @@ function getTreeStats(rootPid) {
     const ps = `
       $root = Get-Process -Id ${rootPid} -ErrorAction SilentlyContinue
       if (-not $root) { Write-Output "0|0|0|0|0"; exit 0 }
-      $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name
+      $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine
       $children = @{}
       foreach ($p in $all) {
         $k = [int]$p.ParentProcessId
@@ -180,12 +180,19 @@ function getTreeStats(rootPid) {
           foreach ($c in $children[$cur]) { $q.Enqueue($c) }
         }
       }
-      $ws = 0L; $pm = 0L; $cpu = 0.0; $wv2 = 0; $cons = 0
+      $ws = 0L; $pm = 0L; $cpu = 0.0; $wv2 = 0; $cons = 0; $visCons = 0
       foreach ($p in $all) {
         if ($pids.Contains([int]$p.ProcessId)) {
           $nm = ([string]$p.Name).ToLowerInvariant()
           if ($nm -eq 'msedgewebview2.exe') { $wv2++ }
-          if ($nm -in @('cmd.exe','powershell.exe','conhost.exe')) { $cons++ }
+          if ($nm -in @('cmd.exe','powershell.exe','conhost.exe')) {
+            $cons++
+            $prChk = Get-Process -Id ([int]$p.ProcessId) -ErrorAction SilentlyContinue
+            $hwnd = if ($prChk) { [int64]$prChk.MainWindowHandle } else { 0L }
+            $cmdStr = [string]$p.CommandLine
+            $isHeadlessCreateNoWindowConhost = ($nm -eq 'conhost.exe') -and ($hwnd -eq 0L) -and ($cmdStr -match '(?i)conhost\\.exe"?\\s+0x4$')
+            if (-not $isHeadlessCreateNoWindowConhost) { $visCons++ }
+          }
         }
       }
       foreach ($pidVal in $pids) {
@@ -196,7 +203,7 @@ function getTreeStats(rootPid) {
           if ($pr.CPU) { $cpu += [double]$pr.CPU }
         }
       }
-      Write-Output "$($pids.Count)|$([math]::Round($ws/1MB,2))|$([math]::Round($pm/1MB,2))|$([math]::Round($cpu,3))|$wv2|$cons"
+      Write-Output "$($pids.Count)|$([math]::Round($ws/1MB,2))|$([math]::Round($pm/1MB,2))|$([math]::Round($cpu,3))|$wv2|$cons|$visCons"
     `;
     const out = execFileSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8', timeout: 8000 }).trim();
     const parts = out.split('|');
@@ -207,9 +214,10 @@ function getTreeStats(rootPid) {
       cpuSec: parseFloat(parts[3]) || 0,
       webview2Count: parseInt(parts[4], 10) || 0,
       consoleCount: parseInt(parts[5], 10) || 0,
+      visibleConsoleCount: parseInt(parts[6], 10) || 0,
     };
   } catch {
-    return { procs: 0, wsMb: 0, privMb: 0, cpuSec: 0, webview2Count: 0, consoleCount: 0 };
+    return { procs: 0, wsMb: 0, privMb: 0, cpuSec: 0, webview2Count: 0, consoleCount: 0, visibleConsoleCount: 0 };
   }
 }
 
@@ -237,11 +245,9 @@ function restoreOemState() {
 function registerQaNativeHosts({ hostExe, chromeExtIds, firefoxId }) {
   const chrManifest = path.join(QA_ROOT, 'nm_chromium.json');
   const ffManifest = path.join(QA_ROOT, 'nm_firefox.json');
-  const origins = Array.from(new Set([
-    ...chromeExtIds.map((id) => `chrome-extension://${id}/`),
-    'chrome-extension://jfnfgmcbgapcpieaonbaolgebjaejcdm/',
-    'chrome-extension://bflchfddfgkfglmjapohkjmldepflkbe/',
-  ]));
+  // Restrict allowed_origins strictly to the isolated QA Chrome extension ID(s) so the
+  // host machine's live Chrome/Edge Companion cannot auto-spawn the QA Desktop binary.
+  const origins = Array.from(new Set(chromeExtIds.map((id) => `chrome-extension://${id}/`)));
   fs.writeFileSync(chrManifest, JSON.stringify({
     name: 'com.tori.download_manager',
     description: 'TORI QA Gate 29.4 Native Host',
@@ -258,7 +264,6 @@ function registerQaNativeHosts({ hostExe, chromeExtIds, firefoxId }) {
   }, null, 2));
 
   execFileSync('reg', ['add', 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.tori.download_manager', '/ve', '/t', 'REG_SZ', '/d', chrManifest, '/f'], { stdio: 'ignore', timeout: 4000 });
-  execFileSync('reg', ['add', 'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.tori.download_manager', '/ve', '/t', 'REG_SZ', '/d', chrManifest, '/f'], { stdio: 'ignore', timeout: 4000 });
   execFileSync('reg', ['add', 'HKCU\\Software\\Mozilla\\NativeMessagingHosts\\com.tori.download_manager', '/ve', '/t', 'REG_SZ', '/d', ffManifest, '/f'], { stdio: 'ignore', timeout: 4000 });
 }
 
@@ -811,7 +816,15 @@ async function main() {
       cdpPort: CLEAN_CDP_PORT,
       token: null,
     });
-    const cleanStats = getTreeStats(cleanBoot.proc.pid);
+    const cleanStatsImmediate = getTreeStats(cleanBoot.proc.pid);
+    // Gate 32+ runs a brief non-blocking first-boot bundled tool version probe (yt-dlp/ffmpeg/ffprobe with CREATE_NO_WINDOW).
+    // Verify ZERO visible consoles immediately, and wait up to 5s for the transient headless conhost 0x4 child to exit cleanly.
+    let cleanStats = cleanStatsImmediate;
+    const settleDeadline = Date.now() + 5000;
+    while (cleanStats.consoleCount > 0 && cleanStats.visibleConsoleCount === 0 && Date.now() < settleDeadline) {
+      await sleep(300);
+      cleanStats = getTreeStats(cleanBoot.proc.pid);
+    }
     const uiCleanDiag = await cleanBoot.mainCdp.evalAsync(`(async () => {
       const ver = await window.__TAURI_INTERNALS__.invoke('get_app_version');
       const bg = getComputedStyle(document.body).backgroundColor;
@@ -827,8 +840,8 @@ async function main() {
     record(
       'G294-INST-02',
       `Installed v${TARGET_VER} initializes SQLite cleanly, renders v${TARGET_VER} UI with zero console windows`,
-      Boolean(cleanBoot.pingOk && uiCleanDiag.ver === TARGET_VER && cleanStats.consoleCount === 0 && ['downloads', 'download_chunks', 'engine_settings', 'format_metadata_cache'].every((t) => tables.includes(t))),
-      JSON.stringify({ ...uiCleanDiag, consoleCount: cleanStats.consoleCount, tables })
+      Boolean(cleanBoot.pingOk && uiCleanDiag.ver === TARGET_VER && cleanStatsImmediate.visibleConsoleCount === 0 && cleanStats.visibleConsoleCount === 0 && cleanStats.consoleCount === 0 && ['downloads', 'download_chunks', 'engine_settings', 'format_metadata_cache'].every((t) => tables.includes(t))),
+      JSON.stringify({ ...uiCleanDiag, visibleConsoleImmediate: cleanStatsImmediate.visibleConsoleCount, conhostImmediate: cleanStatsImmediate.consoleCount, consoleCountSettled: cleanStats.consoleCount, tables })
     );
 
     // Tray hide + show + explicit clean exit
