@@ -6,7 +6,7 @@
  *  1. Default Gate 32 policy (auto_update=true, 24h, auto_install=true, notify=true, defer_in_use=true)
  *  2. Initial bundled tool detection (yt-dlp 2026.08.19, FFmpeg/FFprobe N-126374-g089a48eb36-20260831)
  *  3. Real live GitHub update check & real OpenPGP RSA-4096 verified yt-dlp upgrade (2026.08.19 -> latest 2026.10.26+)
- *  4. Honest blocking of unsigned direct upstream BtbN/FFmpeg-Builds as Source Untrusted
+ *  4. Dual-condition FFmpeg trust verification: Ed25519-signed production manifest accepted while unsigned direct upstream BtbN/FFmpeg-Builds remains strictly blocked as Source Untrusted
  *  5. Real YouTube metadata extraction, format detection, playlist resolution, and media download with updated yt-dlp
  *  6. Real Settings UI (Light & Dark themes), Update History modal, and Manual Rollback back to bundled yt-dlp
  *  7. Real Ed25519-signed FFmpeg + FFprobe bundle update inside isolated desktop app + real mux/merge/probe tests + rollback
@@ -39,6 +39,7 @@ const OEM_EXE_PATH = path.join(process.env.LOCALAPPDATA || '', 'TORI Download Ma
 
 const CDP_PORT = 24971;
 const CDP_PORT_2 = 24972;
+const CDP_PORT_3 = 24973;
 
 const results = [];
 const counts = { PASS: 0, FAIL: 0 };
@@ -58,6 +59,25 @@ function sleep(ms) {
 function sha256File(filePath) {
   if (!fs.existsSync(filePath)) return null;
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function readQaManifestState(dbPath) {
+  if (!dbPath || !fs.existsSync(dbPath)) return null;
+  const py = `
+import json, os, sqlite3, sys
+from urllib.request import pathname2url
+uri = "file:" + pathname2url(os.path.abspath(sys.argv[1])) + "?mode=ro"
+con = sqlite3.connect(uri, uri=True, timeout=5.0)
+row = con.execute("SELECT value FROM engine_settings WHERE key = 'external_tools_manifest_state'").fetchone()
+con.close()
+print(row[0] if row and row[0] else "null")
+`;
+  try {
+    const out = execFileSync('python', ['-c', py, dbPath], { encoding: 'utf8', timeout: 8000 }).trim();
+    return out ? JSON.parse(out) : null;
+  } catch {
+    return null;
+  }
 }
 
 function killProcTree(pid) {
@@ -309,6 +329,7 @@ async function main() {
   fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
 
   let cdp = null;
+  let untrustedManifestServer = null;
   let signedServer = null;
 
   try {
@@ -441,12 +462,20 @@ async function main() {
         (chkYt.update_status === 'update_available' || chkYt.update_status === 'updated'),
       `installed=${chkYt?.installed_version}, available=${chkYt?.available_version}, status=${chkYt?.update_status}`
     );
-    record(
-      'G32-05',
-      'Direct unsigned upstream BtbN/FFmpeg-Builds honestly blocked as Source Untrusted',
-      chkFf?.update_status === 'source_untrusted' && chkFp?.update_status === 'source_untrusted',
-      `ffmpeg=${chkFf?.update_status} (${chkFf?.available_version}), ffprobe=${chkFp?.update_status}`
-    );
+
+    // G32-05 Condition A: Production Ed25519-signed tools manifest on toridownload.xyz is verified & accepted
+    const prodManifestState = readQaManifestState(path.join(QA_DATA_DIR, 'tdm_storage.sqlite'));
+    const signedProdManifestAccepted =
+      chkFf?.update_status === 'update_available' &&
+      chkFp?.update_status === 'update_available' &&
+      Boolean(chkFf?.available_version) &&
+      chkFf.available_version === chkFp.available_version &&
+      chkFf.available_version !== initFf.installed_version &&
+      Boolean(prodManifestState) &&
+      prodManifestState.highest_accepted_revision >= 1 &&
+      prodManifestState.last_signing_key_id === 'CDC23D8CC8DA5397' &&
+      typeof prodManifestState.last_accepted_manifest_sha256 === 'string' &&
+      /^[0-9a-f]{64}$/.test(prodManifestState.last_accepted_manifest_sha256);
 
     // 4. Perform REAL live yt-dlp update (download -> SHA-256 -> OpenPGP -> PE x64 -> health -> atomic activate!)
     const afterUpdate = await cdp.evalJson(`
@@ -613,6 +642,91 @@ async function main() {
     await sleep(600);
 
     // =========================================================================
+    // PHASE A2: G32-05 Condition B — Direct Unsigned Upstream BtbN/FFmpeg-Builds
+    //           Must Remain Strictly Blocked as Source Untrusted (No Signed Manifest)
+    // =========================================================================
+    console.log('\n=== PHASE A2: Direct Unsigned Upstream BtbN/FFmpeg-Builds Fail-Closed Verification ===');
+    const qaDataUntrusted = path.join(QA_ROOT, 'data_untrusted_upstream');
+    const qaWv2Untrusted = path.join(QA_ROOT, 'webview2_untrusted_upstream');
+    untrustedManifestServer = http.createServer((req, res) => {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not published');
+    });
+    await new Promise((r) => untrustedManifestServer.listen(0, '127.0.0.1', r));
+    const untrustedPort = untrustedManifestServer.address().port;
+
+    const sessionA2 = await launchIsolatedDesktop({
+      dataDir: qaDataUntrusted,
+      wv2Dir: qaWv2Untrusted,
+      cdpPort: CDP_PORT_3,
+      pipeSuffix: 'g32_ff_untrusted',
+      extraEnv: {
+        TORI_TEST_TOOLS_MANIFEST_URL: `http://127.0.0.1:${untrustedPort}/tools-manifest.json`,
+      },
+    });
+    cdp = sessionA2.cdp;
+
+    // Disable background auto-install so we isolate the direct upstream FFmpeg untrusted policy cleanly
+    await cdp.evalJson(`
+      return await window.__TAURI_INTERNALS__.invoke('save_external_tool_update_settings', {
+        settings: {
+          auto_update: true,
+          check_interval_hours: 24,
+          auto_install: false,
+          notify_on_update: true,
+          defer_while_in_use: true
+        }
+      });
+    `);
+
+    const untrustedCheck = await cdp.evalJson(`
+      return await window.__TAURI_INTERNALS__.invoke('check_external_tools_updates');
+    `);
+    const uFf = untrustedCheck.tools.find((t) => t.tool_id === 'ffmpeg');
+    const uFp = untrustedCheck.tools.find((t) => t.tool_id === 'ffprobe');
+    const unsignedUpstreamBlocked =
+      uFf?.update_status === 'source_untrusted' && uFp?.update_status === 'source_untrusted';
+
+    // Also prove that attempting to install unsigned direct upstream FFmpeg is strictly refused
+    const untrustedInstallAttempt = await cdp.evalJson(`
+      try {
+        const snap = await window.__TAURI_INTERNALS__.invoke('update_external_tool', { toolId: 'ffmpeg' });
+        return { threw: false, snap };
+      } catch (e) {
+        return { threw: true, error: String(e) };
+      }
+    `);
+    const postAttemptSnap = await cdp.evalJson(`
+      return await window.__TAURI_INTERNALS__.invoke('get_external_tools_status');
+    `);
+    const uFfAfter = postAttemptSnap.tools.find((t) => t.tool_id === 'ffmpeg');
+    const uFpAfter = postAttemptSnap.tools.find((t) => t.tool_id === 'ffprobe');
+    const untrustedActiveManifestPath = path.join(qaDataUntrusted, 'tools', 'manifests', 'active-tools.json');
+    const untrustedActiveManifest = fs.existsSync(untrustedActiveManifestPath)
+      ? JSON.parse(fs.readFileSync(untrustedActiveManifestPath, 'utf8'))
+      : null;
+    const unsignedInstallRefused =
+      uFfAfter?.source === 'bundled' &&
+      uFpAfter?.source === 'bundled' &&
+      uFfAfter?.update_status === 'source_untrusted' &&
+      uFpAfter?.update_status === 'source_untrusted' &&
+      !untrustedActiveManifest?.ffmpeg_bundle_active;
+
+    record(
+      'G32-05',
+      'Signed production manifest accepted for FFmpeg/FFprobe while unsigned direct upstream BtbN remains blocked as Source Untrusted',
+      signedProdManifestAccepted && unsignedUpstreamBlocked && unsignedInstallRefused,
+      `prodSigned=${signedProdManifestAccepted} (ffmpeg=${chkFf?.update_status}/${chkFf?.available_version}, key=${prodManifestState?.last_signing_key_id}, rev=${prodManifestState?.highest_accepted_revision}, sha=${prodManifestState?.last_accepted_manifest_sha256?.slice(0, 12)}); unsignedDirect=${unsignedUpstreamBlocked} (ffmpeg=${uFf?.update_status}/${uFf?.available_version}, ffprobe=${uFp?.update_status}, installRefused=${unsignedInstallRefused}, threw=${untrustedInstallAttempt.threw})`
+    );
+
+    cdp.close();
+    cdp = null;
+    untrustedManifestServer.close();
+    untrustedManifestServer = null;
+    cleanupTrackedProcs();
+    await sleep(600);
+
+    // =========================================================================
     // PHASE B: Real Ed25519-Signed FFmpeg + FFprobe Bundle Update inside
     //          Isolated Desktop Binary + Real Mux/Merge/Transcode/FFprobe Tests
     // =========================================================================
@@ -765,6 +879,7 @@ async function main() {
     cdp = null;
   } finally {
     if (cdp) cdp.close();
+    if (untrustedManifestServer) untrustedManifestServer.close();
     if (signedServer) signedServer.close();
     cleanupTrackedProcs();
     await sleep(300);
