@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "manifest_revision": 2,
+  "generated_at": "2026-11-22T19:46:42.049Z",
+  "published_at": "2026-11-22T19:46:42.049Z",
+  "expires_at": "2027-01-21T19:46:42.049Z",
+  "signing_key_id": "CDC23D8CC8DA5397",
+  "key_purpose": "external_tools_manifest",
+  "ffmpeg_bundle": {
+    "tool_id": "ffmpeg_bundle",
+    "version": "N-129150-g7ddf7bc8a4-20261120",
+    "ffmpeg_version": "N-129150-g7ddf7bc8a4-20261120",
+    "ffprobe_version": "N-129150-g7ddf7bc8a4-20261120",
+    "bundle_id": "ffmpeg-win64-gpl-N-129150-g7ddf7bc8a4-20261120",
+    "url": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/tools-ffmpeg-N-129150-g7ddf7bc8a4/ffmpeg-N-129150-g7ddf7bc8a4-win64-gpl.zip",
+    "sha256": "03d33066832e7149a8577bed73713c5d5344aed14199063e521b798cf1b60076",
+    "size": 205445856,
+    "artifact_format": "zip",
+    "platform": "windows",
+    "architecture": "x86_64",
+    "min_tori_version": "1.0.6",
+    "max_tori_version": null,
+    "published_at": "2026-11-22T19:46:42.049Z",
+    "allow_rollback_to": false,
+    "provenance": {
+      "upstream_provider": "BtbN/FFmpeg-Builds",
+      "upstream_release": "autobuild-2026-11-20-12-40",
+      "upstream_url": "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/tag/autobuild-2026-11-20-12-40",
+      "approved_by": "TORI Release Engineering (Gate 32.2 Preflight)",
+      "approved_at": "2026-11-21T16:00:29.165Z",
+      "renewed_from_revision": 1,
+      "renewed_at": "2026-11-22T19:46:42.049Z",
+      "renewal_type": "metadata_only_unchanged_artifact"
+    }
+  }
+}

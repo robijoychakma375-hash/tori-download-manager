@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "registry_policy": "APPEND_ONLY_IMMUTABLE_HISTORY",
+  "description": "Durable audit ledger of all approved TORI External Tools signed manifests and immutable binary artifacts. Never overwrite or delete historical records.",
+  "production_endpoint": {
+    "manifest_url": "https://toridownload.xyz/assets/tools/tools-manifest.json",
+    "signature_url": "https://toridownload.xyz/assets/tools/tools-manifest.json.sig",
+    "active_revision": 2,
+    "active_signing_key_id": "CDC23D8CC8DA5397",
+    "active_signing_key_purpose": "external_tools_legacy_shared"
+  },
+  "revisions": [
+    {
+      "manifest_revision": 1,
+      "schema_version": 2,
+      "environment": "production",
+      "publication_status": "superseded",
+      "operation_type": "initial_release_approval",
+      "manifest_sha256": "9fa61a38bb77bb8cdf05364565db2cf3b2b3ab8d0c7af98dfd7c50b2ee287662",
+      "signature_sha256": "e0e23db79990f885c0745165299b20befd41f5dc8a73f7b00ca0476502955eb4",
+      "archived_manifest_path": "docs/security/tools-manifest-registry/history/prod_rev_0001_tools-manifest.json",
+      "archived_signature_path": "docs/security/tools-manifest-registry/history/prod_rev_0001_tools-manifest.json.sig",
+      "signing_key_id": "CDC23D8CC8DA5397",
+      "signing_key_purpose": "external_tools_legacy_shared",
+      "published_at": "2026-11-21T16:00:29.945Z",
+      "expires_at": "2027-01-05T16:00:29.945Z",
+      "deployed_at": "2026-11-22T06:53:26Z",
+      "website_commit": "81585e42c9561725f59c80d2f673116d3f7a0c1f",
+      "cloudflare_deployment_id": "8de71e1a-731e-4872-b8e6-046a375476b6",
+      "approved_by": "TORI Release Engineering (Gate 32.2 Preflight / Gate 32.3 Authorized Promotion)",
+      "approved_at": "2026-11-21T16:00:29.165Z",
+      "superseded_by_revision": 2,
+      "rollback_eligible": true,
+      "tools": {
+        "ffmpeg_bundle": {
+          "version": "N-129150-g7ddf7bc8a4-20261120",
+          "ffmpeg_version": "N-129150-g7ddf7bc8a4-20261120",
+          "ffprobe_version": "N-129150-g7ddf7bc8a4-20261120",
+          "bundle_id": "ffmpeg-win64-gpl-N-129150-g7ddf7bc8a4-20261120",
+          "artifact_url": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/tools-ffmpeg-N-129150-g7ddf7bc8a4/ffmpeg-N-129150-g7ddf7bc8a4-win64-gpl.zip",
+          "artifact_sha256": "03d33066832e7149a8577bed73713c5d5344aed14199063e521b798cf1b60076",
+          "artifact_size": 205445856,
+          "github_prerelease_tag": "tools-ffmpeg-N-129150-g7ddf7bc8a4",
+          "github_prerelease_id": 453686141,
+          "ffmpeg_exe_sha256": "9b3e1007bb0edbd0aa5d3bddb6e3b95004f8a10fd74c6d4134bdb322a857685e",
+          "ffprobe_exe_sha256": "9d6f7fec9786feb8b8bec2d138ea8881aef8442c344cf392a4c115265e2fb38a",
+          "upstream_provider": "BtbN/FFmpeg-Builds",
+          "upstream_release": "autobuild-2026-11-20-12-40",
+          "min_tori_version": "1.0.6",
+          "max_tori_version": null,
+          "allow_rollback_to": false
+        }
+      }
+    },
+    {
+      "manifest_revision": 2,
+      "schema_version": 2,
+      "environment": "production",
+      "publication_status": "active",
+      "operation_type": "metadata_only_renewal_unchanged_artifact",
+      "manifest_sha256": "caa2d4ed2a7e424badcd8662e67b986a3fdfbf2847dded0625ea2b2547663f3a",
+      "signature_sha256": "11efa53f290d3d46fb16915fd3d1e69451de8c654eae8d75844b840ab99bb1c2",
+      "archived_manifest_path": "docs/security/tools-manifest-registry/history/prod_rev_0002_tools-manifest.json",
+      "archived_signature_path": "docs/security/tools-manifest-registry/history/prod_rev_0002_tools-manifest.json.sig",
+      "signing_key_id": "CDC23D8CC8DA5397",
+      "signing_key_purpose": "external_tools_legacy_shared",
+      "published_at": "2026-11-22T19:46:42.049Z",
+      "expires_at": "2027-01-21T19:46:42.049Z",
+      "deployed_at": "2026-11-22T19:51:57Z",
+      "website_commit": "2eff4f20a64989c39a75cb6b1739ce3948431048",
+      "cloudflare_deployment_id": "449b84d7-4ec8-4a63-b0ec-5f7d3a6a7ebe",
+      "approval_reference": "TORI-APPROVAL-G33_2-PROD-REV2",
+      "approved_by": "TORI Project Owner (Explicit Gate 33.2 Production Manifest Rev 2 Authorization)",
+      "approved_at": "2026-11-22T19:46:43.374Z",
+      "supersedes_revision": 1,
+      "superseded_by_revision": null,
+      "rollback_eligible": true,
+      "tools": {
+        "ffmpeg_bundle": {
+          "version": "N-129150-g7ddf7bc8a4-20261120",
+          "ffmpeg_version": "N-129150-g7ddf7bc8a4-20261120",
+          "ffprobe_version": "N-129150-g7ddf7bc8a4-20261120",
+          "bundle_id": "ffmpeg-win64-gpl-N-129150-g7ddf7bc8a4-20261120",
+          "artifact_url": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/tools-ffmpeg-N-129150-g7ddf7bc8a4/ffmpeg-N-129150-g7ddf7bc8a4-win64-gpl.zip",
+          "artifact_sha256": "03d33066832e7149a8577bed73713c5d5344aed14199063e521b798cf1b60076",
+          "artifact_size": 205445856,
+          "github_prerelease_tag": "tools-ffmpeg-N-129150-g7ddf7bc8a4",
+          "github_prerelease_id": 453686141,
+          "ffmpeg_exe_sha256": "9b3e1007bb0edbd0aa5d3bddb6e3b95004f8a10fd74c6d4134bdb322a857685e",
+          "ffprobe_exe_sha256": "9d6f7fec9786feb8b8bec2d138ea8881aef8442c344cf392a4c115265e2fb38a",
+          "upstream_provider": "BtbN/FFmpeg-Builds",
+          "upstream_release": "autobuild-2026-11-20-12-40",
+          "min_tori_version": "1.0.6",
+          "max_tori_version": null,
+          "allow_rollback_to": false
+        }
+      }
+    }
+  ]
+}

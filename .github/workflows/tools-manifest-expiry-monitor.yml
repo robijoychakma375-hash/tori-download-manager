@@ -1,0 +1,54 @@
+name: External Tools Manifest Expiry Monitor (Read-Only UTC)
+
+on:
+  schedule:
+    # Daily at 06:00 UTC (read-only monitoring; NEVER holds signing keys or auto-publishes)
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      strict_exit:
+        description: "Fail workflow on CRITICAL/EXPIRED/SECURITY incidents"
+        required: false
+        type: boolean
+        default: true
+
+# Least-privilege permissions: strictly read-only repository access; zero signing secrets
+permissions:
+  contents: read
+
+concurrency:
+  group: tori-tools-manifest-expiry-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor-expiry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run UTC External Tools Manifest Expiry & Integrity Check
+        id: expiry_check
+        run: |
+          STRICT_FLAG="--strict-exit"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.strict_exit }}" = "false" ]; then
+            STRICT_FLAG=""
+          fi
+          node scripts/monitor_tools_manifest_expiry.js \
+            --force \
+            --report-file target/tools_renewal_state/ci_expiry_report.json \
+            $STRICT_FLAG
+
+      - name: Upload auditable expiry monitoring report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tools-manifest-expiry-monitor-report
+          path: target/tools_renewal_state/ci_expiry_report.json
+          if-no-files-found: warn
+          retention-days: 30
