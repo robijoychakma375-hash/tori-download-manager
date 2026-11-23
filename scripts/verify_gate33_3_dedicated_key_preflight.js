@@ -220,16 +220,26 @@ async function main() {
   fs.rmSync(QA_ROOT, { recursive: true, force: true });
   fs.mkdirSync(QA_ROOT, { recursive: true });
 
-  // 1. Phase 1 & 2: Verify hardened provision_dedicated_tools_key.ps1 (-Mode AuditCustody + -Mode TestIsolated)
+  // 1. Phase 1 & 2: Verify hardened provision_dedicated_tools_key.ps1 (-Mode AuditCustody + -Mode VerifyProductionKey + -Mode TestIsolated)
   const auditRes = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ROOT, 'scripts', 'provision_dedicated_tools_key.ps1'), '-Mode', 'AuditCustody'], { encoding: 'utf8', timeout: 20000 });
   const auditObj = auditRes.status === 0 ? JSON.parse(auditRes.stdout) : null;
+  const verifyProdRes = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ROOT, 'scripts', 'provision_dedicated_tools_key.ps1'), '-Mode', 'VerifyProductionKey'], { encoding: 'utf8', timeout: 20000 });
+  const verifyProdObj = verifyProdRes.status === 0 ? JSON.parse(verifyProdRes.stdout) : null;
   const testIsoRes = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ROOT, 'scripts', 'provision_dedicated_tools_key.ps1'), '-Mode', 'TestIsolated'], { encoding: 'utf8', timeout: 45000 });
   const testIsoObj = testIsoRes.status === 0 ? JSON.parse(testIsoRes.stdout) : null;
+  const prodKeyOk =
+    verifyProdObj?.status === 'VALID_PRODUCTION_KEY' &&
+    verifyProdObj?.keyIdHex === 'C3FD6626A3718E63' &&
+    verifyProdObj?.pubkeySha256 === '6807e183f56c08eb06fdff95347bbbf7174b4ce5185b0245155db315e87fee39' &&
+    verifyProdObj?.encryptedScryptKey === true &&
+    verifyProdObj?.ntfsAclOwnerOnly === true &&
+    verifyProdObj?.noPlaintextPwdFile === true &&
+    verifyProdObj?.independentFromUpdater === true;
   record(
     'G333-01',
-    'Phase 1-2 Key-Custody Tooling: AuditCustody honest & TestIsolated scrypt + owner ACL + backup recovery + tamper rejection PASS',
-    Boolean(auditObj?.updaterKeyId === PROD_KEY_ID && testIsoObj?.status === 'PASS' && testIsoObj?.encryptedSecretKey && testIsoObj?.ntfsAclOwnerOnly && testIsoObj?.backupRecoverySignOk && testIsoObj?.tamperPayloadRejected && testIsoObj?.privateKeysCleanedUp),
-    `custody=${auditObj?.custodyStatus}, testIso=${testIsoObj?.status}, keyId=${testIsoObj?.testKeyIdHex}`
+    'Phase 1-2 Key-Custody Tooling: VerifyProductionKey (C3FD6626A3718E63, scrypt, owner ACL, no .pwd) & TestIsolated PASS',
+    Boolean(auditObj?.updaterKeyId === PROD_KEY_ID && prodKeyOk && testIsoObj?.status === 'PASS' && testIsoObj?.encryptedSecretKey && testIsoObj?.ntfsAclOwnerOnly && testIsoObj?.backupRecoverySignOk && testIsoObj?.tamperPayloadRejected && testIsoObj?.privateKeysCleanedUp),
+    `custody=${auditObj?.custodyStatus}, prodKey=${verifyProdObj?.keyIdHex}/${verifyProdObj?.status}, testIso=${testIsoObj?.status}`
   );
 
   // 2. Phase 6 & 19: Live production rev 2 manifest + GitHub Latest v1.0.7 + Browser Companion v1.0.10 invariants
@@ -455,6 +465,67 @@ async function main() {
       qReg('HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.tori.download_manager') &&
       qReg('HKCU\\Software\\Mozilla\\NativeMessagingHosts\\com.tori.download_manager');
     record('G333-08', 'Phase 12 Native Messaging: Chrome, Edge & Firefox registry keys registered cleanly by v1.0.8 host', regOut.status === 0 && nmAllThree, `exit=${regOut.status}, chromeEdgeFirefox=${nmAllThree}`);
+
+    // 8. Phase 4-5: Final Key-Enabled RC Binary Embedding & Real In-Place v1.0.7 -> v1.0.8-final-rc Upgrade + Data Preservation
+    const usingFinalRc = INST_108_EXE === INST_108_FINAL_EXE && fs.existsSync(INST_108_FINAL_EXE);
+    const finalRcSha = usingFinalRc ? sha256File(INST_108_FINAL_EXE) : null;
+    const preRcSha = sha256File(INST_108_PRE_EXE);
+    const exeBuf = fs.readFileSync(v108Exe);
+    const hasEmbeddedDedicatedId = exeBuf.includes(Buffer.from('C3FD6626A3718E63', 'ascii'));
+    const hasEmbeddedDedicatedPub = exeBuf.includes(Buffer.from('UldSampuR2pKbWI5dzZqVWE2MDBJcldqU01hc3pkUk04dmN2T256dUtQZkhxUmVjazRTa3Nlek0K', 'ascii'));
+    const hasEmbeddedLegacyId = exeBuf.includes(Buffer.from(PROD_KEY_ID, 'ascii'));
+    const hasZeroSecretMarker = !exeBuf.includes(Buffer.from('minisign encrypted secret key', 'ascii'));
+
+    // Real in-place upgrade v1.0.7 -> v1.0.8-final-rc with isolated SQLite + .tdm-part preservation!
+    const upgDir = path.join(QA_ROOT, 'upgrade_v107_to_v108_final');
+    const upgData = path.join(QA_ROOT, 'upgrade_data');
+    const upgWv2 = path.join(QA_ROOT, 'upgrade_wv2');
+    const upgDlDir = path.join(QA_ROOT, 'upgrade_downloads');
+    fs.mkdirSync(upgDir, { recursive: true });
+    fs.mkdirSync(upgData, { recursive: true });
+    fs.mkdirSync(upgWv2, { recursive: true });
+    fs.mkdirSync(upgDlDir, { recursive: true });
+    const partSeedPath = path.join(upgDlDir, 'partial_upgrade_seed.bin.tdm-part');
+    const partSeedBytes = crypto.randomBytes(65536);
+    fs.writeFileSync(partSeedPath, partSeedBytes);
+    const partSeedShaBefore = sha256Buf(partSeedBytes);
+
+    execSync(`"${INST_107_EXE}" /S /D=${upgDir}`, { timeout: 120000 });
+    oemGuard.temporarilySilenceNativeHostAutoSpawn(path.join(QA_ROOT, 'shield'));
+    const upgExe = path.join(upgDir, 'tori-download-manager.exe');
+    const verBefore = execFileSync('powershell', ['-NoProfile', '-Command', `(Get-Item '${upgExe}').VersionInfo.ProductVersion`], { encoding: 'utf8' }).trim();
+    // Boot v1.0.7 once to initialize SQLite schema & settings in isolated upgData
+    const sBefore = await checkManifest({ exe: upgExe, dataDir: upgData, wv2Dir: upgWv2, cdpPort: 25495, pipeSuffix: 'upg107' });
+    // Now run REAL in-place upgrade to v1.0.8-final-rc!
+    execSync(`"${INST_108_EXE}" /S /D=${upgDir}`, { timeout: 120000 });
+    oemGuard.temporarilySilenceNativeHostAutoSpawn(path.join(QA_ROOT, 'shield'));
+    const verAfter = execFileSync('powershell', ['-NoProfile', '-Command', `(Get-Item '${upgExe}').VersionInfo.ProductVersion`], { encoding: 'utf8' }).trim();
+    const sAfter = await checkManifest({ exe: upgExe, dataDir: upgData, wv2Dir: upgWv2, cdpPort: 25496, pipeSuffix: 'upg108' });
+    const partSeedShaAfter = sha256File(partSeedPath);
+    const { DatabaseSync } = require('node:sqlite');
+    const udb = new DatabaseSync(path.join(upgData, 'tdm_storage.sqlite'), { readOnly: true });
+    const upgIntegrity = udb.prepare('PRAGMA integrity_check').all().map((r) => Object.values(r)[0]);
+    udb.close();
+
+    record(
+      'G333-10',
+      'Phase 4-5 Final Key-Enabled RC: C3FD6626A3718E63+CDC23D8CC8DA5397 embedded, zero secrets, real v1.0.7->v1.0.8-final-rc upgrade, SQLite & .tdm-part preserved',
+      usingFinalRc &&
+        finalRcSha !== preRcSha &&
+        hasEmbeddedDedicatedId &&
+        hasEmbeddedDedicatedPub &&
+        hasEmbeddedLegacyId &&
+        hasZeroSecretMarker &&
+        verBefore.startsWith('1.0.7') &&
+        verAfter.startsWith('1.0.8') &&
+        Boolean(sBefore?.tools?.length === 3) &&
+        sAfter?.manifest_status?.verification_status === 'verified' &&
+        sAfter?.manifest_status?.current_revision === 2 &&
+        upgIntegrity.length === 1 &&
+        upgIntegrity[0] === 'ok' &&
+        partSeedShaAfter === partSeedShaBefore,
+      `finalRc=${usingFinalRc}, distinctFromPreKey=${finalRcSha !== preRcSha}, embDed=${hasEmbeddedDedicatedId && hasEmbeddedDedicatedPub}, embLeg=${hasEmbeddedLegacyId}, noSec=${hasZeroSecretMarker}, upg=${verBefore}->${verAfter}, sqlite=${upgIntegrity[0]}, partOk=${partSeedShaAfter === partSeedShaBefore}`
+    );
   } finally {
     cleanupProcs();
     if (mockServer) try { mockServer.close(); } catch {}

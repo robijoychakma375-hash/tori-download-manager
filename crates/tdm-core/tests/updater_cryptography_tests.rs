@@ -784,3 +784,144 @@ fn test_v108_release_candidate_signature_draft_updater_stage1_keyring_and_rev2_c
     assert_eq!(ff.architecture.as_deref(), Some("x86_64"));
     assert_eq!(ff.min_tori_version.as_deref(), Some("1.0.6"));
 }
+
+#[test]
+fn test_v108_final_rc_production_dedicated_key_and_signature_verification() {
+    let root = get_project_root();
+
+    // 1. Verify embedded Stage 1 dedicated External Tools public key (C3FD6626A3718E63)
+    //    is strictly separated from Desktop Updater key (CDC23D8CC8DA5397).
+    let ded_kid = tdm_core::tools::TORI_DEDICATED_TOOLS_ED25519_KEY_ID
+        .expect("Dedicated External Tools key ID must be embedded in Gate 33.3");
+    let ded_pub = tdm_core::tools::TORI_DEDICATED_TOOLS_ED25519_PUBKEY_B64
+        .expect("Dedicated External Tools public key must be embedded in Gate 33.3");
+    assert_eq!(ded_kid, "C3FD6626A3718E63");
+    assert_ne!(ded_kid, tdm_core::tools::TORI_ED25519_KEY_ID);
+    assert_ne!(ded_pub, tdm_core::tools::TORI_ED25519_PUBKEY_B64);
+    assert_eq!(
+        tdm_core::tools::extract_minisign_key_id_hex(ded_pub).as_deref(),
+        Some("C3FD6626A3718E63")
+    );
+
+    // Decode Minisign public key box and confirm SHA-256 fingerprint of raw 32-byte Ed25519 key
+    let decoded_ded = String::from_utf8(decode_base64_str(ded_pub)).expect("UTF-8 dedicated pubkey");
+    let _parsed_ded_pk = PublicKey::decode(&decoded_ded).expect("Valid Minisign dedicated pubkey");
+    let key_line = decoded_ded
+        .lines()
+        .find(|l| !l.trim().is_empty() && !l.trim().starts_with("untrusted comment:"))
+        .expect("Minisign key box line");
+    let key_raw = decode_base64_str(key_line);
+    assert_eq!(key_raw.len(), 42);
+    use sha2::{Digest, Sha256};
+    let fp = hex::encode(Sha256::digest(&key_raw[10..42]));
+    assert_eq!(
+        fp,
+        "6807e183f56c08eb06fdff95347bbbf7174b4ce5185b0245155db315e87fee39"
+    );
+
+    // If operator public key exists out-of-repo, assert bit-for-bit parity
+    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+        let disk_pub_path = PathBuf::from(home).join(".tori-keys").join("tori-tools.key.pub");
+        if disk_pub_path.exists() {
+            let disk_pub = fs::read_to_string(&disk_pub_path)
+                .expect("read tori-tools.key.pub")
+                .trim()
+                .to_string();
+            assert_eq!(
+                disk_pub, ded_pub,
+                "Embedded TORI_DEDICATED_TOOLS_ED25519_PUBKEY_B64 must match %USERPROFILE%\\.tori-keys\\tori-tools.key.pub"
+            );
+        }
+    }
+
+    // Confirm Desktop Auto-Updater key in tauri.conf.json remains CDC23D8CC8DA5397 (unchanged!)
+    let conf_path = root.join("src-tauri").join("tauri.conf.json");
+    let conf: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&conf_path).unwrap()).unwrap();
+    assert_eq!(conf["version"].as_str(), Some("1.0.8"));
+    let updater_pub = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
+    assert_eq!(updater_pub, tdm_core::tools::TORI_ED25519_PUBKEY_B64);
+    assert_ne!(updater_pub, ded_pub);
+
+    // Confirm default Stage 1 keyring contains BOTH legacy CDC23D8CC8DA5397 & dedicated C3FD6626A3718E63
+    let tools_cfg = tdm_core::tools::ToolsManagerConfig::default();
+    let kr = tools_cfg.effective_tools_keyring();
+    assert!(kr.allow_legacy_shared_key);
+    assert!(kr.has_dedicated_active_key());
+    assert_eq!(kr.keys.len(), 2);
+    assert!(kr.validate_safety(chrono::Utc::now(), tools_cfg.max_clock_skew_secs).is_ok());
+
+    // 2. Verify release/v1.0.8-final-rc/ if present (after Phase 4 Final RC build)
+    let final_rc_dir = root.join("release").join("v1.0.8-final-rc");
+    if final_rc_dir.exists() {
+        let installer_path = final_rc_dir.join("TORI Download Manager_1.0.8_x64-setup.exe");
+        let sig_path = final_rc_dir.join("TORI Download Manager_1.0.8_x64-setup.exe.sig");
+        let draft_latest_path = final_rc_dir.join("draft_latest.json");
+        let build_meta_path = final_rc_dir.join("BUILD_METADATA.json");
+
+        assert!(installer_path.exists(), "Final RC installer missing");
+        assert!(sig_path.exists(), "Final RC .sig missing");
+        assert!(draft_latest_path.exists(), "Final RC draft_latest.json missing");
+        assert!(build_meta_path.exists(), "Final RC BUILD_METADATA.json missing");
+
+        // Ensure zero private keys or password files leaked into release/v1.0.8-final-rc/
+        for entry in fs::read_dir(&final_rc_dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            assert!(
+                !name.ends_with(".key") && !name.ends_with(".pwd"),
+                "Forbidden secret file found in release/v1.0.8-final-rc: {}",
+                name
+            );
+        }
+
+        let installer_bytes = fs::read(&installer_path).expect("read final RC installer");
+        assert!(installer_bytes.starts_with(b"MZ"));
+
+        let sig_str = fs::read_to_string(&sig_path).expect("read final RC .sig");
+        let sig_text = String::from_utf8(decode_base64_str(&sig_str)).expect("utf8 sig");
+        let signature = Signature::decode(&sig_text).expect("minisign signature decode");
+        let decoded_upd_pub = String::from_utf8(decode_base64_str(updater_pub)).unwrap();
+        let updater_pk = PublicKey::decode(&decoded_upd_pub).expect("updater pubkey decode");
+
+        updater_pk
+            .verify(&installer_bytes, &signature, true)
+            .expect("Final RC installer Ed25519 signature must verify under Desktop updater key CDC23D8CC8DA5397");
+        assert!(
+            signature
+                .trusted_comment()
+                .contains("file:TORI Download Manager_1.0.8_x64-setup.exe")
+        );
+
+        let mut tampered = installer_bytes.clone();
+        let mid = tampered.len() / 2;
+        tampered[mid] ^= 0x3C;
+        assert!(
+            updater_pk.verify(&tampered, &signature, true).is_err(),
+            "Tampered Final RC installer must be rejected"
+        );
+
+        // Verify draft_latest.json matches .sig exactly
+        let draft: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&draft_latest_path).unwrap()).unwrap();
+        assert_eq!(draft["version"].as_str(), Some("1.0.8"));
+        for key in ["windows-x86_64", "windows-x86_64-nsis"] {
+            assert_eq!(
+                draft["platforms"][key]["signature"].as_str().map(str::trim),
+                Some(sig_str.trim())
+            );
+        }
+
+        // Verify BUILD_METADATA.json references embedded dedicated key C3FD6626A3718E63
+        let meta: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&build_meta_path).unwrap()).unwrap();
+        assert_eq!(
+            meta["dedicated_tools_public_key_id"].as_str(),
+            Some("C3FD6626A3718E63")
+        );
+        assert_eq!(
+            meta["desktop_updater_signing_key_id"].as_str(),
+            Some("CDC23D8CC8DA5397")
+        );
+        assert_eq!(meta["published"].as_bool(), Some(false));
+    }
+}

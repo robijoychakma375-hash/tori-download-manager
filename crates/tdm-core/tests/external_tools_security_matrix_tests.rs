@@ -777,17 +777,27 @@ async fn test_gate33_manifest_policy_replay_equivocation_partial_and_redirect_re
 /// authorized higher-revision rollback acceptance, and production default keyring safety.
 #[tokio::test]
 async fn test_gate33_tampered_missing_artifact_downgrade_and_prod_keyring_defaults() {
-    // Verify default production keyring preserves v1.0.7 CDC23D8CC8DA5397 without silently
-    // activating an unapproved dedicated key in Gate 33.
+    // Verify Stage 1 dual-key production transition keyring preserves legacy v1.0.7 key
+    // CDC23D8CC8DA5397 AND includes the operator-provisioned dedicated production External Tools
+    // public key C3FD6626A3718E63 with strict purpose isolation.
     let def_cfg = ToolsManagerConfig::default();
     let def_kr = def_cfg.effective_tools_keyring();
     assert_eq!(def_kr.keyring_version, 1);
     assert!(def_kr.allow_legacy_shared_key);
-    assert!(!def_kr.has_dedicated_active_key());
-    assert_eq!(def_kr.keys.len(), 1);
+    assert!(def_kr.has_dedicated_active_key());
+    assert_eq!(def_kr.keys.len(), 2);
     assert_eq!(def_kr.keys[0].key_id, TORI_ED25519_KEY_ID);
     assert_eq!(def_kr.keys[0].pubkey_b64, TORI_ED25519_PUBKEY_B64);
     assert_eq!(def_kr.keys[0].purpose, SigningKeyPurpose::ExternalToolsLegacyShared);
+    assert_eq!(def_kr.keys[0].status, TrustedKeyStatus::TransitionLegacy);
+    assert_eq!(def_kr.keys[1].key_id, "C3FD6626A3718E63");
+    assert_ne!(def_kr.keys[1].key_id, TORI_ED25519_KEY_ID);
+    assert_eq!(def_kr.keys[1].purpose, SigningKeyPurpose::ExternalToolsManifest);
+    assert_eq!(def_kr.keys[1].status, TrustedKeyStatus::Active);
+    assert_eq!(
+        extract_minisign_key_id_hex(&def_kr.keys[1].pubkey_b64).as_deref(),
+        Some("C3FD6626A3718E63")
+    );
     assert!(def_kr.validate_safety(Utc::now(), 900).is_ok());
 
     let key = TestMinisignKey::generate(0x77);
