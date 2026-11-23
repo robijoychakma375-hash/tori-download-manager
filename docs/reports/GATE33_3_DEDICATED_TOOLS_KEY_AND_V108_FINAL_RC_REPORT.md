@@ -1,8 +1,14 @@
 # TORI DOWNLOAD MANAGER — GATE 33.3 REPORT
 ## DEDICATED EXTERNAL TOOLS PRODUCTION KEY PROVISIONING, STAGE 1 DUAL-KEY INTEGRATION & DESKTOP v1.0.8 FINAL RELEASE CANDIDATE
 
-**Report Updated:** `2026-11-23T07:24:00Z` (Local: `2026-11-23 13:24 +06:00`)  
-**Gate 33.3 Overall Status:** **`CONDITIONAL GO`** — **Production Key (`C3FD6626A3718E63`) Provisioned & Embedded, Rebuilt Signed Desktop `v1.0.8` Final RC (`release/v1.0.8-final-rc/`) Passed 435/435 Automated QA Checks; Full Gate 33.3 Certification (`checkpoint-gate33_3-final-rc-verified`) Held Pending Operator Offline Encrypted Backup & Recovery Verification**  
+**Report Updated:** `2026-11-23T07:36:00Z` (Local: `2026-11-23 13:36 +06:00`)  
+**Gate 33.3 Overall Status:** **`CONDITIONAL GO — QA COMPLETE, BACKUP VERIFICATION DEFERRED`**  
+**Backup Custody Governance Flags (Recorded Per Project Owner Directive):**
+- `BACKUP_VERIFICATION_DEFERRED_BY_OWNER`
+- `BACKUP_RECOVERY_NOT_VERIFIED`
+- `PRODUCTION_KEY_LOSS_RISK_ACCEPTED_FOR_CONTINUED DEVELOPMENT`
+
+**Reserved Certification Tag Status:** `checkpoint-gate33_3-final-rc-verified` **`NOT CREATED`** (remains reserved until offline encrypted backup & recovery verification passes; local handover tagged `checkpoint-gate33_3-qa-complete-backup-deferred`).  
 **Public Desktop Release:** **`NOT PERFORMED`** (`v1.0.7` remains repository-wide Latest Stable; `v1.0.8` unpublished)  
 **Dedicated-Key Production Cutover:** **`NOT PERFORMED`** (`rev 2` signed by approved legacy key `CDC23D8CC8DA5397` remains live and unchanged)
 
@@ -18,8 +24,8 @@ Gate 33.3 completed end-to-end production key custody verification, Stage 1 dual
 4. **Stalled Phase 5 QA (`task-2077`) Diagnosed, Recovered & Completed 100%:** Identified exact root cause of `task-2077` stall (un-timeouted CDP WebSocket call in `verify_gate32_external_tools_updater.js` PID `4544` after `clippy`, `ui lint/build`, and `cargo test --workspace` **282/282 PASS** had already succeeded), terminated ONLY the QA process tree, restored `QaOemStateGuard` backup (`parity.ok = true`), and ran all remaining Node suites sequentially with bounded watchdogs and individual logs under `target/gate33_3_qa_logs/`.
 5. **100% Automated QA Pass (435/435 Checks, 0 Fail, 0 Timeout on Final Run):** Passed **282/282** Rust workspace tests, `cargo clippy` (`0` errors), UI lint/build (`0` errors), **Gate 33.3 Final RC** (`10/10`), **Gate 33.2 Live Production Manifest** (`9/9`), **Gate 33.1 Upgrade Compatibility** (`20/20`), **Gate 33.1 Expiry Monitor** (`18/18`), **Gate 33 Renewal & Security** (`14/14`), **Gate 32.3 Public Release Invariants** (`14/14`), **Gate 32.1 Signed Manifest** (`19/19`), **Gate 32 External Tools Recheck** (`18/18`), **Gate 31.5 Installation Safety** (`23/23`), and **Gate 29.4 Browser Integration on Final RC** (`18/18`).
 
-**Why Gate 33.3 remains `CONDITIONAL GO` (and `checkpoint-gate33_3-final-rc-verified` is intentionally held):**
-- **Offline Encrypted Backup & Recovery Verification Pending Operator Confirmation:** Per Phase 1 Item 6 (*"If offline backup/recovery verification has not passed, do not certify full Gate 33.3 completion"*), the operator has not yet executed `-Mode VerifyBackup -BackupDir "<OFFLINE_PATH>" -VerifyPassphrase` against an offline encrypted backup copy of `tori-tools.key` + `tori-tools.key.pub`.
+**Why Gate 33.3 is `CONDITIONAL GO — QA COMPLETE, BACKUP VERIFICATION DEFERRED` (and `checkpoint-gate33_3-final-rc-verified` is NOT created):**
+- **Offline Encrypted Backup & Recovery Deferred by Owner (`BACKUP_VERIFICATION_DEFERRED_BY_OWNER` / `BACKUP_RECOVERY_NOT_VERIFIED`):** The project owner explicitly deferred external offline backup and recovery verification (`-Mode VerifyBackup -BackupDir "<OFFLINE_PATH>" -VerifyPassphrase`) because external storage is not currently available, and accepted `PRODUCTION_KEY_LOSS_RISK_ACCEPTED_FOR_CONTINUED DEVELOPMENT`. Backup verification has **NOT** passed and is **NOT** claimed as passed. Accordingly, the reserved full-certification tag `checkpoint-gate33_3-final-rc-verified` is **NOT** created; local handover is captured at `checkpoint-gate33_3-qa-complete-backup-deferred`.
 - **Clean Windows 10 & Windows 11 VMs:** `NOT TESTED` (`provisionedWindowsVmCount: 0`).
 - **Windows Authenticode:** `NotSigned (NOT AVAILABLE — PIPELINE READY)`.
 
@@ -113,12 +119,15 @@ Executed read-only `scripts\provision_dedicated_tools_key.ps1 -Mode AuditCustody
 
 ## 9. Offline Backup and Recovery Verification Status
 
-- **Production Offline Backup Verification Status:** **`PENDING_OPERATOR_VERIFICATION`** (not yet confirmed executed against an offline encrypted backup copy).
-- **Required Operator Command (No Rebuild Needed Once Verified):**
+- **Production Offline Backup Status:** **`BACKUP_VERIFICATION_DEFERRED_BY_OWNER`**
+- **Production Recovery Verification Status:** **`BACKUP_RECOVERY_NOT_VERIFIED`**
+- **Risk Acceptance Status:** **`PRODUCTION_KEY_LOSS_RISK_ACCEPTED_FOR_CONTINUED DEVELOPMENT`**
+- **Honesty Statement:** Offline encrypted backup and recovery verification of `%USERPROFILE%\.tori-keys\tori-tools.key` (`C3FD6626A3718E63`) has **NOT** been performed or verified because external backup media is not currently available. Loss of the primary workstation disk before backup would permanently destroy private key `C3FD6626A3718E63` (mitigated operationally during Stage 1 because legacy key `CDC23D8CC8DA5397` remains active and Desktop Auto-Updater can always ship a replacement tools keyring; however, **Stage 2 dedicated-key cutover MUST remain strictly prohibited until `BACKUP_VERIFIED` passes**).
+- **Deferred Operator Verification Command (Execute Once External Encrypted Storage Is Available):**
   ```powershell
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\provision_dedicated_tools_key.ps1 -Mode VerifyBackup -BackupDir "<OFFLINE_BACKUP_PATH>" -VerifyPassphrase
   ```
-- **Tooling & Simulation Status:** `-Mode VerifyBackup` implemented and syntax-verified; `-Mode TestIsolated` simulated offline backup recovery signing passed in `G333-01`; runbook documented at `docs/security/DEDICATED_TOOLS_KEY_CUSTODY_AND_RECOVERY.md`.
+- **Tooling & Non-Production Simulation Status:** `-Mode VerifyBackup` implemented and syntax-verified; `-Mode TestIsolated` simulated backup-copy signing passed in `G333-01` (non-production test key only); runbook documented at `docs/security/DEDICATED_TOOLS_KEY_CUSTODY_AND_RECOVERY.md`.
 
 ---
 
@@ -155,9 +164,10 @@ Verified across `G333-04`, `G333-05`, `G331-05`, and `external_tools_security_ma
 
 ## 14. Updated Source Commit
 
+- **Verified Code & Final RC Source Commit:** `1a24265d247a43371ab2b637e195425df2c78b82` (`checkpoint-gate33_3-final-rc-qa-passed-pending-offline-backup` — zero code or binary edits since this commit; 435/435 automated QA verified on this exact build).
 - **Previous Gate 33.3 Preflight Commit:** `b7828cda3a641e0d1c64ec9f6a274da433b64c53` (`checkpoint-gate33_3-preflight-pending-key-custody`).
 - **Development Branch:** `feat/gate33_3-dedicated-key-v108-final-rc`.
-- **Final Source Commit & Accurately Named Local Tag:** Recorded upon Phase 6 commit and tagged `checkpoint-gate33_3-final-rc-qa-passed-pending-offline-backup` (local only, NOT pushed; exact commit SHA reported in final execution output).
+- **QA-Complete Handover Local Tag:** `checkpoint-gate33_3-qa-complete-backup-deferred` (local annotated tag only, NOT pushed; `checkpoint-gate33_3-final-rc-verified` intentionally NOT created while `BACKUP_RECOVERY_NOT_VERIFIED`).
 
 ---
 
@@ -348,7 +358,7 @@ Verified after ALL QA suites completed:
 
 ## 33. Known Limitations
 
-1. **Operator Offline Encrypted Backup & Recovery Test Pending:** `-Mode VerifyBackup -BackupDir "<OFFLINE_PATH>" -VerifyPassphrase` has not yet been confirmed executed by the operator.
+1. **Offline Encrypted Backup & Recovery Deferred (`BACKUP_VERIFICATION_DEFERRED_BY_OWNER` / `BACKUP_RECOVERY_NOT_VERIFIED`):** Operator does not currently have external offline storage available and has recorded `PRODUCTION_KEY_LOSS_RISK_ACCEPTED_FOR_CONTINUED DEVELOPMENT`. Backup verification has NOT passed.
 2. **Clean Windows 10 & Windows 11 VMs:** `NOT TESTED` (`provisionedWindowsVmCount: 0`).
 3. **Windows Authenticode Code Signing:** `NotSigned` (pipeline ready; Ed25519 signing active and verified).
 
@@ -356,23 +366,23 @@ Verified after ALL QA suites completed:
 
 ## 34. Remaining Blockers
 
-1. **Single Remaining Gate 33.3 Blocker for `checkpoint-gate33_3-final-rc-verified`:** Copy `%USERPROFILE%\.tori-keys\tori-tools.key` and `tori-tools.key.pub` to encrypted offline storage and execute:
+1. **For Full Gate 33.3 Certification (`checkpoint-gate33_3-final-rc-verified`) & Any Dedicated-Key Production Signing:** Obtain encrypted offline backup media, copy `%USERPROFILE%\.tori-keys\tori-tools.key` and `tori-tools.key.pub`, and confirm `BACKUP_VERIFIED` (`passphraseRoundtripOk: true`) via:
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\provision_dedicated_tools_key.ps1 -Mode VerifyBackup -BackupDir "<OFFLINE_BACKUP_PATH>" -VerifyPassphrase
    ```
-   Once `BACKUP_VERIFIED` (`passphraseRoundtripOk: true`) is confirmed, `checkpoint-gate33_3-final-rc-verified` can be created immediately with **zero rebuild and zero re-QA**.
+2. **For Gate 34 Desktop `v1.0.8` Public Stable Release:** Explicit project-owner authorization of Gate 34, including explicit disposition of the deferred backup risk (`BACKUP_VERIFICATION_DEFERRED_BY_OWNER`), Clean Win10/Win11 VM `NOT TESTED`, and Authenticode `NotSigned` limitations (detailed in `docs/security/GATE34_DESKTOP_V108_PUBLIC_STABLE_PREFLIGHT_PLAN.md`).
 
 ---
 
 ## 35. Release Readiness Decision
 
-- **Engineering, Cryptography, Final RC Build & Automated QA Readiness:** **`PASS (435/435 PASS, 0 FAIL, 0 TIMEOUT)`**.
-- **Gate 33.3 Overall Certification Verdict:** **`CONDITIONAL GO`** — `checkpoint-gate33_3-final-rc-verified` held strictly per Phase 1 Item 6 until operator confirms offline encrypted backup & recovery verification (`-Mode VerifyBackup -VerifyPassphrase`).
+- **Gate 33.3 Handover Verdict:** **`CONDITIONAL GO — QA COMPLETE, BACKUP VERIFICATION DEFERRED`**.
+- **Engineering, Cryptography, Final RC Build & Automated QA:** **`PASS (435/435 PASS, 0 FAIL, 0 TIMEOUT)`** on verified source commit `1a24265d247a43371ab2b637e195425df2c78b82` and preserved `release/v1.0.8-final-rc/` (`728d0d253a8fadc3fea5244723237f267dcd13abf65cac49b91a4ec83a3dcffb`).
+- **Reserved Certification Tag (`checkpoint-gate33_3-final-rc-verified`):** **`NOT CREATED`** (held until `BACKUP_VERIFIED` passes).
 - **Desktop `v1.0.8` Public Release Status:** **`NOT AUTHORIZED / NOT PERFORMED`**.
 
 ---
 
 ## 36. Next Recommended Gate
 
-1. **Immediate 1-Step Gate 33.3 Closure:** Operator runs `-Mode VerifyBackup -BackupDir "<OFFLINE_BACKUP_PATH>" -VerifyPassphrase` and confirms `BACKUP_VERIFIED`, after which `checkpoint-gate33_3-final-rc-verified` is tagged on the exact verified commit.
-2. **Gate 34 (Separate Explicit Owner Authorization Required):** Authorized Public Stable release of Desktop `v1.0.8` (Stage 1 dual-key rollout) while retaining legacy `CDC23D8CC8DA5397` compatibility for `v1.0.7` and `rev 2`.
+- **Gate 34 — Desktop `v1.0.8` Public Stable Release (Separate Explicit Owner Authorization Required):** Preflight plan prepared at `docs/security/GATE34_DESKTOP_V108_PUBLIC_STABLE_PREFLIGHT_PLAN.md` and release checklist at `docs/security/DESKTOP_V108_PUBLIC_RELEASE_CHECKLIST.md`. Gate 34 ships Stage 1 dual-key Desktop `v1.0.8` while keeping legacy `CDC23D8CC8DA5397` as the live production manifest `rev 2` signing key (zero dedicated-key cutover until offline backup of `C3FD6626A3718E63` is verified with `BACKUP_VERIFIED`).
