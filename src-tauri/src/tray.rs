@@ -10,21 +10,12 @@ use crate::lifecycle;
 pub const TRAY_ID: &str = "tori-system-tray";
 
 pub fn is_close_to_tray_enabled(manager: &DownloadManager) -> bool {
-    if let Ok(val) = std::env::var("TORI_CLOSE_TO_TRAY") {
-        if val == "0" || val.eq_ignore_ascii_case("false") {
-            return false;
-        } else if val == "1" || val.eq_ignore_ascii_case("true") {
-            return true;
-        }
-    }
-    if let Ok(Some(saved)) = manager.database().get_setting("app_settings") {
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&saved) {
-            if let Some(close_to_tray) = val.get("closeToTray").and_then(|v| v.as_bool()) {
-                return close_to_tray;
-            }
-        }
-    }
-    true // Enabled by default
+    let env_override = std::env::var("TORI_CLOSE_TO_TRAY").ok();
+    let saved_settings = manager.database().get_setting("app_settings").ok().flatten();
+    tdm_core::is_close_to_tray_enabled_from_settings(
+        env_override.as_deref(),
+        saved_settings.as_deref(),
+    )
 }
 
 pub fn count_active_downloads(manager: &DownloadManager) -> usize {

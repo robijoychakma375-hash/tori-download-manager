@@ -2689,6 +2689,9 @@ impl DownloadManager {
                                 | EngineError::Io(_)
                                 | EngineError::ETagMismatch { .. }
                                 | EngineError::MismatchedContentRange { .. }
+                                | EngineError::InvalidRangeHeader(_)
+                                | EngineError::RangeNotSupported(_)
+                                | EngineError::HttpStatus(416)
                         );
                         if is_fatal {
                             first_error = Some(e);
@@ -2921,9 +2924,114 @@ impl DownloadManager {
 
             if cancel_token.is_cancelled() {
                 join_set.abort_all();
+                while join_set.join_next().await.is_some() {}
                 Err(EngineError::Cancelled)
             } else if let Some(e) = first_error {
-                Err(e)
+                // Drain all aborted chunk workers BEFORE touching the part file so no
+                // worker can race a late write after truncation.
+                join_set.abort_all();
+                while join_set.join_next().await.is_some() {}
+
+                let can_fallback_single_stream = matches!(
+                    e,
+                    EngineError::MismatchedContentRange { .. }
+                        | EngineError::InvalidRangeHeader(_)
+                        | EngineError::RangeNotSupported(_)
+                        | EngineError::ETagMismatch { .. }
+                        | EngineError::HttpStatus(416)
+                );
+
+                if can_fallback_single_stream && !cancel_token.is_cancelled() {
+                    tracing::warn!(
+                        "Multi-chunk download {} hit Range/representation error ({}); falling back ONCE to clean full-body single-stream mode",
+                        download_id,
+                        e
+                    );
+
+                    // Truncate ONLY this job's .tdm-part file and reset its chunk plan to 1 sequential stream.
+                    writer.truncate_to(0)?;
+                    writer.sync_async().await?;
+                    total_downloaded_atomic.store(0, Ordering::SeqCst);
+
+                    let single = crate::engine::planner::plan_chunks_with_concurrency(
+                        &download_id,
+                        None,
+                        false,
+                        1,
+                    );
+                    db.reset_job_for_restart(&download_id)?;
+                    db.save_chunks(&single)?;
+                    db.update_probe_metadata(
+                        &download_id,
+                        job.resolved_url.as_deref(),
+                        None,
+                        None,
+                        None,
+                        false,
+                        1,
+                    )?;
+                    db.update_job_state(&download_id, JobState::Downloading, None)?;
+                    job.is_resumable = false;
+                    job.chunk_count = 1;
+
+                    telemetry_registry.lock().unwrap().insert(
+                        download_id.clone(),
+                        ActiveJobTelemetry {
+                            active_chunk_bounds: Arc::new(Mutex::new(HashMap::new())),
+                            active_chunk_progress: Arc::new(Mutex::new(HashMap::new())),
+                            stream_downloaded: total_downloaded_atomic.clone(),
+                            is_stream_mode: Arc::new(AtomicBool::new(true)),
+                            max_connections: Arc::new(AtomicUsize::new(1)),
+                        },
+                    );
+
+                    let fallback_url = job.resolved_url.clone().unwrap_or_else(|| job.url.clone());
+                    let counter = total_downloaded_atomic.clone();
+                    let bytes_written = crate::engine::worker::download_stream_with_range_policy(
+                        &client,
+                        &fallback_url,
+                        &writer,
+                        &db,
+                        &download_id,
+                        &cancel_token,
+                        Some(&rate_limiter),
+                        Some(&job_rate_limiter),
+                        Some(max_retries),
+                        job.referer.as_deref(),
+                        job.user_agent.as_deref(),
+                        None,
+                        None,
+                        false,
+                        |written| {
+                            counter.fetch_add(written, Ordering::Relaxed);
+                        },
+                    )
+                    .await?;
+
+                    job.total_bytes = Some(bytes_written);
+                    db.update_probe_metadata(
+                        &download_id,
+                        job.resolved_url.as_deref(),
+                        Some(bytes_written),
+                        None,
+                        None,
+                        false,
+                        1,
+                    )?;
+                    db.save_chunks(&[ChunkRecord {
+                        id: None,
+                        download_id: download_id.clone(),
+                        chunk_index: 0,
+                        start_byte: 0,
+                        end_byte: bytes_written.saturating_sub(1),
+                        written_bytes: bytes_written,
+                        is_complete: true,
+                    }])?;
+
+                    Ok(())
+                } else {
+                    Err(e)
+                }
             } else {
                 Ok(())
             }
@@ -2973,11 +3081,25 @@ impl DownloadManager {
             )
             .await?;
 
-            if let Some(mut chunk) = db.get_chunks(&download_id)?.into_iter().next() {
-                chunk.written_bytes = bytes_written;
-                chunk.is_complete = true;
-                db.save_chunks(&[chunk])?;
-            }
+            job.total_bytes = Some(bytes_written);
+            let _ = db.update_probe_metadata(
+                &download_id,
+                job.resolved_url.as_deref(),
+                Some(bytes_written),
+                job.etag.as_deref(),
+                job.last_modified.as_deref(),
+                job.is_resumable,
+                1,
+            );
+            db.save_chunks(&[ChunkRecord {
+                id: None,
+                download_id: download_id.clone(),
+                chunk_index: 0,
+                start_byte: 0,
+                end_byte: bytes_written.saturating_sub(1),
+                written_bytes: bytes_written,
+                is_complete: true,
+            }])?;
 
             Ok(())
         };

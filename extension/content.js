@@ -788,7 +788,7 @@ function normalizePlatformUrl(rawUrl) {
       host = document.createElement('div');
       host.id = 'tori-overlay-portal-host';
       host.setAttribute('data-tori-portal', 'true');
-      const sr = host.attachShadow({ mode: 'open' });
+      const sr = host.attachShadow({ mode: 'closed' });
       const styleEl = document.createElement('style');
       styleEl.textContent = `
         :host {
@@ -1968,6 +1968,9 @@ function normalizePlatformUrl(rawUrl) {
 
     // Pill click handler
     pill.addEventListener('click', (e) => {
+      if (!e.isTrusted) {
+        return;
+      }
       e.stopPropagation();
       e.stopImmediatePropagation();
       e.preventDefault();
@@ -2396,6 +2399,9 @@ function normalizePlatformUrl(rawUrl) {
       const playlistBtn = pn.querySelector('[data-act="open-playlist"]');
       if (playlistBtn) {
         playlistBtn.addEventListener('click', (e) => {
+          if (!e.isTrusted) {
+            return;
+          }
           e.stopPropagation();
           if (playlistBtn.disabled || playlistBtn.dataset.toriBusy === '1') {
             return;
@@ -2495,6 +2501,9 @@ function normalizePlatformUrl(rawUrl) {
       const dlBtn = pn.querySelector('[data-act="download"]');
       if (dlBtn) {
         dlBtn.addEventListener('click', (e) => {
+          if (!e.isTrusted) {
+            return;
+          }
           e.stopPropagation();
           e.stopImmediatePropagation();
           if (isDownloadInFlight || dlBtn.disabled || dlBtn.classList.contains('pending')) {
@@ -3128,17 +3137,7 @@ function normalizePlatformUrl(rawUrl) {
   });
 
   // Initial execution
-  try {
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
-      document.documentElement.dataset.toriExtensionUrl = chrome.runtime.getURL('');
-      window.addEventListener('__TORI_DISPATCH__', (e) => {
-        const { action, payload, id } = e.detail || {};
-        chrome.runtime.sendMessage({ action, ...payload }, (res) => {
-          window.dispatchEvent(new CustomEvent('__TORI_RESPONSE__' + id, { detail: res }));
-        });
-      });
-    }
-  } catch (_) {}
+  // SEC-35-04: Do not expose extension URLs or webpage-callable message dispatchers in the page DOM.
   syncSettings();
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', scanForMedia);

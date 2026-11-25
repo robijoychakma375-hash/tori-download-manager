@@ -150,6 +150,8 @@ impl Database {
                     download_id, chunk_index, start_byte, end_byte, written_bytes, is_complete
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 ON CONFLICT(download_id, chunk_index) DO UPDATE SET
+                    start_byte = excluded.start_byte,
+                    end_byte = excluded.end_byte,
                     written_bytes = excluded.written_bytes,
                     is_complete = excluded.is_complete",
                 params![

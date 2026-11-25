@@ -7,6 +7,7 @@ pub mod manager;
 pub mod planner;
 pub mod probe;
 pub mod referer;
+pub mod startup_policy;
 pub mod thumbnail;
 pub mod user_agent;
 pub mod worker;
@@ -25,6 +26,10 @@ pub use probe::{
     sanitize_filename, ProbeResult,
 };
 pub use referer::{apply_referer, sanitize_and_validate_referer};
+pub use startup_policy::{
+    is_close_to_tray_enabled_from_settings, should_auto_open_progress_window,
+    should_keep_main_window_hidden_on_startup,
+};
 pub use thumbnail::{
     backfill_missing_thumbnails, ensure_cached_thumbnail, extract_thumbnail_from_video,
     get_thumbnail_cache_dir,

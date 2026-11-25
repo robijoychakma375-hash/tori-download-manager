@@ -261,13 +261,37 @@ pub async fn probe_url_with_options(
             }
 
             if status == reqwest::StatusCode::PARTIAL_CONTENT {
-                // HTTP 206! Range is supported!
-                supports_ranges = true;
-
+                // Verify the server actually honored `Range: bytes=0-0` instead of returning
+                // the full body or a malformed Content-Range with HTTP 206.
                 if let Some(cr) = headers.get(CONTENT_RANGE).and_then(|v| v.to_str().ok()) {
-                    if let Some(parsed_total) = parse_content_range_total(cr) {
-                        total_bytes = Some(parsed_total);
+                    if let Some((start, end, parsed_total)) = parse_content_range_bounds(cr) {
+                        if let Some(t) = parsed_total {
+                            total_bytes = Some(t);
+                        } else if start == 0 && end > 0 {
+                            total_bytes = total_bytes.or_else(|| end.checked_add(1));
+                        }
+
+                        if start == 0 && end == 0 {
+                            supports_ranges = true;
+                        } else {
+                            tracing::warn!(
+                                "Probe received HTTP 206 for Range bytes=0-0 with unexpected Content-Range '{}'; disabling multi-chunk Range mode and falling back to single-stream",
+                                cr
+                            );
+                            supports_ranges = false;
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Probe received HTTP 206 with malformed Content-Range '{}'; disabling multi-chunk Range mode",
+                            cr
+                        );
+                        supports_ranges = false;
                     }
+                } else {
+                    tracing::warn!(
+                        "Probe received HTTP 206 without Content-Range header; disabling multi-chunk Range mode"
+                    );
+                    supports_ranges = false;
                 }
             } else if status == reqwest::StatusCode::OK {
                 // Server returned 200 OK: ignored Range header, single stream only
@@ -367,10 +391,11 @@ pub fn parse_content_range_total(content_range: &str) -> Option<u64> {
 pub fn parse_content_range_bounds(content_range: &str) -> Option<(u64, u64, Option<u64>)> {
     // "bytes 0-499/1234" -> (0, 499, Some(1234))
     let clean = content_range.trim();
-    if !clean.starts_with("bytes ") {
+    let prefix = clean.get(..6)?;
+    if !prefix.eq_ignore_ascii_case("bytes ") {
         return None;
     }
-    let after_bytes = &clean[6..];
+    let after_bytes = clean[6..].trim();
     let slash_parts: Vec<&str> = after_bytes.split('/').collect();
     if slash_parts.len() != 2 {
         return None;
@@ -381,10 +406,17 @@ pub fn parse_content_range_bounds(content_range: &str) -> Option<(u64, u64, Opti
     }
     let start = range_parts[0].trim().parse::<u64>().ok()?;
     let end = range_parts[1].trim().parse::<u64>().ok()?;
+    if start > end {
+        return None;
+    }
     let total = if slash_parts[1].trim() == "*" {
         None
     } else {
-        slash_parts[1].trim().parse::<u64>().ok()
+        let parsed = slash_parts[1].trim().parse::<u64>().ok()?;
+        if parsed == 0 || end >= parsed {
+            return None;
+        }
+        Some(parsed)
     };
     Some((start, end, total))
 }

@@ -1,5 +1,8 @@
 use futures_util::StreamExt;
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_RANGE, IF_RANGE, RANGE};
+use reqwest::header::{
+    HeaderMap, ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, LAST_MODIFIED,
+    RANGE,
+};
 use reqwest::Client;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -21,6 +24,75 @@ const DISK_SYNC_INTERVAL: Duration = Duration::from_secs(15);
 const RESPONSE_HEADER_TIMEOUT: Duration = Duration::from_secs(30);
 const STREAM_IDLE_READ_TIMEOUT: Duration = Duration::from_secs(45);
 const MAX_PROGRESS_RECONNECTS: u32 = 64;
+const MAX_STREAM_FULL_REWINDS: u32 = 1;
+
+fn validate_response_validators(
+    expected_etag: Option<&str>,
+    expected_last_modified: Option<&str>,
+    headers: &HeaderMap,
+) -> Result<()> {
+    if let Some(exp_etag) = expected_etag {
+        if let Some(actual_etag) = headers.get(ETAG).and_then(|v| v.to_str().ok()) {
+            if actual_etag.trim() != exp_etag.trim() {
+                return Err(EngineError::ETagMismatch {
+                    expected: Some(exp_etag.trim().to_string()),
+                    actual: Some(actual_etag.trim().to_string()),
+                });
+            }
+        }
+    }
+    if let Some(exp_lm) = expected_last_modified {
+        if let Some(actual_lm) = headers.get(LAST_MODIFIED).and_then(|v| v.to_str().ok()) {
+            if actual_lm.trim() != exp_lm.trim() {
+                return Err(EngineError::ETagMismatch {
+                    expected: Some(exp_lm.trim().to_string()),
+                    actual: Some(actual_lm.trim().to_string()),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_206_content_range(
+    headers: &HeaderMap,
+    expected_start: u64,
+    expected_total: Option<u64>,
+) -> Result<(u64, u64, Option<u64>)> {
+    let cr = headers
+        .get(CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            EngineError::InvalidRangeHeader(
+                "HTTP 206 Partial Content response missing Content-Range header".to_string(),
+            )
+        })?;
+
+    let (start, end, total) = parse_content_range_bounds(cr).ok_or_else(|| {
+        EngineError::InvalidRangeHeader(format!(
+            "HTTP 206 Partial Content response has malformed Content-Range header: {}",
+            cr
+        ))
+    })?;
+
+    if start != expected_start {
+        return Err(EngineError::MismatchedContentRange {
+            expected_start,
+            actual_range: cr.to_string(),
+        });
+    }
+
+    if let (Some(exp_total), Some(actual_total)) = (expected_total, total) {
+        if actual_total != exp_total {
+            return Err(EngineError::ETagMismatch {
+                expected: Some(format!("total_bytes={}", exp_total)),
+                actual: Some(format!("total_bytes={}", actual_total)),
+            });
+        }
+    }
+
+    Ok((start, end, total))
+}
 
 fn is_transient_error(err: &EngineError) -> bool {
     match err {
@@ -294,35 +366,56 @@ where
             return Err(err);
         }
 
+        let expected_job_total = db
+            .get_job(&chunk.download_id)
+            .ok()
+            .flatten()
+            .and_then(|j| j.total_bytes);
+
         if status == reqwest::StatusCode::OK {
-            // Server returned 200 OK instead of 206 Partial Content
-            if fetch_start > 0 {
-                // We asked for a resume/sub-range, but server sent entire file from 0
-                return Err(EngineError::ETagMismatch {
-                    expected: etag.map(String::from),
-                    actual: None,
+            // Check resource identity validators first so changed representations report ETagMismatch.
+            validate_response_validators(etag, last_modified, resp.headers())?;
+
+            // Server returned 200 OK instead of 206 Partial Content.
+            // If we requested a non-zero offset OR a sub-range smaller than the full resource,
+            // the server ignored our Range header (or resource changed size) — trigger clean fallback.
+            let is_partial_slice = expected_job_total
+                .map(|tot| fetch_end.saturating_add(1) < tot)
+                .unwrap_or(false);
+            let resp_len_mismatch = resp
+                .headers()
+                .get(CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .map(|cl| {
+                    expected_job_total.map(|tot| cl != tot).unwrap_or(false)
+                        || cl > fetch_end.saturating_sub(fetch_start).saturating_add(1)
+                })
+                .unwrap_or(false);
+
+            if fetch_start > 0 || is_partial_slice || resp_len_mismatch {
+                return Err(EngineError::RangeNotSupported(200));
+            }
+        } else if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            // Strictly validate resource validators and Content-Range on every 206 response
+            // before writing a single byte to disk.
+            validate_response_validators(etag, last_modified, resp.headers())?;
+            let (_start, cr_end, _cr_total) =
+                validate_206_content_range(resp.headers(), fetch_start, expected_job_total)?;
+            if cr_end > fetch_end {
+                let actual_range = resp
+                    .headers()
+                    .get(CONTENT_RANGE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("<missing>")
+                    .to_string();
+                return Err(EngineError::MismatchedContentRange {
+                    expected_start: fetch_start,
+                    actual_range,
                 });
             }
-        } else if status != reqwest::StatusCode::PARTIAL_CONTENT {
+        } else {
             return Err(EngineError::HttpStatus(status.as_u16()));
-        }
-
-        // Validate Content-Range header if 206
-        if status == reqwest::StatusCode::PARTIAL_CONTENT {
-            if let Some(cr) = resp
-                .headers()
-                .get(CONTENT_RANGE)
-                .and_then(|v| v.to_str().ok())
-            {
-                if let Some((start, _end, _total)) = parse_content_range_bounds(cr) {
-                    if start != fetch_start {
-                        return Err(EngineError::MismatchedContentRange {
-                            expected_start: fetch_start,
-                            actual_range: cr.to_string(),
-                        });
-                    }
-                }
-            }
         }
 
         let mut stream = resp.bytes_stream();
@@ -636,6 +729,47 @@ pub(crate) async fn download_stream_with_limiters<F>(
     max_retries: Option<u32>,
     referer: Option<&str>,
     user_agent: Option<&str>,
+    on_bytes_written: F,
+) -> Result<u64>
+where
+    F: FnMut(u64),
+{
+    download_stream_with_range_policy(
+        client,
+        url,
+        writer,
+        db,
+        download_id,
+        cancel_token,
+        limiter,
+        job_limiter,
+        max_retries,
+        referer,
+        user_agent,
+        None,
+        None,
+        true,
+        on_bytes_written,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn download_stream_with_range_policy<F>(
+    client: &Client,
+    url: &str,
+    writer: &PartFileWriter,
+    db: &Database,
+    download_id: &str,
+    cancel_token: &CancellationToken,
+    limiter: Option<&Arc<crate::engine::limiter::BandwidthLimiter>>,
+    job_limiter: Option<&Arc<crate::engine::limiter::BandwidthLimiter>>,
+    max_retries: Option<u32>,
+    referer: Option<&str>,
+    user_agent: Option<&str>,
+    expected_etag: Option<&str>,
+    expected_last_modified: Option<&str>,
+    initial_allow_range_resume: bool,
     mut on_bytes_written: F,
 ) -> Result<u64>
 where
@@ -643,18 +777,32 @@ where
 {
     let mut retries = 0u32;
     let mut progress_reconnects = 0u32;
+    let mut full_rewinds = 0u32;
+    let mut allow_range_resume = initial_allow_range_resume;
     let max_retry_count = max_retries.unwrap_or(3);
     let mut total_written: u64 = 0;
     let mut expected_total: Option<u64> = None;
+    let mut current_etag: Option<String> = expected_etag.map(String::from);
+    let mut current_last_modified: Option<String> = expected_last_modified.map(String::from);
 
     if let Ok(Some(job)) = db.get_job(download_id) {
-        expected_total = job.total_bytes;
+        if initial_allow_range_resume {
+            expected_total = job.total_bytes;
+        }
+        if current_etag.is_none() {
+            current_etag = job.etag;
+        }
+        if current_last_modified.is_none() {
+            current_last_modified = job.last_modified;
+        }
     }
 
     // Check if there is existing progress for resume
-    if let Ok(chunks) = db.get_chunks(download_id) {
-        if let Some(c) = chunks.into_iter().next() {
-            total_written = c.written_bytes;
+    if allow_range_resume {
+        if let Ok(chunks) = db.get_chunks(download_id) {
+            if let Some(c) = chunks.into_iter().next() {
+                total_written = c.written_bytes;
+            }
         }
     }
 
@@ -669,8 +817,16 @@ where
         }
 
         let mut req = client.get(url).header(ACCEPT_ENCODING, "identity");
-        if total_written > 0 {
+        let sent_range_request = allow_range_resume && total_written > 0;
+        if sent_range_request {
             req = req.header(RANGE, format!("bytes={}-", total_written));
+            if let Some(ref tag) = current_etag {
+                if !tag.starts_with("W/") {
+                    req = req.header(IF_RANGE, tag);
+                }
+            } else if let Some(ref lm) = current_last_modified {
+                req = req.header(IF_RANGE, lm);
+            }
         }
         req = crate::engine::referer::apply_referer(req, referer, url);
         req = crate::engine::user_agent::apply_user_agent(req, user_agent);
@@ -732,15 +888,157 @@ where
             return Err(err);
         }
 
+        if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+            // Server rejected our resume offset with 416; perform at most ONE clean full-body restart.
+            if sent_range_request && full_rewinds < MAX_STREAM_FULL_REWINDS {
+                full_rewinds += 1;
+                allow_range_resume = false;
+                writer.truncate_to(0)?;
+                total_written = 0;
+                expected_total = None;
+                let _ = db.update_chunk_progress(download_id, 0, 0, false);
+                let _ = db.update_downloaded_bytes(download_id, 0);
+                continue;
+            }
+            return Err(EngineError::HttpStatus(416));
+        }
+
         if !status.is_success() {
             return Err(EngineError::HttpStatus(status.as_u16()));
         }
 
-        // If server responded 200 OK to a range request, it rewound and streams from 0.
-        // Truncate the part file back to 0 so stale bytes beyond a shorter new response cannot survive.
-        if status == reqwest::StatusCode::OK && total_written > 0 {
-            writer.truncate_to(0)?;
-            total_written = 0;
+        if status == reqwest::StatusCode::OK {
+            // Server returned full body from offset 0.
+            if total_written > 0 {
+                if full_rewinds >= MAX_STREAM_FULL_REWINDS {
+                    return Err(EngineError::Other(
+                        "Single-stream download exceeded maximum full rewind limit".to_string(),
+                    ));
+                }
+                full_rewinds += 1;
+                writer.truncate_to(0)?;
+                total_written = 0;
+                let _ = db.update_chunk_progress(download_id, 0, 0, false);
+                let _ = db.update_downloaded_bytes(download_id, 0);
+            }
+            // Refresh expected_total and validators from the authoritative 200 OK full-body response.
+            if let Some(cl) = resp
+                .headers()
+                .get(CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+            {
+                expected_total = Some(cl);
+            }
+            if let Some(et) = resp.headers().get(ETAG).and_then(|v| v.to_str().ok()) {
+                current_etag = Some(et.trim().to_string());
+            }
+            if let Some(lm) = resp
+                .headers()
+                .get(LAST_MODIFIED)
+                .and_then(|v| v.to_str().ok())
+            {
+                current_last_modified = Some(lm.trim().to_string());
+            }
+        } else if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            let cr = resp
+                .headers()
+                .get(CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| {
+                    EngineError::InvalidRangeHeader(
+                        "Stream HTTP 206 response missing Content-Range header".to_string(),
+                    )
+                })?;
+            let (cr_start, cr_end, cr_total) = parse_content_range_bounds(cr).ok_or_else(|| {
+                EngineError::InvalidRangeHeader(format!(
+                    "Stream HTTP 206 response has malformed Content-Range header: {}",
+                    cr
+                ))
+            })?;
+
+            if sent_range_request {
+                let validator_ok = validate_response_validators(
+                    current_etag.as_deref(),
+                    current_last_modified.as_deref(),
+                    resp.headers(),
+                )
+                .is_ok();
+                let total_ok = match (expected_total, cr_total) {
+                    (Some(exp), Some(actual)) => exp == actual,
+                    _ => true,
+                };
+
+                if !validator_ok || !total_ok {
+                    if full_rewinds < MAX_STREAM_FULL_REWINDS {
+                        full_rewinds += 1;
+                        allow_range_resume = false;
+                        writer.truncate_to(0)?;
+                        total_written = 0;
+                        expected_total = None;
+                        let _ = db.update_chunk_progress(download_id, 0, 0, false);
+                        let _ = db.update_downloaded_bytes(download_id, 0);
+                        continue;
+                    }
+                    return Err(EngineError::ETagMismatch {
+                        expected: current_etag.clone(),
+                        actual: resp
+                            .headers()
+                            .get(ETAG)
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.trim().to_string()),
+                    });
+                }
+
+                if cr_start == 0 && total_written > 0 {
+                    // Broken CDN sent 206 from offset 0 instead of requested resume offset!
+                    if full_rewinds < MAX_STREAM_FULL_REWINDS {
+                        full_rewinds += 1;
+                        allow_range_resume = false;
+                        writer.truncate_to(0)?;
+                        total_written = 0;
+                        if let Some(t) = cr_total {
+                            expected_total = Some(t);
+                        }
+                        let _ = db.update_chunk_progress(download_id, 0, 0, false);
+                        let _ = db.update_downloaded_bytes(download_id, 0);
+                        // Safe to stream from byte 0 right now if this response spans the full body
+                        if cr_total.map(|t| cr_end + 1 == t).unwrap_or(false) {
+                            // Continue streaming from byte 0
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        return Err(EngineError::MismatchedContentRange {
+                            expected_start: total_written,
+                            actual_range: cr.to_string(),
+                        });
+                    }
+                } else if cr_start != total_written {
+                    return Err(EngineError::MismatchedContentRange {
+                        expected_start: total_written,
+                        actual_range: cr.to_string(),
+                    });
+                } else if let Some(t) = cr_total {
+                    expected_total = Some(t);
+                }
+            } else {
+                // We did NOT send a Range header, yet server returned HTTP 206.
+                // Only accept if it cleanly spans offset 0 through the entire resource.
+                let is_complete_from_zero =
+                    cr_start == 0 && cr_total.map(|t| cr_end + 1 == t).unwrap_or(false);
+                if !is_complete_from_zero {
+                    return Err(EngineError::MismatchedContentRange {
+                        expected_start: 0,
+                        actual_range: cr.to_string(),
+                    });
+                }
+                if total_written > 0 {
+                    writer.truncate_to(0)?;
+                    total_written = 0;
+                }
+                expected_total = cr_total;
+            }
         }
 
         let mut stream = resp.bytes_stream();

@@ -381,11 +381,12 @@ pub fn run() {
                 setup_tools_manager.run_background_scheduler(tools_shutdown),
             );
 
-            if setup_minimized_flag.load(std::sync::atomic::Ordering::SeqCst)
-                && manager.pending_playlist_requests_snapshot().is_empty()
-            {
+            if tdm_core::should_keep_main_window_hidden_on_startup(
+                setup_minimized_flag.load(std::sync::atomic::Ordering::SeqCst),
+                !manager.pending_playlist_requests_snapshot().is_empty(),
+            ) {
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.minimize();
+                    let _ = window.hide();
                     lifecycle::trim_memory();
                 }
             }

@@ -932,19 +932,27 @@ async function openPlaylistInDesktopWithDedup(rawUrl) {
   return run;
 }
 
-// Proactive pairing on startup if unconfigured (wait for stored settings first!)
-chrome.runtime.onInstalled.addListener(async () => {
+// Proactive passive pairing check on install/startup:
+// Never invoke Native Messaging automatically when TORI Desktop is not already running,
+// preventing unwanted background Desktop spawns when the browser auto-launches on OS boot.
+async function passivePairIfDesktopRunning() {
   await ensureSettingsLoaded();
-  if (!extSettings.key) {
-    autoPairWithDesktop(false);
+  if (extSettings.key) {
+    return { ok: true, skipped: true, reason: 'already_paired' };
   }
+  const probe = await probeDesktopPassive(null, '', true);
+  if (probe.desktop_running && !probe.authenticated) {
+    return autoPairWithDesktop(false);
+  }
+  return { ok: false, skipped: true, reason: 'desktop_not_running' };
+}
+
+chrome.runtime.onInstalled.addListener(async () => {
+  await passivePairIfDesktopRunning();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-  await ensureSettingsLoaded();
-  if (!extSettings.key) {
-    autoPairWithDesktop(false);
-  }
+  await passivePairIfDesktopRunning();
 });
 
 /**
@@ -1641,8 +1649,47 @@ function isDomainExcluded(urlStr, referrerStr) {
   return check(urlStr) || check(referrerStr);
 }
 
+const BROWSER_DOWNLOAD_MAX_AGE_MS = 60 * 1000;
+
+/**
+ * Pure gate preventing browsers (e.g. Microsoft Edge auto-launch on Windows startup)
+ * from replaying historical/completed/interrupted DownloadItem entries into TORI.
+ */
+function shouldInterceptBrowserDownload(item, nowMs = Date.now()) {
+  if (!item || item.id === undefined || item.id === null) {
+    return { allow: false, reason: 'MISSING_ITEM' };
+  }
+
+  // Only intercept actively progressing downloads; ignore historical 'complete' or 'interrupted' items.
+  if (typeof item.state === 'string' && item.state.toLowerCase() !== 'in_progress') {
+    return { allow: false, reason: 'NOT_IN_PROGRESS' };
+  }
+
+  if (item.paused === true) {
+    return { allow: false, reason: 'PAUSED' };
+  }
+
+  if (item.endTime) {
+    return { allow: false, reason: 'ALREADY_ENDED' };
+  }
+
+  if (item.startTime !== undefined && item.startTime !== null && item.startTime !== '') {
+    const startMs = typeof item.startTime === 'number' ? item.startTime : Date.parse(String(item.startTime));
+    if (Number.isFinite(startMs) && nowMs - startMs > BROWSER_DOWNLOAD_MAX_AGE_MS) {
+      return { allow: false, reason: 'STALE_HISTORICAL_ITEM' };
+    }
+  }
+
+  return { allow: true };
+}
+
 async function handleBrowserDownload(item) {
   if (!item || !item.id) return;
+  const eligibility = shouldInterceptBrowserDownload(item, Date.now());
+  if (!eligibility.allow) {
+    console.debug('[TORI] Skipping non-active/historical browser download:', item.id, eligibility.reason);
+    return;
+  }
   if (recentlyInterceptedDownloadIds.has(item.id)) return;
   if (inFlightDownloadIds.has(item.id)) return;
 
@@ -1977,18 +2024,311 @@ async function openDesktopWindowUnified() {
 }
 
 // -------------------------------------------------------------------------
-// Runtime Message Listener (Popup & Content Script interaction)
+// SEC-35-04: Runtime Sender Authentication, Authorization & Schema Validation
+// -------------------------------------------------------------------------
+const AUTHORIZED_EXTENSION_PAGES = new Set([
+  'popup/popup.html',
+  'options/options.html',
+]);
+
+const EXTENSION_PAGE_ONLY_ACTIONS = new Set([
+  'INITIATE_PAIRING',
+  'RECONNECT_DESKTOP',
+  'PING_DESKTOP',
+  'GET_CONNECTION_STATUS',
+  'GET_ALL_MEDIA',
+  'GET_DOWNLOADS',
+  'PAUSE_DOWNLOAD',
+  'RESUME_DOWNLOAD',
+  'CANCEL_DOWNLOAD',
+  'RETRY_DOWNLOAD',
+  'SHOW_DESKTOP',
+  'OPEN_OPTIONS',
+  'OPEN_POPUP_TAB',
+  'RESOLVE_PLAYLIST',
+  'ENQUEUE_PLAYLIST',
+]);
+
+const CONTENT_SCRIPT_ALLOWED_ACTIONS = new Set([
+  'RECORD_MEDIA_FROM_DOM',
+  'GET_TAB_MEDIA',
+  'RESOLVE_MEDIA',
+  'OPEN_PLAYLIST',
+  'START_DOWNLOAD',
+  'START_MEDIA_DOWNLOAD',
+]);
+
+const ALLOWED_PRIORITIES = new Set(['low', 'normal', 'high']);
+const CONTENT_RATE_WINDOW_MS = 10000;
+const CONTENT_ACTION_LIMITS = {
+  START_DOWNLOAD: 6,
+  START_MEDIA_DOWNLOAD: 6,
+  OPEN_PLAYLIST: 3,
+  RESOLVE_MEDIA: 20,
+};
+const contentActionTimestamps = new Map();
+
+function resetSecurityRateLimits() {
+  contentActionTimestamps.clear();
+}
+
+function checkContentRateLimit(tabId, action, nowMs = Date.now()) {
+  const limit = CONTENT_ACTION_LIMITS[action];
+  if (!limit) return true;
+  const key = `${tabId}:${action}`;
+  const existing = contentActionTimestamps.get(key) || [];
+  const recent = existing.filter((ts) => nowMs - ts < CONTENT_RATE_WINDOW_MS);
+  if (recent.length >= limit) {
+    contentActionTimestamps.set(key, recent);
+    return false;
+  }
+  recent.push(nowMs);
+  contentActionTimestamps.set(key, recent);
+  if (contentActionTimestamps.size > 500) {
+    for (const [k, list] of contentActionTimestamps.entries()) {
+      if (!list.length || nowMs - list[list.length - 1] > CONTENT_RATE_WINDOW_MS * 2) {
+        contentActionTimestamps.delete(k);
+      }
+    }
+  }
+  return true;
+}
+
+function hasControlChars(str) {
+  return /[\x00-\x1f\x7f]/.test(str);
+}
+
+function isValidHttpUrl(raw, maxLen = 4096) {
+  if (typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > maxLen) return false;
+  if (trimmed.startsWith('-') || hasControlChars(trimmed) || /\s/.test(trimmed)) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
+function isSafeFormatId(raw) {
+  if (typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 128) return false;
+  if (trimmed.startsWith('-') || hasControlChars(trimmed)) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9_+./:=,\-<>\[\]]{0,127}$/.test(trimmed);
+}
+
+function isSafeJobId(raw) {
+  if (typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  return /^[A-Za-z0-9_-]{1,128}$/.test(trimmed);
+}
+
+function sanitizeFilenameInput(raw) {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'string') return undefined;
+  const cleaned = raw
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\.\.+/g, '.')
+    .trim()
+    .slice(0, 255);
+  return cleaned || undefined;
+}
+
+function sanitizePriorityInput(raw) {
+  if (typeof raw === 'string') {
+    const lower = raw.trim().toLowerCase();
+    if (ALLOWED_PRIORITIES.has(lower)) return lower;
+  }
+  return 'normal';
+}
+
+function sanitizeOptionalDestination(raw, senderKind) {
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: true, value: undefined };
+  }
+  if (senderKind !== 'extension_page') {
+    return {
+      ok: false,
+      code: 'FORBIDDEN_FIELD',
+      message: 'Content scripts are not permitted to specify custom download destinations',
+    };
+  }
+  if (typeof raw !== 'string') {
+    return { ok: false, code: 'INVALID_REQUEST', message: 'Invalid destination field' };
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: undefined };
+  if (trimmed.length > 1024 || hasControlChars(trimmed) || /(^|[\\/])\.\.([\\/]|$)/.test(trimmed)) {
+    return { ok: false, code: 'INVALID_REQUEST', message: 'Unsafe destination path rejected' };
+  }
+  return { ok: true, value: trimmed };
+}
+
+function getExtensionBaseUrl() {
+  try {
+    if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.getURL === 'function') {
+      const base = chrome.runtime.getURL('');
+      return base.endsWith('/') ? base : base + '/';
+    }
+  } catch (_) {}
+  return '';
+}
+
+/**
+ * Classifies a chrome.runtime.onMessage sender strictly using browser-populated metadata.
+ */
+function classifyRuntimeSender(sender) {
+  if (!sender || typeof sender !== 'object') {
+    return { kind: 'untrusted', reason: 'MISSING_SENDER' };
+  }
+
+  const expectedId = typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.id : null;
+  if (!expectedId || sender.id !== expectedId) {
+    return { kind: 'untrusted', reason: 'FOREIGN_SENDER_ID' };
+  }
+
+  const baseUrl = getExtensionBaseUrl();
+  const senderUrl = typeof sender.url === 'string' ? sender.url : '';
+  const senderOrigin = typeof sender.origin === 'string' ? sender.origin : '';
+  const frameId = sender.frameId;
+
+  if (baseUrl && senderUrl.startsWith(baseUrl)) {
+    const expectedOrigin = baseUrl.slice(0, -1);
+    if (senderOrigin && senderOrigin !== expectedOrigin) {
+      return { kind: 'untrusted', reason: 'EXTENSION_ORIGIN_MISMATCH' };
+    }
+    if (frameId !== undefined && frameId !== 0) {
+      return { kind: 'untrusted', reason: 'EXTENSION_SUBFRAME_FORBIDDEN' };
+    }
+    if (sender.documentLifecycle && sender.documentLifecycle !== 'active') {
+      return { kind: 'untrusted', reason: 'INACTIVE_DOCUMENT_LIFECYCLE' };
+    }
+    const relPath = senderUrl.slice(baseUrl.length).split(/[?#]/)[0];
+    if (AUTHORIZED_EXTENSION_PAGES.has(relPath)) {
+      return {
+        kind: 'extension_page',
+        page: relPath,
+        tabId: sender.tab && typeof sender.tab.id === 'number' ? sender.tab.id : undefined,
+      };
+    }
+    return { kind: 'untrusted', reason: 'UNAUTHORIZED_EXTENSION_DOCUMENT' };
+  }
+
+  if (sender.tab && typeof sender.tab.id === 'number' && sender.tab.id >= 0 && isValidHttpUrl(senderUrl)) {
+    try {
+      const parsed = new URL(senderUrl);
+      if (senderOrigin && senderOrigin !== 'null' && senderOrigin !== parsed.origin) {
+        return { kind: 'untrusted', reason: 'CONTENT_ORIGIN_MISMATCH' };
+      }
+      return {
+        kind: 'content_script',
+        tabId: sender.tab.id,
+        tabUrl: typeof sender.tab.url === 'string' && isValidHttpUrl(sender.tab.url) ? sender.tab.url : senderUrl,
+        frameUrl: senderUrl,
+      };
+    } catch (_) {
+      return { kind: 'untrusted', reason: 'INVALID_CONTENT_URL' };
+    }
+  }
+
+  return { kind: 'untrusted', reason: 'UNTRUSTED_CONTEXT' };
+}
+
+function authorizeRuntimeMessage(message, sender, nowMs = Date.now()) {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) {
+    return { ok: false, code: 'INVALID_MESSAGE', message: 'Malformed runtime message payload' };
+  }
+
+  const action = typeof message.action === 'string' ? message.action.trim() : '';
+  if (!action) {
+    return { ok: false, code: 'INVALID_MESSAGE', message: 'Missing runtime message action' };
+  }
+
+  const senderInfo = classifyRuntimeSender(sender);
+  if (senderInfo.kind === 'untrusted') {
+    return {
+      ok: false,
+      code: 'UNAUTHORIZED_SENDER',
+      message: `Unauthorized runtime message sender (${senderInfo.reason})`,
+      senderInfo,
+    };
+  }
+
+  if (EXTENSION_PAGE_ONLY_ACTIONS.has(action)) {
+    if (senderInfo.kind !== 'extension_page') {
+      return {
+        ok: false,
+        code: 'UNAUTHORIZED_SENDER',
+        message: `Action ${action} is restricted to extension UI contexts`,
+        senderInfo,
+      };
+    }
+    return { ok: true, action, senderInfo };
+  }
+
+  if (CONTENT_SCRIPT_ALLOWED_ACTIONS.has(action)) {
+    if (senderInfo.kind === 'content_script' && !checkContentRateLimit(senderInfo.tabId, action, nowMs)) {
+      return {
+        ok: false,
+        code: 'RATE_LIMITED',
+        message: `Too many ${action} requests from tab`,
+        senderInfo,
+      };
+    }
+    return { ok: true, action, senderInfo };
+  }
+
+  return {
+    ok: false,
+    code: 'UNKNOWN_ACTION',
+    message: 'Unsupported runtime message action',
+    senderInfo,
+  };
+}
+
+if (typeof globalThis !== 'undefined') {
+  globalThis.__TORI_BG_SECURITY__ = {
+    classifyRuntimeSender,
+    authorizeRuntimeMessage,
+    shouldInterceptBrowserDownload,
+    passivePairIfDesktopRunning,
+    isValidHttpUrl,
+    isSafeFormatId,
+    isSafeJobId,
+    sanitizeFilenameInput,
+    sanitizePriorityInput,
+    sanitizeOptionalDestination,
+    resetSecurityRateLimits,
+    EXTENSION_PAGE_ONLY_ACTIONS,
+    CONTENT_SCRIPT_ALLOWED_ACTIONS,
+  };
+}
+
+// -------------------------------------------------------------------------
+// Runtime Message Listener (Popup, Options & Content Script interaction)
 // -------------------------------------------------------------------------
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const tabId = sender.tab?.id || message.tabId;
+  const auth = authorizeRuntimeMessage(message, sender);
+  if (!auth.ok) {
+    sendResponse({
+      status: 'error',
+      code: auth.code,
+      message: auth.message,
+    });
+    return false;
+  }
 
-  if (message.action === 'GET_ALL_MEDIA') {
-    // Restrict GET_ALL_MEDIA to internal extension contexts (popup / options).
-    // Reject calls originated from content scripts (where sender.tab is defined on a non-extension URL) to prevent cross-tab media exposure.
-    if (sender.tab && sender.url && !sender.url.startsWith('chrome-extension://') && !sender.url.startsWith('edge-extension://') && !sender.url.startsWith('moz-extension://') && !sender.url.startsWith('extension://')) {
-      sendResponse({ status: 'error', message: 'Unauthorized: GET_ALL_MEDIA cannot be called from a content script' });
-      return false;
-    }
+  const { action, senderInfo } = auth;
+  const isOptionsPage = senderInfo.kind === 'extension_page' && senderInfo.page === 'options/options.html';
+  const scopedTabId =
+    senderInfo.kind === 'content_script'
+      ? senderInfo.tabId
+      : (Number.isInteger(message.tabId) && message.tabId >= 0 ? message.tabId : senderInfo.tabId);
+
+  if (action === 'GET_ALL_MEDIA') {
     ensureSessionRestored().then(() => {
       const all = [];
       for (const candidates of tabMediaCache.values()) {
@@ -1999,20 +2339,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.action === 'GET_TAB_MEDIA') {
-    const targetTabId = message.tabId !== undefined ? message.tabId : sender.tab?.id;
+  if (action === 'GET_TAB_MEDIA') {
+    const targetTabId = scopedTabId;
     ensureSessionRestored().then(() => {
-      const list = targetTabId ? (tabMediaCache.get(targetTabId) || []) : [];
+      const list = typeof targetTabId === 'number' ? (tabMediaCache.get(targetTabId) || []) : [];
       sendResponse({ status: 'ok', media: list });
     });
     return true;
   }
 
-  if (message.action === 'RECORD_MEDIA_FROM_DOM') {
-    if (tabId && message.candidate) {
-      const classification = classifyMedia(message.candidate.url, message.candidate.content_type, [], 200, tabId);
-      recordCandidate(tabId, {
-        ...message.candidate,
+  if (action === 'RECORD_MEDIA_FROM_DOM') {
+    if (
+      typeof scopedTabId === 'number' &&
+      message.candidate &&
+      typeof message.candidate === 'object' &&
+      !Array.isArray(message.candidate) &&
+      isValidHttpUrl(message.candidate.url)
+    ) {
+      const rawCand = message.candidate;
+      const safeCandidateUrl = rawCand.url.trim();
+      const safeContentType =
+        typeof rawCand.content_type === 'string' && !hasControlChars(rawCand.content_type)
+          ? rawCand.content_type.trim().slice(0, 128)
+          : '';
+      const safeFilename = sanitizeFilenameInput(rawCand.filename);
+      const safeTitle =
+        typeof rawCand.title === 'string' && !hasControlChars(rawCand.title)
+          ? rawCand.title.trim().slice(0, 512)
+          : undefined;
+      const classification = classifyMedia(safeCandidateUrl, safeContentType, [], 200, scopedTabId);
+      recordCandidate(scopedTabId, {
+        url: safeCandidateUrl,
+        content_type: safeContentType,
+        filename: safeFilename,
+        title: safeTitle,
+        source: typeof rawCand.source === 'string' ? rawCand.source.slice(0, 32) : 'dom',
         type: classification.type,
         format: classification.format,
         is_segment: classification.is_segment === true,
@@ -2026,20 +2387,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       return true;
     }
-    sendResponse({ status: 'ignored' });
+    sendResponse({ status: 'error', code: 'INVALID_REQUEST', message: 'Invalid media candidate payload' });
     return false;
   }
 
-  if (message.action === 'INITIATE_PAIRING') {
+  if (action === 'INITIATE_PAIRING') {
     autoPairWithDesktop(true).then((res) => {
-      sendResponse(res);
+      if (res && typeof res === 'object' && !isOptionsPage) {
+        const sanitized = { ...res };
+        delete sanitized.token;
+        sendResponse(sanitized);
+      } else {
+        sendResponse(res);
+      }
     });
     return true;
   }
 
-  if (message.action === 'GET_CONNECTION_STATUS') {
-    const targetPort = Number(message.port) || Number(extSettings.port) || 6800;
-    const token = message.key !== undefined ? message.key : (extSettings.key || '');
+  if (action === 'GET_CONNECTION_STATUS') {
+    const rawPort = Number(message.port);
+    const targetPort = Number.isInteger(rawPort) && rawPort >= 1024 && rawPort <= 65535
+      ? rawPort
+      : (Number(extSettings.port) || 6800);
+    const token = typeof message.key === 'string' ? message.key : (extSettings.key || '');
     probeDesktopPassive(targetPort, token, !message.port).then((probe) => {
       if (probe.status === 'ok' && probe.authenticated) {
         sendResponse({
@@ -2072,11 +2442,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.action === 'PING_DESKTOP') {
+  if (action === 'PING_DESKTOP') {
     const start = Date.now();
     const hasCustomPort = message.port !== undefined && message.port !== null && message.port !== '';
-    let targetPort = hasCustomPort ? Number(message.port) : (Number(extSettings.port) || 6800);
-    let targetKey = message.key !== undefined ? message.key : (extSettings.key || '');
+    const parsedPort = Number(message.port);
+    let targetPort = hasCustomPort && Number.isInteger(parsedPort) && parsedPort >= 1024 && parsedPort <= 65535
+      ? parsedPort
+      : (Number(extSettings.port) || 6800);
+    let targetKey = typeof message.key === 'string' ? message.key : (extSettings.key || '');
     const isPassive = message.passive === true;
 
     (async () => {
@@ -2089,29 +2462,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           targetPort = pairRes.port || targetPort;
           targetKey = pairRes.token;
           result = await probeDesktopPassive(targetPort, targetKey, false);
-          result.token = pairRes.token;
+          if (isOptionsPage) {
+            result.token = pairRes.token;
+          }
         }
       }
 
+      if (!isOptionsPage && result && typeof result === 'object') {
+        delete result.token;
+      }
       result.latency = result.latency || Math.max(1, Date.now() - start);
       sendResponse(result);
     })();
     return true; // Keep channel open for async response
   }
 
-  if (message.action === 'RECONNECT_DESKTOP') {
+  if (action === 'RECONNECT_DESKTOP') {
     const start = Date.now();
     (async () => {
       await ensureSettingsLoaded();
-      const targetPort = Number(message.port) || Number(extSettings.port) || 6800;
-      let result = await probeDesktopPassive(message.port || null, message.key, !message.port);
+      const parsedPort = Number(message.port);
+      const validCustomPort = Number.isInteger(parsedPort) && parsedPort >= 1024 && parsedPort <= 65535 ? parsedPort : null;
+      const targetPort = validCustomPort || Number(extSettings.port) || 6800;
+      const customKey = typeof message.key === 'string' ? message.key : undefined;
+      let result = await probeDesktopPassive(validCustomPort, customKey, !validCustomPort);
 
       // Explicitly force pairing / native check when user initiates reconnect
       if (!result.authenticated) {
         const pairRes = await autoPairWithDesktop(true);
         if (pairRes.ok && pairRes.token) {
           result = await probeDesktopPassive(pairRes.port || targetPort, pairRes.token, false);
-          result.token = pairRes.token;
+          if (isOptionsPage) {
+            result.token = pairRes.token;
+          }
           result.nativeHost = true;
         } else {
           result.nativeHost = false;
@@ -2121,20 +2504,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       }
 
+      if (!isOptionsPage && result && typeof result === 'object') {
+        delete result.token;
+      }
       result.latency = Math.max(1, Date.now() - start);
       sendResponse(result);
     })();
     return true;
   }
 
-  if (message.action === 'SHOW_DESKTOP') {
+  if (action === 'SHOW_DESKTOP') {
     openDesktopWindowUnified().then((res) => {
       sendResponse(res);
     });
     return true;
   }
 
-  if (message.action === 'OPEN_OPTIONS') {
+  if (action === 'OPEN_OPTIONS') {
     try {
       if (chrome.runtime.openOptionsPage) {
         chrome.runtime.openOptionsPage(() => {
@@ -2159,32 +2545,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.action === 'OPEN_POPUP_TAB') {
+  if (action === 'OPEN_POPUP_TAB') {
     chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html') }, (tab) => {
       sendResponse({ status: 'ok', tabId: tab?.id });
     });
     return true;
   }
 
-  if (message.action === 'START_DOWNLOAD') {
-    const rawUrl = (message.url || '').trim();
+  if (action === 'START_DOWNLOAD') {
+    const rawUrl = typeof message.url === 'string' ? message.url.trim() : '';
     const lower = rawUrl.toLowerCase();
-    const sourcePageUrl = message.page_url || message.referer || sender.tab?.url;
-    const safeReferer = deriveSafeReferer(sourcePageUrl, rawUrl);
-    const safeUserAgent = getSafeUserAgent(message.user_agent);
 
-    if (lower.includes('watch.plex.tv') || lower.includes('plex.tv')) {
+    if (!isValidHttpUrl(rawUrl)) {
       sendResponse({
         status: 'error',
-        message: 'watch.plex.tv content is DRM-protected and not licensed for offline download.',
+        code: 'INVALID_URL',
+        message: 'Invalid or non-HTTP media URL. Direct http(s) URL required.',
       });
       return false;
     }
 
-    if (!rawUrl || rawUrl.startsWith('blob:') || rawUrl.startsWith('data:') || rawUrl.startsWith('javascript:')) {
+    const destCheck = sanitizeOptionalDestination(message.destination, senderInfo.kind);
+    if (!destCheck.ok) {
+      sendResponse({ status: 'error', code: destCheck.code, message: destCheck.message });
+      return false;
+    }
+
+    const sourcePageUrl =
+      senderInfo.kind === 'content_script'
+        ? senderInfo.tabUrl
+        : (message.page_url || message.referer || sender.tab?.url);
+    const safeReferer = deriveSafeReferer(sourcePageUrl, rawUrl);
+    const safeUserAgent = getSafeUserAgent(message.user_agent);
+    const safeFilename = sanitizeFilenameInput(message.filename);
+    const safePriority = sanitizePriorityInput(message.priority);
+    const safeThumb = isValidHttpUrl(message.thumbnail_url) ? message.thumbnail_url.trim() : null;
+
+    if (lower.includes('watch.plex.tv') || lower.includes('plex.tv')) {
       sendResponse({
         status: 'error',
-        message: 'Invalid or blob-based media stream. Direct media URL required.',
+        code: 'DRM_UNSUPPORTED',
+        message: 'watch.plex.tv content is DRM-protected and not licensed for offline download.',
       });
       return false;
     }
@@ -2197,17 +2598,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     ) {
       sendResponse({
         status: 'error',
+        code: 'INVALID_MEDIA_URL',
         message: 'Webpage or watch portal URLs cannot be downloaded directly as media. Playable stream required.',
       });
       return false;
     }
 
     callDesktopApi('/api/v1/downloads', 'POST', {
-      url: message.url,
-      filename: message.filename,
-      destination: message.destination,
-      priority: message.priority || 'normal',
-      thumbnail_url: message.thumbnail_url || null,
+      url: rawUrl,
+      filename: safeFilename,
+      destination: destCheck.value,
+      priority: safePriority,
+      thumbnail_url: safeThumb,
       referer: safeReferer,
       user_agent: safeUserAgent,
     }).then(async (httpRes) => {
@@ -2216,16 +2618,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } else if (httpRes.status === 401) {
         sendResponse({
           status: 'error',
+          code: 'UNAUTHORIZED',
           message: 'Pairing required. Check API Key in Extension Options.',
         });
       } else {
         // Fallback to Native Messaging
         const nmRes = await sendNativeMessage({
           action: 'start_download',
-          url: message.url,
-          filename: message.filename,
-          destination: message.destination,
-          priority: message.priority || 'normal',
+          url: rawUrl,
+          filename: safeFilename,
+          destination: destCheck.value,
+          priority: safePriority,
           referer: safeReferer,
           user_agent: safeUserAgent,
         });
@@ -2235,7 +2638,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.action === 'GET_DOWNLOADS') {
+  if (action === 'GET_DOWNLOADS') {
     callDesktopApi('/api/v1/downloads').then((httpRes) => {
       if (httpRes.ok && httpRes.data && Array.isArray(httpRes.data.jobs)) {
         sendResponse({ status: 'ok', jobs: httpRes.data.jobs });
@@ -2246,48 +2649,73 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.action === 'PAUSE_DOWNLOAD') {
-    callDesktopApi(`/api/v1/downloads/${message.job_id}/pause`, 'POST').then((httpRes) => {
+  if (action === 'PAUSE_DOWNLOAD') {
+    if (!isSafeJobId(message.job_id)) {
+      sendResponse({ status: 'error', code: 'INVALID_REQUEST', message: 'Invalid job_id' });
+      return false;
+    }
+    callDesktopApi(`/api/v1/downloads/${encodeURIComponent(message.job_id.trim())}/pause`, 'POST').then((httpRes) => {
       sendResponse(httpRes.ok ? httpRes.data : { status: 'error', message: 'Desktop disconnected' });
     });
     return true;
   }
 
-  if (message.action === 'RESUME_DOWNLOAD') {
-    callDesktopApi(`/api/v1/downloads/${message.job_id}/resume`, 'POST').then((httpRes) => {
+  if (action === 'RESUME_DOWNLOAD') {
+    if (!isSafeJobId(message.job_id)) {
+      sendResponse({ status: 'error', code: 'INVALID_REQUEST', message: 'Invalid job_id' });
+      return false;
+    }
+    callDesktopApi(`/api/v1/downloads/${encodeURIComponent(message.job_id.trim())}/resume`, 'POST').then((httpRes) => {
       sendResponse(httpRes.ok ? httpRes.data : { status: 'error', message: 'Desktop disconnected' });
     });
     return true;
   }
 
-  if (message.action === 'CANCEL_DOWNLOAD') {
-    callDesktopApi(`/api/v1/downloads/${message.job_id}/cancel`, 'POST').then((httpRes) => {
+  if (action === 'CANCEL_DOWNLOAD') {
+    if (!isSafeJobId(message.job_id)) {
+      sendResponse({ status: 'error', code: 'INVALID_REQUEST', message: 'Invalid job_id' });
+      return false;
+    }
+    callDesktopApi(`/api/v1/downloads/${encodeURIComponent(message.job_id.trim())}/cancel`, 'POST').then((httpRes) => {
       sendResponse(httpRes.ok ? httpRes.data : { status: 'error', message: 'Desktop disconnected' });
     });
     return true;
   }
 
-  if (message.action === 'RETRY_DOWNLOAD') {
-    callDesktopApi(`/api/v1/downloads/${message.job_id}/retry`, 'POST').then((httpRes) => {
+  if (action === 'RETRY_DOWNLOAD') {
+    if (!isSafeJobId(message.job_id)) {
+      sendResponse({ status: 'error', code: 'INVALID_REQUEST', message: 'Invalid job_id' });
+      return false;
+    }
+    callDesktopApi(`/api/v1/downloads/${encodeURIComponent(message.job_id.trim())}/retry`, 'POST').then((httpRes) => {
       sendResponse(httpRes.ok ? httpRes.data : { status: 'error' });
     });
     return true;
   }
 
-  if (message.action === 'RESOLVE_MEDIA') {
-    const rawUrl = (message.url || '').trim();
+  if (action === 'RESOLVE_MEDIA') {
+    const rawUrl = typeof message.url === 'string' ? message.url.trim() : '';
     const generation = message.generation;
-    if (!rawUrl) {
-      sendResponse({ status: 'error', code: 'INVALID_URL', message: 'Missing URL to resolve', generation });
+    if (!isValidHttpUrl(rawUrl)) {
+      sendResponse({ status: 'error', code: 'INVALID_URL', message: 'Invalid or missing HTTP(S) URL to resolve', generation });
       return false;
     }
 
+    const sanitizedMsgCandidates = Array.isArray(message.candidates)
+      ? message.candidates.filter((c) => isValidHttpUrl(c)).slice(0, MAX_CANDIDATES_PER_TAB)
+      : [];
+    const safePageTitle =
+      typeof message.page_title === 'string' && !hasControlChars(message.page_title)
+        ? message.page_title.trim().slice(0, 512)
+        : null;
+    const safeThumbUrl = isValidHttpUrl(message.thumbnail_url) ? message.thumbnail_url.trim() : null;
+
     const norm = normalizePlatformUrl(rawUrl);
-    const tabIdInitial = sender.tab?.id || message.tabId;
-    const preCachedStreams = tabIdInitial ? (tabMediaCache.get(tabIdInitial) || []) : [];
+    const tabIdInitial = scopedTabId;
+    const preCachedStreams = typeof tabIdInitial === 'number' ? (tabMediaCache.get(tabIdInitial) || []) : [];
     const hasPreCandidates =
-      (Array.isArray(message.candidates) && message.candidates.length > 0) ||
-      preCachedStreams.some((c) => c && c.url && !c.url.startsWith('blob:') && !c.url.startsWith('data:'));
+      sanitizedMsgCandidates.length > 0 ||
+      preCachedStreams.some((c) => c && isValidHttpUrl(c.url));
 
     if ((norm.platform === 'facebook' || norm.platform === 'instagram') && !norm.isSpecific && !hasPreCandidates) {
       const platName = norm.platform === 'instagram' ? 'Instagram' : 'Facebook';
@@ -2304,7 +2732,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const targetUrl = norm.url || rawUrl;
     const isSpecificSocial = (norm.platform === 'facebook' || norm.platform === 'instagram') ? norm.isSpecific : true;
     const isPlatform = (isSpecificSocial && isManagedPlatform(targetUrl)) || (norm.platform !== 'generic' && norm.isSpecific);
-    const correlationId = message.correlation_id || ('req_res_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
+    const correlationId = typeof message.correlation_id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(message.correlation_id)
+      ? message.correlation_id
+      : ('req_res_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
     const customTimeout = isPlatform ? 32000 : 12000;
     const startTime = Date.now();
 
@@ -2328,23 +2758,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     const resolutionPromise = (async () => {
       await ensureSessionRestored();
-      const tabId = sender.tab?.id || message.tabId;
-      const cachedStreams = tabId ? (tabMediaCache.get(tabId) || []) : [];
+      const cachedStreams = typeof scopedTabId === 'number' ? (tabMediaCache.get(scopedTabId) || []) : [];
 
       // Merge DOM candidates and network-captured candidates
-      const candidateSet = new Set(Array.isArray(message.candidates) ? message.candidates : []);
+      const candidateSet = new Set(sanitizedMsgCandidates);
       for (const item of cachedStreams) {
-        if (item.url && !item.url.startsWith('blob:') && !item.url.startsWith('data:')) {
+        if (item && isValidHttpUrl(item.url)) {
           candidateSet.add(item.url);
         }
       }
-      const candidatesList = Array.from(candidateSet);
+      const candidatesList = Array.from(candidateSet).slice(0, MAX_CANDIDATES_PER_TAB);
 
       // If we have an intercepted stream manifest or direct media candidate on a generic site, probe it directly!
       const streamingCandidate = cachedStreams.find((c) => c.type === 'hls' || c.type === 'dash') ||
         cachedStreams.find((c) => c.type === 'direct');
 
-      if (!isPlatform && streamingCandidate && streamingCandidate.url) {
+      if (!isPlatform && streamingCandidate && isValidHttpUrl(streamingCandidate.url)) {
         logSanitizedDiagnostic('RESOLVE_STREAM_PROBE', {
           requestId: correlationId,
           url: streamingCandidate.url,
@@ -2356,8 +2785,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           {
             url: streamingCandidate.url,
             candidates: candidatesList,
-            page_title: message.page_title || null,
-            thumbnail_url: message.thumbnail_url || null,
+            page_title: safePageTitle,
+            thumbnail_url: safeThumbUrl,
           },
           8000
         );
@@ -2384,9 +2813,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const resolvePayload = {
         url: targetUrl,
         candidates: candidatesList,
-        page_title: message.page_title || null,
-        thumbnail_url: message.thumbnail_url || null,
-        force_refresh: message.force_refresh || false,
+        page_title: safePageTitle,
+        thumbnail_url: safeThumbUrl,
+        force_refresh: message.force_refresh === true,
       };
 
       const httpRes = await callDesktopApi('/api/v1/media/resolve', 'POST', resolvePayload, customTimeout);
@@ -2460,28 +2889,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.action === 'START_MEDIA_DOWNLOAD') {
-    const rawUrl = (message.url || '').trim();
-    const formatId = (message.format_id || '').trim();
-    if (!rawUrl || !formatId) {
-      sendResponse({ status: 'error', code: 'INVALID_REQUEST', message: 'Missing URL or format identifier' });
+  if (action === 'START_MEDIA_DOWNLOAD') {
+    const rawUrl = typeof message.url === 'string' ? message.url.trim() : '';
+    const formatId = typeof message.format_id === 'string' ? message.format_id.trim() : '';
+    if (!isValidHttpUrl(rawUrl) || !isSafeFormatId(formatId)) {
+      sendResponse({ status: 'error', code: 'INVALID_REQUEST', message: 'Invalid URL or format identifier' });
+      return false;
+    }
+
+    const destCheck = sanitizeOptionalDestination(message.destination, senderInfo.kind);
+    if (!destCheck.ok) {
+      sendResponse({ status: 'error', code: destCheck.code, message: destCheck.message });
       return false;
     }
 
     const norm = normalizePlatformUrl(rawUrl);
     const targetUrl = norm.url || rawUrl;
-    const sourcePageUrl = message.page_url || message.referer || sender.tab?.url;
+    const sourcePageUrl =
+      senderInfo.kind === 'content_script'
+        ? senderInfo.tabUrl
+        : (message.page_url || message.referer || sender.tab?.url);
     const safeReferer = deriveSafeReferer(sourcePageUrl, targetUrl);
     const safeUserAgent = getSafeUserAgent(message.user_agent);
+    const safeFilename = sanitizeFilenameInput(message.filename);
+    const safePriority = sanitizePriorityInput(message.priority);
+    const safeThumb = isValidHttpUrl(message.thumbnail_url) ? message.thumbnail_url.trim() : null;
+    const safeDirectStream = isValidHttpUrl(message.direct_stream_url) ? message.direct_stream_url.trim() : null;
 
     callDesktopApi('/api/v1/media/download', 'POST', {
       url: targetUrl,
       format_id: formatId,
-      filename: message.filename,
-      destination: message.destination,
-      priority: message.priority || 'normal',
-      thumbnail_url: message.thumbnail_url || null,
-      direct_stream_url: message.direct_stream_url || null,
+      filename: safeFilename,
+      destination: destCheck.value,
+      priority: safePriority,
+      thumbnail_url: safeThumb,
+      direct_stream_url: safeDirectStream,
       referer: safeReferer,
       user_agent: safeUserAgent,
     }).then((httpRes) => {
@@ -2506,10 +2948,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.action === 'OPEN_PLAYLIST') {
-    const rawUrl = (message.url || '').trim();
-    if (!rawUrl) {
-      sendResponse({ status: 'error', confirmed: false, message: 'Missing playlist URL' });
+  if (action === 'OPEN_PLAYLIST') {
+    const rawUrl = typeof message.url === 'string' ? message.url.trim() : '';
+    if (!isValidHttpUrl(rawUrl)) {
+      sendResponse({ status: 'error', code: 'INVALID_URL', confirmed: false, message: 'Invalid or missing playlist URL' });
       return false;
     }
 
@@ -2525,13 +2967,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.action === 'RESOLVE_PLAYLIST') {
-    const rawUrl = (message.url || '').trim();
-    if (!rawUrl) {
-      sendResponse({ status: 'error', message: 'Missing playlist URL' });
+  if (action === 'RESOLVE_PLAYLIST') {
+    const rawUrl = typeof message.url === 'string' ? message.url.trim() : '';
+    if (!isValidHttpUrl(rawUrl)) {
+      sendResponse({ status: 'error', code: 'INVALID_URL', message: 'Invalid or missing playlist URL' });
       return false;
     }
-    callDesktopApi('/api/v1/media/playlist/resolve', 'POST', { url: rawUrl, limit: message.limit || 100 }).then((httpRes) => {
+    const parsedLimit = Number(message.limit);
+    const safeLimit = Number.isInteger(parsedLimit) && parsedLimit >= 1 && parsedLimit <= 500 ? parsedLimit : 100;
+    callDesktopApi('/api/v1/media/playlist/resolve', 'POST', { url: rawUrl, limit: safeLimit }).then((httpRes) => {
       if (httpRes.ok && httpRes.data) {
         sendResponse({ status: 'ok', playlist: httpRes.data });
       } else {
@@ -2543,12 +2987,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.action === 'ENQUEUE_PLAYLIST') {
+  if (action === 'ENQUEUE_PLAYLIST') {
+    if (!Array.isArray(message.items) || message.items.length === 0 || message.items.length > 500) {
+      sendResponse({ status: 'error', code: 'INVALID_REQUEST', message: 'Invalid playlist items array' });
+      return false;
+    }
+    const destCheck = sanitizeOptionalDestination(message.destination, senderInfo.kind);
+    if (!destCheck.ok) {
+      sendResponse({ status: 'error', code: destCheck.code, message: destCheck.message });
+      return false;
+    }
+    const formatId = message.format_id ? String(message.format_id).trim() : undefined;
+    if (formatId && !isSafeFormatId(formatId)) {
+      sendResponse({ status: 'error', code: 'INVALID_REQUEST', message: 'Invalid format_id' });
+      return false;
+    }
     callDesktopApi('/api/v1/media/playlist/enqueue', 'POST', {
       items: message.items,
-      destination: message.destination,
-      format_id: message.format_id,
-      playlist_title: message.playlist_title,
+      destination: destCheck.value,
+      format_id: formatId,
+      playlist_title: typeof message.playlist_title === 'string' ? message.playlist_title.slice(0, 256) : undefined,
     }).then((httpRes) => {
       if (httpRes.ok && httpRes.data) {
         sendResponse(httpRes.data);

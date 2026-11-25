@@ -890,29 +890,38 @@ pub async fn open_progress_window_internal(
         }
     }
 
-    if !force {
-        if popup_mode == "never" {
-            crate::lifecycle::log_event(
-                "PROGRESS_WINDOW",
-                "SKIPPED",
-                &format!("id={}, reason=popup_mode_never", id),
-            );
-            return Ok(());
-        }
-        if popup_mode == "on_start" && !mark_auto_opened_once(id) {
-            crate::lifecycle::log_event(
-                "PROGRESS_WINDOW",
-                "SKIPPED",
-                &format!("id={}, reason=already_auto_opened_on_start", id),
-            );
-            return Ok(());
-        }
-    }
-
     let job = manager
         .get_download(id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Job {} not found", id))?;
+
+    let is_minimized_launch = app
+        .try_state::<crate::AppState>()
+        .map(|s| s.is_minimized_launch.load(std::sync::atomic::Ordering::SeqCst))
+        .unwrap_or(false);
+
+    if let Err(reason) = tdm_core::should_auto_open_progress_window(
+        job.state,
+        &popup_mode,
+        force,
+        is_minimized_launch,
+    ) {
+        crate::lifecycle::log_event(
+            "PROGRESS_WINDOW",
+            "SKIPPED",
+            &format!("id={}, state={:?}, reason={}", id, job.state, reason),
+        );
+        return Ok(());
+    }
+
+    if !force && popup_mode == "on_start" && !mark_auto_opened_once(id) {
+        crate::lifecycle::log_event(
+            "PROGRESS_WINDOW",
+            "SKIPPED",
+            &format!("id={}, reason=already_auto_opened_on_start", id),
+        );
+        return Ok(());
+    }
 
     let always_on_top = always_on_top_enabled(manager);
     let label = progress_window_label(id);
