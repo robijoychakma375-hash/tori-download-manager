@@ -54,6 +54,7 @@ const FORBIDDEN_PATTERNS = [
   '__TORI_DISPATCH__',
   '__TORI_RESPONSE__',
   'toriExtensionUrl',
+  '__TORI_BG_SECURITY__',
 ];
 
 function sha256File(filePath) {

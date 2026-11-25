@@ -42,7 +42,7 @@ const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
 
-function createRuntimeHarness({ browserName, runtimeId, originScheme }) {
+function createRuntimeHarness({ browserName, runtimeId, originScheme, initialSettings = null, storageDelayMs = 0 }) {
   const baseUrl = `${originScheme}://${runtimeId}/`;
   const listeners = {
     onMessage: [],
@@ -61,6 +61,7 @@ function createRuntimeHarness({ browserName, runtimeId, originScheme }) {
       types: ['exe', 'zip', 'mp4'],
       sites: [],
       min: 0,
+      ...(initialSettings || {}),
     },
   };
   const storageSession = {};
@@ -105,9 +106,15 @@ function createRuntimeHarness({ browserName, runtimeId, originScheme }) {
     storage: {
       local: {
         get: (keys, cb) => {
-          const out = { ...storageLocal };
-          if (cb) cb(out);
-          return Promise.resolve(out);
+          const deliver = () => {
+            const out = { ...storageLocal };
+            if (cb) cb(out);
+            return out;
+          };
+          if (storageDelayMs > 0) {
+            return new Promise((resolve) => setTimeout(() => resolve(deliver()), storageDelayMs));
+          }
+          return Promise.resolve(deliver());
         },
         set: (obj, cb) => {
           Object.assign(storageLocal, obj);
@@ -265,7 +272,7 @@ function createRuntimeHarness({ browserName, runtimeId, originScheme }) {
       nativeMessages.length = 0;
       fetchCalls.length = 0;
       cancelledBrowserDownloads.length = 0;
-      sandbox.__TORI_BG_SECURITY__.resetSecurityRateLimits();
+      sandbox.resetSecurityRateLimits();
     },
   };
 }
@@ -529,7 +536,6 @@ async function runSuiteForBrowser(config) {
   await check('Priority 3: Browser startup replay of completed/stale downloads ignored; fresh in_progress intercepted', async () => {
     h.resetMetrics();
     h.setDesktopState({ online: true, authenticated: true });
-    const sec = h.sandbox.__TORI_BG_SECURITY__;
     const now = Date.now();
 
     // Exact reproduction of Edge replaying historical completed ledger-live-desktop download on Windows boot
@@ -541,10 +547,10 @@ async function runSuiteForBrowser(config) {
       startTime: new Date(now - 10 * 24 * 3600 * 1000).toISOString(),
       endTime: new Date(now - 10 * 24 * 3600 * 1000 + 5000).toISOString(),
     };
-    assert.strictEqual(sec.shouldInterceptBrowserDownload(replayCompleted, now).allow, false);
+    assert.strictEqual(h.sandbox.shouldInterceptBrowserDownload(replayCompleted, now).allow, false);
 
     const replayInterrupted = { ...replayCompleted, id: 102, state: 'interrupted', endTime: undefined };
-    assert.strictEqual(sec.shouldInterceptBrowserDownload(replayInterrupted, now).allow, false);
+    assert.strictEqual(h.sandbox.shouldInterceptBrowserDownload(replayInterrupted, now).allow, false);
 
     const replayStaleInProgress = {
       id: 103,
@@ -552,7 +558,7 @@ async function runSuiteForBrowser(config) {
       state: 'in_progress',
       startTime: new Date(now - 5 * 60 * 1000).toISOString(),
     };
-    assert.strictEqual(sec.shouldInterceptBrowserDownload(replayStaleInProgress, now).allow, false);
+    assert.strictEqual(h.sandbox.shouldInterceptBrowserDownload(replayStaleInProgress, now).allow, false);
 
     const replayPaused = {
       id: 104,
@@ -561,7 +567,7 @@ async function runSuiteForBrowser(config) {
       paused: true,
       startTime: new Date(now - 1000).toISOString(),
     };
-    assert.strictEqual(sec.shouldInterceptBrowserDownload(replayPaused, now).allow, false);
+    assert.strictEqual(h.sandbox.shouldInterceptBrowserDownload(replayPaused, now).allow, false);
 
     // Trigger onCreated with completed item -> must NOT call Desktop or Native Host!
     h.listeners.onCreated[0](replayCompleted);
@@ -579,7 +585,7 @@ async function runSuiteForBrowser(config) {
       startTime: new Date(now - 1500).toISOString(),
       totalBytes: 10 * 1024 * 1024,
     };
-    assert.strictEqual(sec.shouldInterceptBrowserDownload(freshDownload, now).allow, true);
+    assert.strictEqual(h.sandbox.shouldInterceptBrowserDownload(freshDownload, now).allow, true);
     h.listeners.onCreated[0](freshDownload);
     await new Promise((r) => setTimeout(r, 30));
     assert.ok(h.fetchCalls.some((c) => c.url.includes('/api/v1/downloads')), 'Fresh in_progress download must hand off to Desktop');
@@ -593,6 +599,65 @@ async function runSuiteForBrowser(config) {
     h.setDesktopState({ online: false, authenticated: false });
     await h.listeners.onStartup[0]();
     assert.strictEqual(h.nativeMessages.length, 0, 'onStartup must NEVER invoke Native Messaging when Desktop is offline');
+  });
+
+  // 12. Gate 35.3: Invalid, oversized, wide, and malformed runtime messages rejected
+  await check('Gate 35.3: Oversized (>64KiB), wide (>32 keys), null/array, and unknown messages rejected', async () => {
+    h.resetMetrics();
+    const huge = await h.dispatchMessage(
+      { action: 'RESOLVE_MEDIA', url: 'https://cdn.example.com/v.mp4', page_title: 'A'.repeat(70000) },
+      contentTab10
+    );
+    assert.strictEqual(huge.code, 'PAYLOAD_TOO_LARGE');
+
+    const widePayload = { action: 'GET_TAB_MEDIA' };
+    for (let i = 0; i < 40; i++) widePayload[`k${i}`] = i;
+    const wide = await h.dispatchMessage(widePayload, contentTab10);
+    assert.strictEqual(wide.code, 'PAYLOAD_TOO_LARGE');
+
+    const arrMsg = await h.dispatchMessage(['INITIATE_PAIRING'], optionsSender);
+    assert.strictEqual(arrMsg.code, 'INVALID_MESSAGE');
+
+    const forgedAction = await h.dispatchMessage({ action: 'EXPORT_SECRET_TOKEN' }, optionsSender);
+    assert.strictEqual(forgedAction.code, 'UNKNOWN_ACTION');
+
+    // Cross-origin iframe content script cannot invoke privileged actions
+    const crossOriginIframe = {
+      id: h.runtimeId,
+      url: 'https://ads.untrusted.example/frame.html',
+      origin: 'https://ads.untrusted.example',
+      frameId: 5,
+      tab: { id: 10, url: 'https://trusted.video.example/watch' },
+    };
+    const iframePriv = await h.dispatchMessage({ action: 'INITIATE_PAIRING' }, crossOriginIframe);
+    assert.strictEqual(iframePriv.code, 'UNAUTHORIZED_SENDER');
+    assert.strictEqual(h.nativeMessages.length, 0);
+  });
+
+  // 13. Gate 35.3: Cold Service Worker restart preserves stored port & pairing token on first PING / GET_CONNECTION_STATUS
+  await check('Gate 35.3: Cold Service Worker restart loads persisted port/key before PING_DESKTOP & GET_CONNECTION_STATUS', async () => {
+    // Instantiate a brand-new sandbox simulating an MV3 Service Worker wake-up with async storage latency
+    const cold = createRuntimeHarness({
+      ...config,
+      storageDelayMs: 25,
+      initialSettings: {
+        port: 24991,
+        key: 'cold-sw-persisted-token-777',
+      },
+    });
+    cold.setDesktopState({ online: true, authenticated: true });
+
+    const coldStatus = await cold.dispatchMessage({ action: 'GET_CONNECTION_STATUS' }, optionsSender);
+    assert.strictEqual(coldStatus.status, 'ok');
+    assert.strictEqual(coldStatus.paired, true);
+    const statusCall = cold.fetchCalls.find((c) => c.url.includes('127.0.0.1:24991/api/v1/status'));
+    assert.ok(statusCall, 'Cold SW GET_CONNECTION_STATUS must use persisted port 24991');
+    assert.strictEqual(statusCall.headers['X-Tori-Token'], 'cold-sw-persisted-token-777');
+
+    const coldPing = await cold.dispatchMessage({ action: 'PING_DESKTOP', passive: true }, popupSender);
+    assert.strictEqual(coldPing.status, 'ok');
+    assert.strictEqual(coldPing.authenticated, true);
+    assert.strictEqual(coldPing.token, undefined, 'Popup must still never receive raw token after SW restart');
   });
 
   return passed;

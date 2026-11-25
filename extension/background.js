@@ -2237,9 +2237,32 @@ function classifyRuntimeSender(sender) {
   return { kind: 'untrusted', reason: 'UNTRUSTED_CONTEXT' };
 }
 
-function authorizeRuntimeMessage(message, sender, nowMs = Date.now()) {
+const MAX_RUNTIME_MESSAGE_BYTES = 65536;
+const MAX_RUNTIME_MESSAGE_KEYS = 32;
+
+function validateRuntimeMessageBounds(message) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
     return { ok: false, code: 'INVALID_MESSAGE', message: 'Malformed runtime message payload' };
+  }
+  const keys = Object.keys(message);
+  if (keys.length > MAX_RUNTIME_MESSAGE_KEYS) {
+    return { ok: false, code: 'PAYLOAD_TOO_LARGE', message: 'Runtime message exceeds maximum allowed fields' };
+  }
+  try {
+    const serialized = JSON.stringify(message);
+    if (typeof serialized !== 'string' || serialized.length > MAX_RUNTIME_MESSAGE_BYTES) {
+      return { ok: false, code: 'PAYLOAD_TOO_LARGE', message: 'Runtime message exceeds maximum allowed payload size' };
+    }
+  } catch (_) {
+    return { ok: false, code: 'INVALID_MESSAGE', message: 'Non-serializable runtime message payload' };
+  }
+  return { ok: true };
+}
+
+function authorizeRuntimeMessage(message, sender, nowMs = Date.now()) {
+  const bounds = validateRuntimeMessageBounds(message);
+  if (!bounds.ok) {
+    return bounds;
   }
 
   const action = typeof message.action === 'string' ? message.action.trim() : '';
@@ -2286,24 +2309,6 @@ function authorizeRuntimeMessage(message, sender, nowMs = Date.now()) {
     code: 'UNKNOWN_ACTION',
     message: 'Unsupported runtime message action',
     senderInfo,
-  };
-}
-
-if (typeof globalThis !== 'undefined') {
-  globalThis.__TORI_BG_SECURITY__ = {
-    classifyRuntimeSender,
-    authorizeRuntimeMessage,
-    shouldInterceptBrowserDownload,
-    passivePairIfDesktopRunning,
-    isValidHttpUrl,
-    isSafeFormatId,
-    isSafeJobId,
-    sanitizeFilenameInput,
-    sanitizePriorityInput,
-    sanitizeOptionalDestination,
-    resetSecurityRateLimits,
-    EXTENSION_PAGE_ONLY_ACTIONS,
-    CONTENT_SCRIPT_ALLOWED_ACTIONS,
   };
 }
 
@@ -2405,12 +2410,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (action === 'GET_CONNECTION_STATUS') {
-    const rawPort = Number(message.port);
-    const targetPort = Number.isInteger(rawPort) && rawPort >= 1024 && rawPort <= 65535
-      ? rawPort
-      : (Number(extSettings.port) || 6800);
-    const token = typeof message.key === 'string' ? message.key : (extSettings.key || '');
-    probeDesktopPassive(targetPort, token, !message.port).then((probe) => {
+    (async () => {
+      await ensureSettingsLoaded();
+      const rawPort = Number(message.port);
+      const hasValidCustomPort =
+        message.port !== undefined &&
+        message.port !== null &&
+        message.port !== '' &&
+        Number.isInteger(rawPort) &&
+        rawPort >= 1024 &&
+        rawPort <= 65535;
+      const targetPort = hasValidCustomPort ? rawPort : (Number(extSettings.port) || 6800);
+      const token = typeof message.key === 'string' ? message.key : (extSettings.key || '');
+      const probe = await probeDesktopPassive(targetPort, token, !hasValidCustomPort);
       if (probe.status === 'ok' && probe.authenticated) {
         sendResponse({
           status: 'ok',
@@ -2438,22 +2450,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           message: 'Desktop Unavailable',
         });
       }
-    });
+    })();
     return true;
   }
 
   if (action === 'PING_DESKTOP') {
     const start = Date.now();
-    const hasCustomPort = message.port !== undefined && message.port !== null && message.port !== '';
-    const parsedPort = Number(message.port);
-    let targetPort = hasCustomPort && Number.isInteger(parsedPort) && parsedPort >= 1024 && parsedPort <= 65535
-      ? parsedPort
-      : (Number(extSettings.port) || 6800);
-    let targetKey = typeof message.key === 'string' ? message.key : (extSettings.key || '');
     const isPassive = message.passive === true;
 
     (async () => {
-      let result = await probeDesktopPassive(hasCustomPort ? targetPort : null, targetKey, !hasCustomPort);
+      await ensureSettingsLoaded();
+      const hasCustomPort = message.port !== undefined && message.port !== null && message.port !== '';
+      const parsedPort = Number(message.port);
+      const validCustomPort =
+        hasCustomPort && Number.isInteger(parsedPort) && parsedPort >= 1024 && parsedPort <= 65535
+          ? parsedPort
+          : null;
+      let targetPort = validCustomPort || (Number(extSettings.port) || 6800);
+      let targetKey = typeof message.key === 'string' ? message.key : (extSettings.key || '');
+
+      let result = await probeDesktopPassive(validCustomPort, targetKey, !validCustomPort);
 
       // Only attempt auto-pairing when desktop is already responding (401/unpaired) OR when explicitly non-passive
       if (!isPassive && result.desktop_running && !result.authenticated && extSettings.auto !== false) {

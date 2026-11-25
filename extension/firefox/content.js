@@ -2779,7 +2779,8 @@ function normalizePlatformUrl(rawUrl) {
     videoEl.addEventListener('loadeddata', handleDynamicMediaActivity);
 
     // Listen for candidate discoveries recorded by background webRequest interceptor
-    const onRuntimeCandidateMessage = (msg) => {
+    const onRuntimeCandidateMessage = (msg, sender) => {
+      if (!sender || sender.id !== chrome.runtime.id) return;
       if (msg && msg.action === 'MEDIA_CANDIDATE_RECORDED' && msg.candidate) {
         const cand = msg.candidate;
         if (cand && cand.url && !tabMediaCandidates.some((c) => c.url === cand.url)) {
@@ -2939,6 +2940,9 @@ function normalizePlatformUrl(rawUrl) {
 
   // Runtime message listener for background notifications and active media queries from extension popup
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!sender || sender.id !== chrome.runtime.id || !msg || typeof msg !== 'object') {
+      return false;
+    }
     if (msg.action === 'MEDIA_NAVIGATED') {
       notifyAllOverlays('background-navigated');
       sendResponse({ ok: true });
