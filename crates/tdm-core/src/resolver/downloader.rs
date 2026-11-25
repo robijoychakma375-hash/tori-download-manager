@@ -34,13 +34,13 @@ pub async fn download_managed_media(
     let _ffprobe_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::Ffprobe);
 
     let mut args: Vec<String> = vec![
+        "--ignore-config".to_string(),
         "--no-playlist".to_string(),
         "--continue".to_string(),
         "--newline".to_string(),
         "--no-warnings".to_string(),
         "--no-call-home".to_string(),
         "--no-color".to_string(),
-        "--no-check-certificates".to_string(),
         "--prefer-free-formats".to_string(),
         "--progress-template".to_string(),
         "download:[TORI_PROG]|%(progress._percent_str)s;%(progress.downloaded_bytes)s;%(progress.total_bytes)s;%(progress.speed)s;%(progress.eta)s".to_string(),
@@ -56,13 +56,15 @@ pub async fn download_managed_media(
         }
     }
 
-    // Target media URL: normalize if platform URL
+    // Target media URL: normalize if platform URL and strictly enforce HTTP/HTTPS syntax
     let target_url =
         if let Ok(normalized) = crate::resolver::pipeline::normalize_platform_media_url(&job.url) {
             normalized
         } else {
             job.url.clone()
         };
+    let parsed_target_url = crate::resolver::ssrf::validate_http_url_syntax(&target_url)?;
+    let target_url = parsed_target_url.to_string();
 
     // Propagate Referer to prevent hotlink blocks on platform/CDN media streams
     if let Some(ref referer) = job.referer {
@@ -71,7 +73,11 @@ pub async fn download_managed_media(
             args.push("--referer".to_string());
             args.push(clean.to_string());
         }
-    } else if target_url.contains("player.vimeo.com") || job.url.contains("vimeo.com") {
+    } else if parsed_target_url
+        .host_str()
+        .map(|h| h.eq_ignore_ascii_case("player.vimeo.com") || h.eq_ignore_ascii_case("vimeo.com") || h.to_ascii_lowercase().ends_with(".vimeo.com"))
+        .unwrap_or(false)
+    {
         args.push("--referer".to_string());
         args.push("https://vimeo.com/".to_string());
     }
@@ -97,11 +103,12 @@ pub async fn download_managed_media(
     args.push("--merge-output-format".to_string());
     args.push("mp4/mkv/webm".to_string());
 
-    // Output file path
+    // Output file path (escape '%' -> '%%' so yt-dlp does not interpret filenames as output templates)
     args.push("-o".to_string());
-    args.push(job.target_path.clone());
+    args.push(escape_ytdlp_output_template(&job.target_path));
 
-    // Target media URL
+    // Terminate CLI option parsing before passing the remote URL
+    args.push("--".to_string());
     args.push(target_url);
 
     let mut cmd = Command::new(&yt_dlp_bin);
@@ -147,7 +154,10 @@ pub async fn download_managed_media(
                 let mut guard = stderr_c.lock().unwrap();
                 guard.push_str(&s);
                 if guard.len() > 10000 {
-                    let trim = guard.len() - 10000;
+                    let mut trim = guard.len() - 10000;
+                    while trim < guard.len() && !guard.is_char_boundary(trim) {
+                        trim += 1;
+                    }
                     *guard = guard[trim..].to_string();
                 }
             }
@@ -333,6 +343,31 @@ struct ParsedProgress {
     eta_seconds: Option<u64>,
 }
 
+/// Escapes `%` as `%%` so `yt-dlp -o` treats target filesystem paths literally rather than
+/// evaluating output template tokens such as `%(title)s` or `%(id)s`.
+pub fn escape_ytdlp_output_template(path: &str) -> String {
+    path.replace('%', "%%")
+}
+
+/// Validates a yt-dlp format selector identifier, rejecting option injection (`-`) and control chars.
+pub fn validate_format_id(fmt: &str) -> Result<String> {
+    let trimmed = fmt.trim();
+    if trimmed.is_empty() {
+        return Err(EngineError::Other("Format selector must not be empty".into()));
+    }
+    if trimmed.starts_with('-') {
+        return Err(EngineError::Other(
+            "Invalid format selector: leading '-' rejected".into(),
+        ));
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err(EngineError::Other(
+            "Invalid format selector: control characters rejected".into(),
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
 /// Constructs the strict yt-dlp format selection expression.
 /// For explicit single video format IDs, pairs with best compatible audio,
 /// falling back strictly to the selected video alone (without unrelated /best/ fallback).
@@ -341,11 +376,20 @@ pub fn build_format_selector(fmt: &str) -> Option<String> {
     if trimmed.is_empty() || trimmed == "default" || trimmed == "auto" {
         return None;
     }
+    if trimmed.starts_with('-') || trimmed.chars().any(|c| c.is_control()) {
+        return None;
+    }
     let format_arg = if trimmed.starts_with("format:") {
         trimmed.strip_prefix("format:").unwrap_or(trimmed).trim()
     } else {
         trimmed
     };
+    if format_arg.is_empty()
+        || format_arg.starts_with('-')
+        || format_arg.chars().any(|c| c.is_control())
+    {
+        return None;
+    }
 
     // Map user-friendly quality presets to standard yt-dlp format expressions
     match format_arg.to_lowercase().as_str() {
@@ -484,6 +528,39 @@ fn locate_actual_output_file(target_str: &str) -> Option<PathBuf> {
     None
 }
 
+/// Checks whether `file_name` is a yt-dlp temporary/stream fragment specifically belonging to
+/// `stem` (e.g. `{stem}.part`, `{stem}.ytdl`, `{stem}.temp.mp4`, `{stem}.f140.m4a`, `{stem}.f137.mp4.part`).
+/// Unrelated files sharing a prefix such as `{stem}.flac` or `{stem}.final.mkv` are NEVER matched.
+pub(crate) fn is_ytdlp_partial_for_stem(stem: &str, file_name: &str) -> bool {
+    let Some(rest) = file_name.strip_prefix(stem) else {
+        return false;
+    };
+    if !rest.starts_with('.') {
+        return false;
+    }
+    let lower_rest = rest.to_ascii_lowercase();
+    if lower_rest.ends_with(".part")
+        || lower_rest.ends_with(".ytdl")
+        || lower_rest.contains(".temp.")
+    {
+        return true;
+    }
+    // Match yt-dlp intermediate split stream pattern: `.f<digits>[.<ext>]` (e.g. `.f137.mp4`, `.f251.webm`)
+    if let Some(after_f) = lower_rest.strip_prefix(".f") {
+        let digit_len = after_f
+            .bytes()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        if digit_len > 0 {
+            let suffix = &after_f[digit_len..];
+            if suffix.starts_with('.') && suffix.len() > 1 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub(crate) fn cleanup_partial_files(target_str: &str) {
     let p = Path::new(target_str);
     let _ = fs::remove_file(p);
@@ -499,18 +576,8 @@ pub(crate) fn cleanup_partial_files(target_str: &str) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if file_name.starts_with(stem) {
-                        let lower = file_name.to_lowercase();
-                        if lower.ends_with(".part")
-                            || lower.ends_with(".ytdl")
-                            || lower.contains(".temp.")
-                            || (lower.contains(".f")
-                                && !lower.ends_with(".mp4")
-                                && !lower.ends_with(".mkv")
-                                && !lower.ends_with(".webm"))
-                        {
-                            let _ = fs::remove_file(path);
-                        }
+                    if is_ytdlp_partial_for_stem(stem, file_name) {
+                        let _ = fs::remove_file(path);
                     }
                 }
             }
@@ -620,6 +687,53 @@ mod tests {
         let found2 = locate_actual_output_file(req2.to_str().unwrap()).unwrap();
         assert_eq!(found2, double2);
         assert_eq!(fs::read(&occupied_mkv).unwrap(), b"existing");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_sec35_09_cleanup_partial_files_preserves_unrelated_user_files() {
+        let dir = std::env::temp_dir().join(format!("tori_cleanup_sec35_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let target = dir.join("song.mp4");
+        let part_file = dir.join("song.mp4.part");
+        let ytdl_file = dir.join("song.mp4.ytdl");
+        let split_video = dir.join("song.f137.mp4");
+        let split_audio = dir.join("song.f251.webm");
+        let temp_file = dir.join("song.temp.mp4");
+
+        // Unrelated user files sharing prefix or `.f` substring MUST survive!
+        let user_flac = dir.join("song.flac");
+        let user_final = dir.join("song.final.mkv");
+        let user_other = dir.join("song_remastered.flac");
+
+        for p in [
+            &target,
+            &part_file,
+            &ytdl_file,
+            &split_video,
+            &split_audio,
+            &temp_file,
+            &user_flac,
+            &user_final,
+            &user_other,
+        ] {
+            fs::write(p, b"data").unwrap();
+        }
+
+        cleanup_partial_files(target.to_str().unwrap());
+
+        assert!(!target.exists());
+        assert!(!part_file.exists());
+        assert!(!ytdl_file.exists());
+        assert!(!split_video.exists());
+        assert!(!split_audio.exists());
+        assert!(!temp_file.exists());
+
+        assert!(user_flac.exists(), "song.flac must NOT be deleted");
+        assert!(user_final.exists(), "song.final.mkv must NOT be deleted");
+        assert!(user_other.exists(), "song_remastered.flac must NOT be deleted");
 
         let _ = fs::remove_dir_all(&dir);
     }

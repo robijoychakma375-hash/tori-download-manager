@@ -29,7 +29,7 @@ impl MediaResolver {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(15))
-            .redirect(reqwest::redirect::Policy::limited(5))
+            .redirect(crate::resolver::ssrf::ssrf_safe_redirect_policy())
             .build()
             .unwrap_or_default();
         Self { client, db: None }
@@ -1377,17 +1377,27 @@ pub fn parse_ytdlp_playlist_metadata(
                 .to_string();
 
             let item_url = if let Some(u) = entry.get("url").and_then(|v| v.as_str()) {
-                if u.starts_with("http://") || u.starts_with("https://") {
-                    u.to_string()
-                } else if !item_id.is_empty() {
+                if let Ok(valid) = crate::resolver::ssrf::validate_http_url_syntax(u) {
+                    valid.to_string()
+                } else if !item_id.is_empty()
+                    && item_id
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                {
                     format!("https://www.youtube.com/watch?v={}", item_id)
                 } else {
-                    u.to_string()
+                    continue;
                 }
-            } else if !item_id.is_empty() {
+            } else if !item_id.is_empty()
+                && item_id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
                 format!("https://www.youtube.com/watch?v={}", item_id)
+            } else if let Ok(valid) = crate::resolver::ssrf::validate_http_url_syntax(url_str) {
+                valid.to_string()
             } else {
-                url_str.to_string()
+                continue;
             };
 
             let duration_seconds = entry

@@ -374,14 +374,14 @@ pub fn extract_html_media_candidates(html: &str, base_url: &str) -> HtmlScrapedM
 }
 
 fn extract_tag_content(html: &str, open_tag: &str, close_tag: &str) -> Option<String> {
-    let lower = html.to_lowercase();
+    let lower = html.to_ascii_lowercase();
     let start_idx = lower.find(open_tag)? + open_tag.len();
     let end_idx = start_idx + lower[start_idx..].find(close_tag)?;
     Some(html[start_idx..end_idx].to_string())
 }
 
 fn extract_meta_property(html: &str, property: &str) -> Option<String> {
-    let lower = html.to_lowercase();
+    let lower = html.to_ascii_lowercase();
     let needle1 = format!("property=\"{}\"", property);
     let needle2 = format!("property='{}'", property);
     let needle3 = format!("name=\"{}\"", property);
@@ -404,7 +404,7 @@ fn extract_meta_property(html: &str, property: &str) -> Option<String> {
 fn extract_attribute(html: &str, attr: &str) -> Option<String> {
     let needle1 = format!("{}=\"", attr);
     let needle2 = format!("{}='", attr);
-    let lower = html.to_lowercase();
+    let lower = html.to_ascii_lowercase();
 
     for needle in [&needle1, &needle2] {
         if let Some(pos) = lower.find(needle) {
@@ -424,7 +424,7 @@ fn extract_attribute_from_slice(slice: &str, attr: &str) -> Option<String> {
 
 fn extract_all_attributes(html: &str, tag_name: &str, attr: &str) -> Vec<String> {
     let mut results = Vec::new();
-    let lower = html.to_lowercase();
+    let lower = html.to_ascii_lowercase();
     let open_pattern = format!("<{}", tag_name);
     let attr_pattern1 = format!("{}=\"", attr);
     let attr_pattern2 = format!("{}='", attr);
@@ -463,7 +463,7 @@ fn extract_all_attributes(html: &str, tag_name: &str, attr: &str) -> Vec<String>
 
 fn extract_json_ld_blocks(html: &str) -> Vec<String> {
     let mut blocks = Vec::new();
-    let lower = html.to_lowercase();
+    let lower = html.to_ascii_lowercase();
     let open_tag = "<script type=\"application/ld+json\"";
     let open_tag_alt = "<script type='application/ld+json'";
     let close_tag = "</script>";
@@ -552,9 +552,12 @@ pub async fn probe_streamlink(
         },
     };
 
+    let parsed_url = crate::resolver::ssrf::validate_http_url_syntax(url)?;
+
     let mut cmd = Command::new(&bin);
     cmd.arg("--json")
-        .arg(url)
+        .arg("--")
+        .arg(parsed_url.as_str())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -797,7 +800,7 @@ impl DiscoveryOrchestrator {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(8))
-            .redirect(reqwest::redirect::Policy::limited(5))
+            .redirect(crate::resolver::ssrf::ssrf_safe_redirect_policy())
             .build()
             .unwrap_or_default();
         Self { client }

@@ -66,9 +66,43 @@ pub async fn record_live_stream(
         }
     });
 
+    // Validate live stream URL scheme and restrict FFmpeg protocols strictly to network protocols
+    // (blocking `file`, `concat`, `subfile`, `crypto`, `data`, etc. against playlist SSRF/LFI).
+    let trimmed_url = job.url.trim();
+    if trimmed_url.is_empty()
+        || trimmed_url.starts_with('-')
+        || trimmed_url.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err(EngineError::InvalidUrl(
+            "Invalid live stream URL: empty, leading '-', or whitespace/control characters rejected."
+                .to_string(),
+        ));
+    }
+    let lower_url = trimmed_url.to_ascii_lowercase();
+    let allowed_live_scheme = lower_url.starts_with("http://")
+        || lower_url.starts_with("https://")
+        || lower_url.starts_with("tcp://")
+        || lower_url.starts_with("rtsp://")
+        || lower_url.starts_with("rtmp://")
+        || lower_url.starts_with("rtmps://")
+        || lower_url.starts_with("srt://")
+        || lower_url.starts_with("rist://")
+        || lower_url.starts_with("rtp://")
+        || lower_url.starts_with("udp://")
+        || lower_url.starts_with("mms://")
+        || lower_url.starts_with("mmsh://");
+    if !allowed_live_scheme {
+        return Err(EngineError::InvalidUrl(
+            "Disallowed live stream URL scheme. Only network streaming protocols are permitted."
+                .to_string(),
+        ));
+    }
+
     // Build FFmpeg command arguments
     let mut cmd = Command::new(&ffmpeg_bin);
     cmd.arg("-y"); // overwrite output
+    cmd.arg("-protocol_whitelist")
+        .arg("http,https,tcp,tls,rtmp,rtmps,rtsp,rtp,udp,srt,rist,mms,mmsh");
 
     // Protocol-specific input tuning flags
     for flag in protocol.ffmpeg_input_flags() {
@@ -76,7 +110,7 @@ pub async fn record_live_stream(
     }
 
     // URL input
-    cmd.arg("-i").arg(&job.url);
+    cmd.arg("-i").arg(trimmed_url);
 
     // Stream copy to avoid transcoding CPU load and maintain source quality
     cmd.arg("-c").arg("copy");
@@ -149,7 +183,10 @@ pub async fn record_live_stream(
                 let mut l = stderr_c.lock().unwrap();
                 l.push_str(&s);
                 if l.len() > 10000 {
-                    let trim = l.len() - 10000;
+                    let mut trim = l.len() - 10000;
+                    while trim < l.len() && !l.is_char_boundary(trim) {
+                        trim += 1;
+                    }
                     *l = l[trim..].to_string();
                 }
             }

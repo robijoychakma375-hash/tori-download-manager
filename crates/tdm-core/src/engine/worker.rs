@@ -736,8 +736,10 @@ where
             return Err(EngineError::HttpStatus(status.as_u16()));
         }
 
-        // If server responded 200 OK to a range request, it rewound and streams from 0
+        // If server responded 200 OK to a range request, it rewound and streams from 0.
+        // Truncate the part file back to 0 so stale bytes beyond a shorter new response cannot survive.
         if status == reqwest::StatusCode::OK && total_written > 0 {
+            writer.truncate_to(0)?;
             total_written = 0;
         }
 

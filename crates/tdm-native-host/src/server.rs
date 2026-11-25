@@ -29,10 +29,23 @@ pub struct ServerConfig {
     pub allowed_extension_ids: Vec<String>,
 }
 
+#[derive(Clone)]
+pub struct ServerTokenHandle {
+    config: Arc<RwLock<ServerConfig>>,
+}
+
+impl ServerTokenHandle {
+    /// Immediately rotates the live in-memory pairing token of the running local HTTP/SSE server.
+    pub async fn update_token(&self, new_token: String) {
+        let mut guard = self.config.write().await;
+        guard.token = new_token;
+    }
+}
+
 pub struct ServerState {
     pub manager: Arc<DownloadManager>,
     pub db: Database,
-    pub config: RwLock<ServerConfig>,
+    pub config: Arc<RwLock<ServerConfig>>,
     pub resolver: Arc<tdm_core::MediaResolver>,
 }
 
@@ -242,30 +255,42 @@ pub fn is_allowed_origin(origin_str: &str, allowed_ids: &[String]) -> bool {
         return false;
     }
 
-    // 3. Trusted local desktop app / Tauri origins (exact match, with optional trailing slash)
+    // 3. Trusted local desktop app / Tauri origins (exact match, with optional trailing slash).
+    // Explicitly NEVER allow `Origin: null` because sandboxed iframes, data: URLs, and opaque
+    // web contexts emit `Origin: null` and would bypass CORS origin isolation.
     let clean_origin = lower.strip_suffix('/').unwrap_or(&lower);
     if clean_origin == "tauri://localhost"
         || clean_origin == "tauri://"
         || clean_origin == "http://tauri.localhost"
         || clean_origin == "https://tauri.localhost"
-        || clean_origin == "null"
     {
         return true;
     }
 
-    // 3. Explicitly reject all other origins (arbitrary websites, spoofed schemes, etc.)
+    // 4. Explicitly reject all other origins (arbitrary websites, `null`, spoofed schemes, etc.)
     false
+}
+
+/// Constant-time byte-slice equality to prevent token timing side channels.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    let mut diff: u8 = (a.len() ^ b.len()) as u8;
+    let len = a.len().min(b.len());
+    for i in 0..len {
+        diff |= a[i] ^ b[i];
+    }
+    diff == 0 && a.len() == b.len()
 }
 
 fn check_auth(headers: &HeaderMap, query_token: Option<&str>, expected_token: &str) -> bool {
     if expected_token.is_empty() {
         return false;
     }
+    let expected = expected_token.as_bytes();
 
     // 1. Check X-Tori-Token header
     if let Some(val) = headers.get("x-tori-token") {
         if let Ok(s) = val.to_str() {
-            if s.trim() == expected_token {
+            if constant_time_eq(s.trim().as_bytes(), expected) {
                 return true;
             }
         }
@@ -276,7 +301,7 @@ fn check_auth(headers: &HeaderMap, query_token: Option<&str>, expected_token: &s
         if let Ok(s) = val.to_str() {
             let s = s.trim();
             if let Some(tok) = s.strip_prefix("Bearer ") {
-                if tok.trim() == expected_token {
+                if constant_time_eq(tok.trim().as_bytes(), expected) {
                     return true;
                 }
             }
@@ -285,12 +310,23 @@ fn check_auth(headers: &HeaderMap, query_token: Option<&str>, expected_token: &s
 
     // 3. Check query param (for EventSource SSE)
     if let Some(qt) = query_token {
-        if qt.trim() == expected_token {
+        if constant_time_eq(qt.trim().as_bytes(), expected) {
             return true;
         }
     }
 
     false
+}
+
+/// Checks authentication against the live token and immediately releases the read lock
+/// so concurrent token rotations (`ServerTokenHandle::update_token`) are never blocked by
+/// long-running handlers or open SSE streams.
+async fn authorize(state: &ServerState, headers: &HeaderMap, query_token: Option<&str>) -> bool {
+    let expected = {
+        let config = state.config.read().await;
+        config.token.clone()
+    };
+    check_auth(headers, query_token, &expected)
 }
 
 // ---------------------------------------------------------------------------
@@ -328,10 +364,12 @@ async fn security_middleware(
         .and_then(|o| o.to_str().ok())
         .map(|s| s.to_string());
 
-    let config = state.config.read().await;
-
     if let Some(ref origin) = origin_opt {
-        if !is_allowed_origin(origin, &config.allowed_extension_ids) {
+        let origin_allowed = {
+            let config = state.config.read().await;
+            is_allowed_origin(origin, &config.allowed_extension_ids)
+        };
+        if !origin_allowed {
             return (
                 StatusCode::FORBIDDEN,
                 Json(serde_json::json!({
@@ -391,8 +429,10 @@ async fn handle_status(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
 ) -> Json<StatusResponse> {
-    let config = state.config.read().await;
-    let auth = check_auth(&headers, None, &config.token);
+    let (auth, port) = {
+        let config = state.config.read().await;
+        (check_auth(&headers, None, &config.token), config.port)
+    };
     if auth {
         let _ = state
             .db
@@ -404,7 +444,7 @@ async fn handle_status(
         name: SERVER_NAME.to_string(),
         version: API_VERSION.to_string(),
         authenticated: auth,
-        port: config.port,
+        port,
         engine_active: true,
     })
 }
@@ -413,8 +453,10 @@ async fn handle_pair_status(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
 ) -> Json<serde_json::Value> {
-    let config = state.config.read().await;
-    let auth = check_auth(&headers, None, &config.token);
+    let (auth, port) = {
+        let config = state.config.read().await;
+        (check_auth(&headers, None, &config.token), config.port)
+    };
     if auth {
         let _ = state
             .db
@@ -425,7 +467,7 @@ async fn handle_pair_status(
         "status": "ok",
         "desktop_running": true,
         "paired": auth,
-        "port": config.port,
+        "port": port,
         "version": API_VERSION
     }))
 }
@@ -434,8 +476,7 @@ async fn handle_pair(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
 ) -> Result<Json<PairResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
@@ -462,8 +503,7 @@ async fn handle_create_download(
     headers: HeaderMap,
     Json(payload): Json<CreateDownloadReq>,
 ) -> Result<Json<CreateDownloadResp>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
@@ -645,10 +685,19 @@ async fn handle_create_download(
 }
 
 async fn handle_media_status(
-    State(_state): State<Arc<ServerState>>,
-    _headers: HeaderMap,
-) -> Json<tdm_core::ResolverStatus> {
-    Json(tdm_core::resolver::get_resolver_status())
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<tdm_core::ResolverStatus>, (StatusCode, Json<serde_json::Value>)> {
+    if !authorize(&state, &headers, None).await {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Authentication required."
+            })),
+        ));
+    }
+    Ok(Json(tdm_core::resolver::get_resolver_status()))
 }
 
 pub fn categorize_resolver_error(
@@ -730,8 +779,7 @@ async fn handle_media_resolve(
     headers: HeaderMap,
     Json(payload): Json<ResolveMediaReq>,
 ) -> Result<Json<tdm_core::MediaMetadata>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
@@ -782,8 +830,7 @@ async fn handle_create_media_download(
     headers: HeaderMap,
     Json(payload): Json<CreateMediaDownloadReq>,
 ) -> Result<Json<CreateDownloadResp>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
@@ -804,26 +851,28 @@ async fn handle_create_media_download(
         ));
     }
 
-    let format_id = payload.format_id.trim();
-    if format_id.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "status": "error",
-                "message": "Missing format_id"
-            })),
-        ));
-    }
-
-    // Sanitize destination path if provided
-    if let Some(ref d) = payload.destination {
-        let clean = d.trim();
-        if clean.contains("..") {
+    let format_id = match tdm_core::resolver::validate_format_id(&payload.format_id) {
+        Ok(f) => f,
+        Err(e) => {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
                     "status": "error",
-                    "message": "Invalid destination path: directory traversal rejected."
+                    "message": e.to_string()
+                })),
+            ));
+        }
+    };
+    let format_id = format_id.as_str();
+
+    // Enforce full destination path validation (traversal, control chars, UNC/device, symlinks)
+    if let Some(ref d) = payload.destination {
+        if let Err(e) = tdm_core::DownloadManager::validate_destination_path(d) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": e.to_string()
                 })),
             ));
         }
@@ -849,9 +898,22 @@ async fn handle_create_media_download(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(raw_url);
 
+    let validated_media_url = match tdm_core::resolver::validate_http_url_syntax(raw_target_media_url) {
+        Ok(u) => u.to_string(),
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": e.to_string()
+                })),
+            ));
+        }
+    };
+
     let normalized_media_url =
-        tdm_core::resolver::pipeline::normalize_platform_media_url(raw_target_media_url)
-            .unwrap_or_else(|_| raw_target_media_url.to_string());
+        tdm_core::resolver::pipeline::normalize_platform_media_url(&validated_media_url)
+            .unwrap_or(validated_media_url);
     let target_media_url = normalized_media_url.as_str();
 
     // Duplicate check for media download: match by canonical URL and format identifier
@@ -955,8 +1017,7 @@ async fn handle_playlist_resolve(
     headers: HeaderMap,
     Json(payload): Json<ResolvePlaylistReq>,
 ) -> Result<Json<tdm_core::PlaylistMetadata>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
@@ -1005,8 +1066,7 @@ async fn handle_open_playlist(
     headers: HeaderMap,
     Json(payload): Json<OpenPlaylistReq>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
@@ -1015,7 +1075,6 @@ async fn handle_open_playlist(
             })),
         ));
     }
-    drop(config);
 
     let timeout = std::time::Duration::from_secs(12);
     match state
@@ -1067,8 +1126,7 @@ async fn handle_playlist_enqueue(
     headers: HeaderMap,
     Json(payload): Json<EnqueuePlaylistReq>,
 ) -> Result<Json<EnqueuePlaylistResp>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
@@ -1079,19 +1137,31 @@ async fn handle_playlist_enqueue(
     }
 
     if let Some(ref d) = payload.destination {
-        let clean = d.trim();
-        if clean.contains("..") {
+        if let Err(e) = tdm_core::DownloadManager::validate_destination_path(d) {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
                     "status": "error",
-                    "message": "Invalid destination path: directory traversal rejected."
+                    "message": e.to_string()
                 })),
             ));
         }
     }
 
-    let format = payload.format_id.as_deref().unwrap_or("best");
+    let raw_format = payload.format_id.as_deref().unwrap_or("best");
+    let validated_format = match tdm_core::resolver::validate_format_id(raw_format) {
+        Ok(f) => f,
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": e.to_string()
+                })),
+            ));
+        }
+    };
+    let format = validated_format.as_str();
     let ext = tdm_core::playlist_format_ext(Some(format));
     let sample_name = format!("playlist.{}", ext);
     let dest_path = state
@@ -1156,8 +1226,7 @@ async fn handle_list_downloads(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
 ) -> Result<Json<JobListResp>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
@@ -1205,8 +1274,7 @@ async fn handle_get_download(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
@@ -1240,8 +1308,7 @@ async fn handle_pause_download(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"status": "error"})),
@@ -1262,8 +1329,7 @@ async fn handle_resume_download(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"status": "error"})),
@@ -1284,8 +1350,7 @@ async fn handle_cancel_download(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"status": "error"})),
@@ -1306,8 +1371,7 @@ async fn handle_retry_download(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"status": "error"})),
@@ -1336,8 +1400,7 @@ async fn handle_reschedule_download(
     Path(id): Path<String>,
     Json(payload): Json<RescheduleReq>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"status": "error", "message": "Authentication required."})),
@@ -1380,8 +1443,7 @@ async fn handle_delete_download(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"status": "error"})),
@@ -1402,8 +1464,7 @@ async fn handle_open_progress(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"status": "error", "message": "Authentication required"})),
@@ -1438,8 +1499,7 @@ async fn handle_show_window(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"status": "error"})),
@@ -1460,8 +1520,7 @@ async fn handle_hide_window(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    if !check_auth(&headers, None, &config.token) {
+    if !authorize(&state, &headers, None).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"status": "error"})),
@@ -1486,8 +1545,7 @@ async fn handle_events(
     Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>,
     (StatusCode, Json<serde_json::Value>),
 > {
-    let config = state.config.read().await;
-    if !check_auth(&headers, query.token.as_deref(), &config.token) {
+    if !authorize(&state, &headers, query.token.as_deref()).await {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"status": "error", "message": "Authentication required."})),
@@ -1646,12 +1704,21 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
 }
 
 async fn handle_get_thumbnail(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(query): Query<EventQuery>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, &'static str)> {
+    if !authorize(&state, &headers, query.token.as_deref()).await {
+        return Err((StatusCode::UNAUTHORIZED, "Authentication required"));
+    }
     let clean_id = id
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-')
         .collect::<String>();
+    if clean_id.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Invalid thumbnail id"));
+    }
     let cache_dir = tdm_core::engine::get_thumbnail_cache_dir();
     let file_path = cache_dir.join(format!("{}.jpg", clean_id));
     if file_path.exists() {
@@ -1660,7 +1727,7 @@ async fn handle_get_thumbnail(
             headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
             headers.insert(
                 header::CACHE_CONTROL,
-                HeaderValue::from_static("public, max-age=86400"),
+                HeaderValue::from_static("private, max-age=86400"),
             );
             return Ok((headers, bytes));
         }
@@ -1673,6 +1740,15 @@ pub async fn start_server(
     db: Database,
     shutdown: CancellationToken,
 ) -> Result<(u16, String), String> {
+    let (port, token, _handle) = start_server_with_handle(manager, db, shutdown).await?;
+    Ok((port, token))
+}
+
+pub async fn start_server_with_handle(
+    manager: Arc<DownloadManager>,
+    db: Database,
+    shutdown: CancellationToken,
+) -> Result<(u16, String, ServerTokenHandle), String> {
     let port = get_configured_port(&db);
     let token = get_or_create_token(&db);
 
@@ -1739,10 +1815,15 @@ pub async fn start_server(
         allowed_extension_ids,
     };
 
+    let shared_config = Arc::new(RwLock::new(config));
+    let token_handle = ServerTokenHandle {
+        config: shared_config.clone(),
+    };
+
     let server_state = Arc::new(ServerState {
         manager,
         db: db.clone(),
-        config: RwLock::new(config),
+        config: shared_config,
         resolver: Arc::new(tdm_core::MediaResolver::new().with_database(db)),
     });
 
@@ -1763,7 +1844,7 @@ pub async fn start_server(
             .unwrap_or_else(|e| eprintln!("[TORI Server] Server error: {}", e));
     });
 
-    Ok((bound_port, token))
+    Ok((bound_port, token, token_handle))
 }
 
 #[cfg(test)]
@@ -1877,7 +1958,8 @@ mod tests {
         assert!(is_allowed_origin("http://tauri.localhost", &allowed));
         assert!(is_allowed_origin("http://tauri.localhost/", &allowed));
         assert!(is_allowed_origin("https://tauri.localhost", &allowed));
-        assert!(is_allowed_origin("null", &allowed));
+        // `Origin: null` must be rejected (sandboxed iframes / data: URIs emit null origin)
+        assert!(!is_allowed_origin("null", &allowed));
 
         // Reject spoofed desktop domains
         assert!(!is_allowed_origin(

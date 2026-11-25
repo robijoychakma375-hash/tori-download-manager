@@ -185,7 +185,7 @@ pub async fn cache_remote_thumbnail(url: &str, output_path: &Path) -> Result<Str
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(6))
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(crate::resolver::ssrf::ssrf_safe_redirect_policy())
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) TORI/2.0")
         .build()
         .unwrap_or_default();

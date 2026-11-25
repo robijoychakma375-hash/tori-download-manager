@@ -236,21 +236,29 @@ pub fn format_segment_template(
     result
 }
 
+const MAX_DASH_FORMAT_WIDTH: usize = 32;
+const MAX_DASH_RESOLVED_SEGMENTS: usize = 50_000;
+
 fn format_with_spec(val: u64, spec: &str) -> String {
     if let Some(width_str) = spec.strip_prefix('0').and_then(|s| s.strip_suffix('d')) {
         if let Ok(width) = width_str.parse::<usize>() {
-            return format!("{:0width$}", val, width = width);
+            let safe_width = width.min(MAX_DASH_FORMAT_WIDTH);
+            return format!("{:0width$}", val, width = safe_width);
         }
     }
     val.to_string()
 }
 
 /// Parses a byte range string e.g. "0-500" into (start, end).
+/// Rejects inverted ranges where `start > end`.
 pub fn parse_range_spec(s: &str) -> Option<(u64, u64)> {
     let parts: Vec<&str> = s.split('-').collect();
     if parts.len() == 2 {
         let start = parts[0].trim().parse::<u64>().ok()?;
         let end = parts[1].trim().parse::<u64>().ok()?;
+        if start > end {
+            return None;
+        }
         Some((start, end))
     } else {
         None
@@ -986,7 +994,16 @@ pub fn resolve_representation_segments(
                 }
 
                 let d = entry.d;
-                let count = 1 + entry.r.max(0) as u64;
+                let count = 1u64.saturating_add(entry.r.max(0) as u64);
+                if media_segments.len().saturating_add(count.min(MAX_DASH_RESOLVED_SEGMENTS as u64) as usize)
+                    > MAX_DASH_RESOLVED_SEGMENTS
+                    || count > MAX_DASH_RESOLVED_SEGMENTS as u64
+                {
+                    return Err(EngineError::Other(format!(
+                        "DASH manifest exceeded maximum allowed segment count ({})",
+                        MAX_DASH_RESOLVED_SEGMENTS
+                    )));
+                }
 
                 for _ in 0..count {
                     let formatted_media = format_segment_template(
@@ -1008,8 +1025,8 @@ pub fn resolve_representation_segments(
                     });
 
                     total_duration += seg_dur;
-                    current_time += d;
-                    current_number += 1;
+                    current_time = current_time.saturating_add(d);
+                    current_number = current_number.saturating_add(1);
                 }
             }
         } else if let Some(d) = st.duration {
@@ -1020,14 +1037,21 @@ pub fn resolve_representation_segments(
 
             let seg_duration_sec = d as f64 / timescale as f64;
             let count = if seg_duration_sec > 0.0 && period_duration > 0.0 {
-                (period_duration / seg_duration_sec).ceil() as u64
+                let raw_count = (period_duration / seg_duration_sec).ceil();
+                if !raw_count.is_finite() || raw_count > MAX_DASH_RESOLVED_SEGMENTS as f64 {
+                    return Err(EngineError::Other(format!(
+                        "DASH manifest exceeded maximum allowed segment count ({})",
+                        MAX_DASH_RESOLVED_SEGMENTS
+                    )));
+                }
+                raw_count as u64
             } else {
                 1
             };
 
             for i in 0..count {
-                let number = st.start_number + i;
-                let time = i * d;
+                let number = st.start_number.saturating_add(i);
+                let time = i.saturating_mul(d);
 
                 let formatted_media = format_segment_template(
                     media_pattern,

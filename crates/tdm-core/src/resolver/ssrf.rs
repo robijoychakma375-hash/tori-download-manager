@@ -1,21 +1,120 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use url::Url;
 
 use crate::error::{EngineError, Result};
 
-/// Validates that an extraction URL is safe against Server-Side Request Forgery (SSRF),
-/// port-scanning, loopback access, link-local metadata leaks, and private network probing.
-pub async fn validate_safe_media_url(raw_url: &str) -> Result<Url> {
-    let parsed = Url::parse(raw_url).map_err(|e| EngineError::InvalidUrl(e.to_string()))?;
+/// Strictly validates HTTP/HTTPS URL syntax without network I/O.
+/// Rejects control characters, whitespace, leading `-` (CLI flag injection), non-HTTP(S) schemes,
+/// and URLs without a valid host.
+pub fn validate_http_url_syntax(raw_url: &str) -> Result<Url> {
+    let trimmed = raw_url.trim();
+    if trimmed.is_empty() {
+        return Err(EngineError::InvalidUrl("URL must not be empty".into()));
+    }
+    if trimmed.starts_with('-') {
+        return Err(EngineError::InvalidUrl(
+            "URL must not start with '-' (potential CLI flag injection)".into(),
+        ));
+    }
+    if trimmed
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err(EngineError::InvalidUrl(
+            "URL must not contain whitespace or control characters".into(),
+        ));
+    }
 
-    // 1. Only HTTP and HTTPS are permitted for media extraction
-    let scheme = parsed.scheme().to_lowercase();
+    let parsed = Url::parse(trimmed).map_err(|e| EngineError::InvalidUrl(e.to_string()))?;
+    let scheme = parsed.scheme().to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {
         return Err(EngineError::InvalidUrl(format!(
-            "Unsupported protocol scheme '{}'. Only HTTP/HTTPS URLs are allowed for media extraction.",
+            "Unsupported protocol scheme '{}'. Only HTTP/HTTPS URLs are allowed.",
             scheme
         )));
     }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| EngineError::InvalidUrl("Missing host in URL".into()))?;
+    if host.is_empty() {
+        return Err(EngineError::InvalidUrl("Missing host in URL".into()));
+    }
+    Ok(parsed)
+}
+
+/// Checks whether a hostname string is a restricted local/internal name.
+pub fn is_restricted_hostname(host_str: &str) -> bool {
+    let lower_host = host_str.trim().trim_end_matches('.').to_ascii_lowercase();
+    lower_host == "localhost"
+        || lower_host.ends_with(".localhost")
+        || lower_host == "broadcasthost"
+        || lower_host.ends_with(".local")
+        || lower_host.ends_with(".internal")
+}
+
+/// Builds a `reqwest` redirect policy (max 5 hops) that enforces SSRF protections on every
+/// redirect target so an external URL cannot redirect into loopback, RFC 1918, or cloud metadata.
+pub fn ssrf_safe_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 5 {
+            return attempt.error("Too many HTTP redirects (max 5)");
+        }
+        let scheme = attempt.url().scheme().to_string();
+        if scheme != "http" && scheme != "https" {
+            return attempt.error(format!("Redirect to disallowed scheme '{}'", scheme));
+        }
+        let Some(host_str) = attempt.url().host_str().map(|s| s.to_string()) else {
+            return attempt.error("Redirect target missing host");
+        };
+        let port = attempt.url().port_or_known_default().unwrap_or(80);
+        let allow_loopback = std::env::var("TORI_ALLOW_LOOPBACK")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        if !allow_loopback {
+            if is_restricted_hostname(&host_str) {
+                return attempt.error(format!(
+                    "Redirect to restricted local/internal host '{}' blocked (SSRF protection)",
+                    host_str
+                ));
+            }
+            let unbracketed = host_str.trim_start_matches('[').trim_end_matches(']');
+            if let Ok(ip) = unbracketed.parse::<IpAddr>() {
+                if is_restricted_ip(&ip) {
+                    return attempt.error(format!(
+                        "Redirect to restricted IP '{}' blocked (SSRF protection)",
+                        ip
+                    ));
+                }
+            } else {
+                match (host_str.as_str(), port).to_socket_addrs() {
+                    Ok(addrs) => {
+                        for addr in addrs {
+                            if is_restricted_ip(&addr.ip()) {
+                                return attempt.error(format!(
+                                    "Redirect host '{}' resolved to restricted IP '{}' (SSRF protection)",
+                                    host_str,
+                                    addr.ip()
+                                ));
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        return attempt.error(format!(
+                            "Redirect host '{}' could not be resolved safely",
+                            host_str
+                        ));
+                    }
+                }
+            }
+        }
+        attempt.follow()
+    })
+}
+
+/// Validates that an extraction URL is safe against Server-Side Request Forgery (SSRF),
+/// port-scanning, loopback access, link-local metadata leaks, and private network probing.
+pub async fn validate_safe_media_url(raw_url: &str) -> Result<Url> {
+    let parsed = validate_http_url_syntax(raw_url)?;
 
     // 2. Validate host presence
     let host_str = parsed
@@ -27,14 +126,7 @@ pub async fn validate_safe_media_url(raw_url: &str) -> Result<Url> {
         .unwrap_or(false);
 
     // Check literal localhost hostnames (unless explicitly allowed in integration test harness)
-    let lower_host = host_str.to_lowercase();
-    if !allow_loopback
-        && (lower_host == "localhost"
-            || lower_host.ends_with(".localhost")
-            || lower_host == "broadcasthost"
-            || lower_host.ends_with(".local")
-            || lower_host.ends_with(".internal"))
-    {
+    if !allow_loopback && is_restricted_hostname(host_str) {
         return Err(EngineError::InvalidUrl(format!(
             "Target host '{}' is a restricted local or internal domain name.",
             host_str

@@ -16,7 +16,9 @@ pub use discovery::{
     find_ffmpeg, find_ffprobe, find_js_runtime, find_streamlink, find_yt_dlp, get_resolver_status,
     get_yt_dlp_version,
 };
-pub use downloader::{build_format_selector, download_managed_media};
+pub use downloader::{
+    build_format_selector, download_managed_media, escape_ytdlp_output_template, validate_format_id,
+};
 pub use extractor::{clean_ytdlp_error, execute_yt_dlp_dump, execute_yt_dlp_playlist_dump};
 pub use models::{
     DiscoveryStrategy, DownloadCapability, FilesizeType, MediaCandidate, MediaMetadata,
@@ -34,4 +36,7 @@ pub use pipeline::{
     parse_single_format, parse_ytdlp_playlist_metadata, select_compatible_audio_and_container,
     MediaResolver, ParsedRawFormat,
 };
-pub use ssrf::validate_safe_media_url;
+pub use ssrf::{
+    is_restricted_hostname, is_restricted_ip, ssrf_safe_redirect_policy, validate_http_url_syntax,
+    validate_safe_media_url,
+};

@@ -184,6 +184,9 @@ pub fn run() {
     }
 
     let is_minimized_launch = Arc::new(std::sync::atomic::AtomicBool::new(is_minimized));
+    let server_token_handle =
+        Arc::new(tokio::sync::RwLock::new(None::<tdm_native_host::server::ServerTokenHandle>));
+    let srv_token_slot = server_token_handle.clone();
 
     let ipc_manager = manager.clone();
     let ipc_db = db.clone();
@@ -220,6 +223,7 @@ pub fn run() {
             manager: manager.clone(),
             tools_manager: tools_manager.clone(),
             is_minimized_launch: is_minimized_launch.clone(),
+            server_token_handle: server_token_handle.clone(),
         })
         .setup(move |app| {
             manager.set_desktop_gui_attached(true);
@@ -298,7 +302,19 @@ pub fn run() {
                                 }
                                 if opts.open_on_complete {
                                     if let Ok(Some(job)) = m.get_download(&id_c) {
-                                        let _ = commands::open_file(job.target_path).await;
+                                        if commands::is_auto_open_safe_extension(&job.target_path) {
+                                            let _ = commands::open_file(job.target_path).await;
+                                        } else {
+                                            lifecycle::log_event(
+                                                "SECURITY",
+                                                "AUTO_OPEN_BLOCKED_EXECUTABLE",
+                                                &format!(
+                                                    "Blocked automatic execution of potentially dangerous file extension for job {}",
+                                                    id_c
+                                                ),
+                                            );
+                                            let _ = commands::open_folder(job.target_path).await;
+                                        }
                                     }
                                 }
                                 if opts.close_on_complete {
@@ -323,10 +339,20 @@ pub fn run() {
 
             // Launch the local HTTP/SSE browser integration server on 127.0.0.1
             tauri::async_runtime::spawn(async move {
-                if let Err(e) =
-                    tdm_native_host::server::start_server(srv_manager, srv_db, srv_shutdown).await
+                match tdm_native_host::server::start_server_with_handle(
+                    srv_manager,
+                    srv_db,
+                    srv_shutdown,
+                )
+                .await
                 {
-                    eprintln!("[TORI] Failed to start local integration server: {}", e);
+                    Ok((_port, _token, handle)) => {
+                        let mut slot = srv_token_slot.write().await;
+                        *slot = Some(handle);
+                    }
+                    Err(e) => {
+                        eprintln!("[TORI] Failed to start local integration server: {}", e);
+                    }
                 }
             });
 

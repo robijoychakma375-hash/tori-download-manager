@@ -45,6 +45,7 @@ pub async fn run_ipc_server_on_pipe(
     loop {
         let server = match ServerOptions::new()
             .first_pipe_instance(first_instance)
+            .reject_remote_clients(true)
             .max_instances(32)
             .create(pipe_name)
         {

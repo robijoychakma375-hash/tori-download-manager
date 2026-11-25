@@ -36,8 +36,51 @@ pub fn get_firefox_manifest_path() -> PathBuf {
     base.join(format!("{}.firefox.json", HOST_NAME))
 }
 
+/// Resolves the actual `tdm-native-host` executable path so invoking registration from
+/// `tori-download-manager.exe` never overwrites the Chrome/Edge/Firefox Native Messaging
+/// manifest with the GUI executable path.
+pub fn resolve_native_host_binary_from(current_exe: &std::path::Path) -> std::io::Result<PathBuf> {
+    let target_name = if cfg!(windows) {
+        "tdm-native-host.exe"
+    } else {
+        "tdm-native-host"
+    };
+
+    if current_exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.eq_ignore_ascii_case(target_name))
+        .unwrap_or(false)
+    {
+        return Ok(current_exe.to_path_buf());
+    }
+
+    if let Some(dir) = current_exe.parent() {
+        let candidates = [
+            dir.join(target_name),
+            dir.join("bin").join(target_name),
+            dir.join("resources").join("bin").join(target_name),
+        ];
+        for cand in candidates {
+            if cand.is_file() {
+                return Ok(cand);
+            }
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!(
+            "Could not locate '{}' near '{}'. Refusing to register non-native-host executable.",
+            target_name,
+            current_exe.display()
+        ),
+    ))
+}
+
 pub fn register_host(custom_extension_id: Option<&str>) -> std::io::Result<()> {
-    let exe_path = std::env::current_exe()?;
+    let current_exe = std::env::current_exe()?;
+    let exe_path = resolve_native_host_binary_from(&current_exe)?;
     let manifest_path = get_manifest_path();
 
     let ext_id = custom_extension_id.unwrap_or(DEFAULT_EXTENSION_ID);

@@ -538,7 +538,7 @@ impl DownloadManager {
     }
 
     pub fn set_max_retries(&self, retries: usize) {
-        self.max_retries.store(retries, Ordering::SeqCst);
+        self.max_retries.store(retries.clamp(0, 20), Ordering::SeqCst);
     }
 
     pub fn max_retries(&self) -> usize {
@@ -714,14 +714,52 @@ impl DownloadManager {
                 "Invalid destination path: control characters rejected.".to_string(),
             ));
         }
-        if clean.contains("..")
-            || Path::new(clean)
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
+        if clean.starts_with(r"\\") || clean.starts_with("//") {
+            return Err(EngineError::InvalidDestination(
+                "Invalid destination path: UNC and Windows device namespace paths are rejected."
+                    .to_string(),
+            ));
+        }
+        let path = Path::new(clean);
+        for comp in path.components() {
+            match comp {
+                std::path::Component::ParentDir => {
+                    return Err(EngineError::InvalidDestination(
+                        "Invalid destination path: directory traversal rejected.".to_string(),
+                    ));
+                }
+                std::path::Component::Prefix(prefix) => match prefix.kind() {
+                    std::path::Prefix::UNC(_, _)
+                    | std::path::Prefix::VerbatimUNC(_, _)
+                    | std::path::Prefix::DeviceNS(_)
+                    | std::path::Prefix::Verbatim(_) => {
+                        return Err(EngineError::InvalidDestination(
+                            "Invalid destination path: UNC and device prefixes are rejected."
+                                .to_string(),
+                        ));
+                    }
+                    std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_) => {}
+                },
+                _ => {}
+            }
+        }
+        if clean.contains("..") {
             return Err(EngineError::InvalidDestination(
                 "Invalid destination path: directory traversal rejected.".to_string(),
             ));
+        }
+
+        // Reject symbolic-link destinations or symlinked parent components to prevent symlink writes
+        let mut cursor = Some(path);
+        while let Some(ancestor) = cursor {
+            if let Ok(meta) = fs::symlink_metadata(ancestor) {
+                if meta.file_type().is_symlink() {
+                    return Err(EngineError::InvalidDestination(
+                        "Invalid destination path: symbolic link path rejected.".to_string(),
+                    ));
+                }
+            }
+            cursor = ancestor.parent().filter(|p| !p.as_os_str().is_empty());
         }
         Ok(())
     }
@@ -826,7 +864,8 @@ impl DownloadManager {
     }
 
     pub fn set_max_active_jobs(&self, max: usize) {
-        self.max_active_jobs.store(max, Ordering::SeqCst);
+        self.max_active_jobs
+            .store(max.clamp(1, 16), Ordering::SeqCst);
         let _ = self.process_queue();
     }
 
@@ -1807,21 +1846,29 @@ impl DownloadManager {
         scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
         auto_queue: bool,
     ) -> Result<DownloadJob> {
+        let parsed_url = crate::resolver::ssrf::validate_http_url_syntax(url)?;
+        let validated_url = parsed_url.to_string();
+        let validated_format = crate::resolver::validate_format_id(format_id)?;
+
+        let dir = destination_dir.as_ref();
+        if let Some(dir_str) = dir.to_str() {
+            Self::validate_destination_path(dir_str)?;
+        }
+
         let clean_referer = referer
             .as_deref()
-            .and_then(|r| crate::engine::referer::sanitize_and_validate_referer(r, url));
+            .and_then(|r| crate::engine::referer::sanitize_and_validate_referer(r, &validated_url));
         let clean_user_agent = user_agent
             .as_deref()
             .and_then(crate::engine::user_agent::sanitize_and_validate_user_agent);
 
-        let dir = destination_dir.as_ref();
         if !dir.exists() {
             fs::create_dir_all(dir)?;
         }
 
         let base_filename = sanitize_filename(filename);
         let id = Uuid::new_v4().to_string();
-        let thumb = thumbnail_url.or_else(|| extract_thumbnail_from_url(url));
+        let thumb = thumbnail_url.or_else(|| extract_thumbnail_from_url(&validated_url));
 
         let now = chrono::Utc::now();
         let (initial_state, final_sched) = match scheduled_at {
@@ -1836,8 +1883,8 @@ impl DownloadManager {
 
             let job = DownloadJob {
                 id: id.clone(),
-                url: url.to_string(),
-                resolved_url: Some(format_id.to_string()),
+                url: validated_url,
+                resolved_url: Some(validated_format),
                 filename: target_path
                     .file_name()
                     .unwrap()

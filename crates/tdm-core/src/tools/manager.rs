@@ -1616,7 +1616,11 @@ impl ExternalToolsManager {
             }
             self.coordinator
                 .update_manifest_metadata(&self.layout, |m| {
-                    *m = restored_manifest;
+                    // Mutate ONLY yt-dlp fields so concurrent FFmpeg bundle updates are never clobbered,
+                    // and explicitly clear `yt_dlp_pending` to prevent an infinite 30s re-activation loop.
+                    m.yt_dlp_active = restored_manifest.yt_dlp_active;
+                    m.yt_dlp_rollback = restored_manifest.yt_dlp_rollback;
+                    m.yt_dlp_pending = None;
                 })?;
 
             if fell_back_to_bundled {
@@ -1624,6 +1628,8 @@ impl ExternalToolsManager {
             }
             if let Ok(Some(mut rec)) = store::get_tool_record(&self.db, ToolId::YtDlp) {
                 rec.update_status = ToolUpdateStatus::RolledBack;
+                rec.pending_version = None;
+                rec.pending_binary_path = None;
                 rec.last_error = Some(if fell_back_to_bundled {
                     format!(
                         "Post-activation verification failed ({}) and previous managed binary was missing; restored verified bundled fallback.",
@@ -1892,7 +1898,11 @@ impl ExternalToolsManager {
             }
             self.coordinator
                 .update_manifest_metadata(&self.layout, |m| {
-                    *m = restored_manifest;
+                    // Mutate ONLY FFmpeg bundle fields so concurrent yt-dlp updates are never clobbered,
+                    // and explicitly clear `ffmpeg_bundle_pending` to prevent an infinite 30s rollback loop.
+                    m.ffmpeg_bundle_active = restored_manifest.ffmpeg_bundle_active;
+                    m.ffmpeg_bundle_rollback = restored_manifest.ffmpeg_bundle_rollback;
+                    m.ffmpeg_bundle_pending = None;
                 })?;
 
             if fell_back_to_bundled {
@@ -1901,6 +1911,8 @@ impl ExternalToolsManager {
             for tool in [ToolId::Ffmpeg, ToolId::Ffprobe] {
                 if let Ok(Some(mut rec)) = store::get_tool_record(&self.db, tool) {
                     rec.update_status = ToolUpdateStatus::RolledBack;
+                    rec.pending_version = None;
+                    rec.pending_binary_path = None;
                     rec.last_error = Some(if fell_back_to_bundled {
                         format!(
                             "Post-activation verification failed ({}) and previous managed bundle was missing; restored verified bundled pair.",

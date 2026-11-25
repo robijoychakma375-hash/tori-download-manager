@@ -560,8 +560,19 @@ pub fn sanitize_filename(name: &str) -> String {
     let forbidden = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
     let mut clean: String = name
         .chars()
+        .filter(|&c| {
+            // Strip Unicode BiDi override/embedding/isolate controls that can spoof extensions
+            !matches!(
+                c,
+                '\u{061C}'
+                    | '\u{200E}'
+                    | '\u{200F}'
+                    | '\u{202A}'..='\u{202E}'
+                    | '\u{2066}'..='\u{2069}'
+            )
+        })
         .map(|c| {
-            if forbidden.contains(&c) || (c as u32) < 32 {
+            if forbidden.contains(&c) || (c as u32) < 32 || c == '\x7f' {
                 '_'
             } else {
                 c
@@ -575,15 +586,15 @@ pub fn sanitize_filename(name: &str) -> String {
         return "download.bin".to_string();
     }
 
-    // Windows reserved device names
+    // Windows reserved device names (check trimmed stem to catch e.g. "CON .txt")
     let reserved = [
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
         "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
 
     let stem = match clean.find('.') {
-        Some(idx) => &clean[..idx],
-        None => &clean[..],
+        Some(idx) => clean[..idx].trim(),
+        None => clean.trim(),
     };
 
     if reserved.iter().any(|&r| stem.eq_ignore_ascii_case(r)) {

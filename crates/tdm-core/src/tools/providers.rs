@@ -428,8 +428,12 @@ pub async fn fetch_signed_tools_manifest(
     }
 
     // 5. Signing Key ID & Key-Purpose domain enforcement
+    // When using a single-key fallback config (`tools_keyring` unset AND effective keyring has 1 key),
+    // enforce `expected_manifest_key_id`. For the default multi-key Stage 1 transition keyring
+    // (legacy shared + dedicated External Tools key), allow any active/transition key verified by
+    // the keyring so future Stage 2 dedicated primary `.sig` manifests are accepted cleanly.
     let actual_key_id = Some(verified_sig.key_id.clone());
-    if config.tools_keyring.is_none() {
+    if config.tools_keyring.is_none() && keyring.keys.len() == 1 {
         if let Some(ref expected_kid) = config.expected_manifest_key_id {
             let exp_norm = expected_kid.trim().to_ascii_uppercase();
             if actual_key_id.as_deref() != Some(exp_norm.as_str()) {
@@ -610,8 +614,21 @@ pub async fn fetch_signed_tools_manifest(
         expires_dt = Some(exp_dt);
     }
 
-    // Anti-replay monotonicity check (enforced whenever manifest_revision > 0 or schema_version >= 2)
-    let is_higher_revision = if manifest.manifest_revision > 0 || manifest.schema_version >= 2 {
+    // Anti-replay monotonicity & schema-downgrade check:
+    // Once any schema v2 / revisioned manifest has been accepted (`highest_accepted_revision > 0`),
+    // strictly reject downgrading back to unversioned schema v1 manifests (which lack mandatory
+    // expiry and revision monotonicity) or any lower revision.
+    if prior_state.highest_accepted_revision > 0 && manifest.schema_version < 2 {
+        return ManifestFetchOutcome::RejectedSecurity(format!(
+            "Manifest schema downgrade rejected: received schema_version {} after accepting revision {}",
+            manifest.schema_version, prior_state.highest_accepted_revision
+        ));
+    }
+
+    let is_higher_revision = if prior_state.highest_accepted_revision > 0
+        || manifest.manifest_revision > 0
+        || manifest.schema_version >= 2
+    {
         if prior_state.highest_accepted_revision > 0 {
             if manifest.manifest_revision < prior_state.highest_accepted_revision {
                 return ManifestFetchOutcome::RejectedSecurity(format!(

@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       installer_url:
-        description: "HTTPS URL to NSIS installer (defaults to GitHub Latest Stable v1.0.7)"
+        description: "HTTPS URL to NSIS installer (defaults to GitHub Latest Stable v1.0.8)"
         required: false
-        default: "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.7/TORI.Download.Manager_1.0.7_x64-setup.exe"
+        default: "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/TORI.Download.Manager_1.0.8_x64-setup.exe"
       expected_sha256:
         description: "Expected SHA-256 hex digest of installer"
         required: false
-        default: "142e4528410a70c43cf7166acda87d8b27e293348237113b2350a025467966cb"
+        default: "728d0d253a8fadc3fea5244723237f267dcd13abf65cac49b91a4ec83a3dcffb"
 
 permissions:
   contents: read

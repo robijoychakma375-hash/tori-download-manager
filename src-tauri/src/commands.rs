@@ -58,19 +58,38 @@ fn url_encode_query_component(s: &str) -> String {
     out
 }
 
-fn xml_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            _ => out.push(ch),
-        }
-    }
-    out
+/// Static PowerShell WinRT toast script reading title/body strictly from child process
+/// environment variables via XML DOM text nodes — zero string interpolation, completely immune
+/// to ASCII and Unicode quote (U+2018/U+2019/U+201A/U+201B) command injection and XML breakout.
+#[cfg(windows)]
+const WINDOWS_TOAST_PS_SCRIPT: &str = r#"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null; $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text></text><text></text></binding></visual></toast>'); $nodes = $xml.GetElementsByTagName('text'); $nodes.Item(0).AppendChild($xml.CreateTextNode([string]$env:TORI_NOTIFY_TITLE)) | Out-Null; $nodes.Item(1).AppendChild($xml.CreateTextNode([string]$env:TORI_NOTIFY_BODY)) | Out-Null; $toast = New-Object Windows.UI.Notifications.ToastNotification $xml; [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('TORI Download Manager').Show($toast)"#;
+
+#[cfg(windows)]
+fn sanitize_notification_text(s: &str) -> String {
+    s.chars()
+        .filter(|&c| c != '\0' && (c >= ' ' || c == '\t'))
+        .take(256)
+        .collect()
+}
+
+#[cfg(windows)]
+fn dispatch_windows_toast(title: &str, body: &str) {
+    let safe_title = sanitize_notification_text(title);
+    let safe_body = sanitize_notification_text(body);
+    std::thread::spawn(move || {
+        let _ = silent_command("powershell.exe")
+            .env("TORI_NOTIFY_TITLE", safe_title)
+            .env("TORI_NOTIFY_BODY", safe_body)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                WINDOWS_TOAST_PS_SCRIPT,
+            ])
+            .output();
+    });
 }
 
 pub fn send_desktop_notification(title: &str, body: &str) {
@@ -81,31 +100,7 @@ pub fn send_desktop_notification(title: &str, body: &str) {
     );
 
     #[cfg(windows)]
-    {
-        let safe_title = xml_escape(title).replace('\'', "''");
-        let safe_body = xml_escape(body).replace('\'', "''");
-        let ps_script = format!(
-            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; \
-             [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null; \
-             $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; \
-             $xml.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>'); \
-             $toast = New-Object Windows.UI.Notifications.ToastNotification $xml; \
-             [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('TORI Download Manager').Show($toast)",
-            safe_title, safe_body
-        );
-        std::thread::spawn(move || {
-            let _ = silent_command("powershell.exe")
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-WindowStyle",
-                    "Hidden",
-                    "-Command",
-                    &ps_script,
-                ])
-                .output();
-        });
-    }
+    dispatch_windows_toast(title, body);
 }
 
 #[cfg(windows)]
@@ -125,22 +120,66 @@ fn silent_explorer_command() -> Command {
 
 use crate::state::AppState;
 
+/// Validates a local filesystem path before passing it to Explorer or file readers.
+/// Rejects empty paths, control chars, `..` traversal, and UNC / Windows device paths.
+fn validate_local_shell_path(path: &str) -> Result<PathBuf, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("File path must not be empty".to_string());
+    }
+    tdm_core::DownloadManager::validate_destination_path(trimmed).map_err(|e| e.to_string())?;
+    Ok(PathBuf::from(trimmed))
+}
+
+/// Returns `true` only if `path` does not carry an executable or script extension that should
+/// never be auto-executed silently via `open_on_complete`.
+pub fn is_auto_open_safe_extension(path: &str) -> bool {
+    const DANGEROUS_EXTS: &[&str] = &[
+        "exe", "msi", "msp", "bat", "cmd", "ps1", "psm1", "psd1", "vbs", "vbe", "js", "jse",
+        "wsf", "wsh", "hta", "scr", "lnk", "com", "pif", "reg", "cpl", "msc", "jar", "dll",
+        "inf", "scf", "url", "appref-ms", "msix", "appx",
+    ];
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.trim().to_ascii_lowercase());
+    match ext {
+        Some(ref e) => !DANGEROUS_EXTS.contains(&e.as_str()),
+        None => true,
+    }
+}
+
+fn host_matches_domain(host: &str, domain: &str) -> bool {
+    let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let d = domain.to_ascii_lowercase();
+    h == d || h.ends_with(&format!(".{}", d))
+}
+
 fn is_media_portal_url(url: &str) -> bool {
-    let u = url.trim().to_lowercase();
-    u.contains("youtube.com/watch")
-        || u.contains("youtu.be/")
-        || u.contains("youtube.com/shorts/")
-        || u.contains("facebook.com/reel/")
-        || u.contains("facebook.com/watch")
-        || (u.contains("facebook.com/") && (u.contains("/videos/") || u.contains("/reel/")))
-        || u.contains("fb.watch/")
-        || u.contains("instagram.com/reel/")
-        || u.contains("instagram.com/p/")
-        || u.contains("vimeo.com/")
-        || u.contains("tiktok.com/")
-        || u.contains("twitter.com/")
-        || u.contains("x.com/")
-        || u.contains("reddit.com/r/")
+    let Ok(parsed) = tdm_core::resolver::validate_http_url_syntax(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let path = parsed.path().to_ascii_lowercase();
+
+    (host_matches_domain(host, "youtube.com")
+        && (path.starts_with("/watch") || path.starts_with("/shorts/")))
+        || host_matches_domain(host, "youtu.be")
+        || (host_matches_domain(host, "facebook.com")
+            && (path.starts_with("/reel/")
+                || path.starts_with("/watch")
+                || path.contains("/videos/")
+                || path.contains("/reel/")))
+        || host_matches_domain(host, "fb.watch")
+        || (host_matches_domain(host, "instagram.com")
+            && (path.starts_with("/reel/") || path.starts_with("/p/")))
+        || host_matches_domain(host, "vimeo.com")
+        || host_matches_domain(host, "tiktok.com")
+        || host_matches_domain(host, "twitter.com")
+        || host_matches_domain(host, "x.com")
+        || (host_matches_domain(host, "reddit.com") && path.starts_with("/r/"))
 }
 
 #[tauri::command]
@@ -323,18 +362,19 @@ pub async fn delete_downloads(
 
 #[tauri::command]
 pub async fn open_folder(path: String) -> Result<(), String> {
-    let p = Path::new(&path);
+    let p = validate_local_shell_path(&path)?;
     if p.exists() {
         #[cfg(target_os = "windows")]
         {
             silent_explorer_command()
-                .args(["/select,", &path])
+                .arg("/select,")
+                .arg(&p)
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let parent = p.parent().unwrap_or(p);
+            let parent = p.parent().unwrap_or(&p);
             Command::new("xdg-open")
                 .arg(parent)
                 .spawn()
@@ -374,19 +414,19 @@ pub async fn get_download_chunks(
 
 #[tauri::command]
 pub async fn open_file(path: String) -> Result<(), String> {
-    let p = Path::new(&path);
+    let p = validate_local_shell_path(&path)?;
     if p.exists() {
         #[cfg(target_os = "windows")]
         {
             silent_explorer_command()
-                .arg(&path)
+                .arg(&p)
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }
         #[cfg(not(target_os = "windows"))]
         {
             Command::new("xdg-open")
-                .arg(&path)
+                .arg(&p)
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }
@@ -398,16 +438,21 @@ pub async fn open_file(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn verify_checksum(path: String) -> Result<String, String> {
-    let p = Path::new(&path);
-    if !p.exists() {
-        return Err("File does not exist on disk".to_string());
-    }
-    use sha2::{Digest, Sha256};
-    let mut file = std::fs::File::open(p).map_err(|e| e.to_string())?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher).map_err(|e| e.to_string())?;
-    let hash = hasher.finalize();
-    Ok(hex::encode(hash))
+    let p = validate_local_shell_path(&path)?;
+    tokio::task::spawn_blocking(move || {
+        let meta = std::fs::metadata(&p).map_err(|_| "File does not exist on disk".to_string())?;
+        if !meta.is_file() {
+            return Err("Path is not a regular file".to_string());
+        }
+        use sha2::{Digest, Sha256};
+        let mut file = std::fs::File::open(&p).map_err(|e| e.to_string())?;
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut file, &mut hasher).map_err(|e| e.to_string())?;
+        let hash = hasher.finalize();
+        Ok(hex::encode(hash))
+    })
+    .await
+    .map_err(|e| format!("Checksum task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -442,13 +487,13 @@ pub fn get_active_downloads_count(state: State<'_, AppState>) -> usize {
 
 #[tauri::command]
 pub async fn open_external_url(url: String) -> Result<(), String> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err("Only http and https URLs are supported".to_string());
-    }
+    let parsed = tdm_core::resolver::validate_http_url_syntax(&url)
+        .map_err(|_| "Only valid http and https URLs are supported".to_string())?;
+    let safe_url = parsed.to_string();
     #[cfg(target_os = "windows")]
     {
         silent_command("rundll32")
-            .args(["url.dll,FileProtocolHandler", &url])
+            .args(["url.dll,FileProtocolHandler", &safe_url])
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
@@ -456,7 +501,7 @@ pub async fn open_external_url(url: String) -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
         Command::new("xdg-open")
-            .arg(&url)
+            .arg(&safe_url)
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
@@ -640,8 +685,11 @@ pub fn apply_settings_to_manager(
         manager.set_dynamic_segmentation(dyn_seg);
     }
     if let Some(dir) = settings.get("dir").and_then(|v| v.as_str()) {
-        if !dir.trim().is_empty() {
-            manager.set_default_download_dir(Some(dir.to_string()));
+        let trimmed = dir.trim();
+        if !trimmed.is_empty()
+            && tdm_core::DownloadManager::validate_destination_path(trimmed).is_ok()
+        {
+            manager.set_default_download_dir(Some(trimmed.to_string()));
         }
     }
     if let Some(sort) = settings.get("sort").and_then(|v| v.as_bool()) {
@@ -794,6 +842,10 @@ pub async fn regenerate_pairing_token(state: State<'_, AppState>) -> Result<Stri
                 }
             }
         }
+    }
+
+    if let Some(handle) = state.server_token_handle.read().await.as_ref() {
+        handle.update_token(token.clone()).await;
     }
 
     Ok(token)
@@ -1341,7 +1393,13 @@ pub async fn enqueue_playlist_items(
     format_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    let format = format_id.as_deref().unwrap_or("best");
+    if let Some(ref d) = destination {
+        tdm_core::DownloadManager::validate_destination_path(d).map_err(|e| e.to_string())?;
+    }
+    let validated_format =
+        tdm_core::resolver::validate_format_id(format_id.as_deref().unwrap_or("best"))
+            .map_err(|e| e.to_string())?;
+    let format = validated_format.as_str();
     let ext = tdm_core::playlist_format_ext(Some(format));
     let sample_name = format!("playlist.{}", ext);
     let dest_path = state
@@ -1434,13 +1492,13 @@ pub async fn create_media_download(
         return Err("Missing media URL".to_string());
     }
 
-    let format_id = args.format_id.unwrap_or_else(|| "best".to_string());
+    let format_id = tdm_core::resolver::validate_format_id(
+        args.format_id.as_deref().unwrap_or("best"),
+    )
+    .map_err(|e| e.to_string())?;
 
     if let Some(ref d) = args.destination {
-        let clean = d.trim();
-        if clean.contains("..") {
-            return Err("Invalid destination path: directory traversal rejected.".to_string());
-        }
+        tdm_core::DownloadManager::validate_destination_path(d).map_err(|e| e.to_string())?;
     }
 
     let initial_filename = args
@@ -1539,31 +1597,7 @@ pub fn send_tool_update_notification(title: &str, body: &str) {
     );
 
     #[cfg(windows)]
-    {
-        let safe_title = xml_escape(title).replace('\'', "''");
-        let safe_body = xml_escape(body).replace('\'', "''");
-        let ps_script = format!(
-            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; \
-             [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null; \
-             $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; \
-             $xml.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>'); \
-             $toast = New-Object Windows.UI.Notifications.ToastNotification $xml; \
-             [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('TORI Download Manager').Show($toast)",
-            safe_title, safe_body
-        );
-        std::thread::spawn(move || {
-            let _ = silent_command("powershell.exe")
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-WindowStyle",
-                    "Hidden",
-                    "-Command",
-                    &ps_script,
-                ])
-                .output();
-        });
-    }
+    dispatch_windows_toast(title, body);
 }
 
 #[tauri::command]

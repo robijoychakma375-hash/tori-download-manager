@@ -531,10 +531,19 @@ async fn test_server_media_endpoints() {
     let client = reqwest::Client::new();
     let base_url = format!("http://127.0.0.1:{}", port);
 
-    // 1. GET /api/v1/media/status
+    // 1. GET /api/v1/media/status requires authentication
+    let unauth_status_resp = client
+        .get(format!("{}/api/v1/media/status", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth_status_resp.status(), 401);
+
     let status_resp = client
         .get(format!("{}/api/v1/media/status", base_url))
         .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &token)
         .send()
         .await
         .unwrap();
@@ -661,6 +670,145 @@ async fn test_server_media_endpoints() {
     let dup_audio_json: serde_json::Value = dup_audio_resp.json().await.unwrap();
     assert_eq!(dup_audio_json["status"], "already_exists");
     assert_eq!(dup_audio_json["job_id"], audio_json["job_id"]);
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn test_gate35_security_hardening_server_and_registry() {
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().join("server_test_gate35.sqlite");
+    let db = Database::open(&db_path).unwrap();
+    let event_bus = EventBus::default();
+    let manager = Arc::new(DownloadManager::new(db.clone(), event_bus).unwrap());
+    let shutdown = CancellationToken::new();
+
+    let (port, initial_token, token_handle) =
+        tdm_native_host::server::start_server_with_handle(manager, db.clone(), shutdown.clone())
+            .await
+            .unwrap();
+
+    let client = reqwest::Client::new();
+    let base_url = format!("http://127.0.0.1:{}", port);
+
+    // 1. SEC-35-06: Origin: null must be rejected with 403 Forbidden
+    let null_origin_resp = client
+        .get(format!("{}/api/v1/status", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header(ORIGIN, "null")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(null_origin_resp.status(), 403);
+
+    // 2. SEC-35-06: /api/v1/thumbnails/{id} requires authentication
+    let unauth_thumb = client
+        .get(format!("{}/api/v1/thumbnails/nonexistent-id", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth_thumb.status(), 401);
+
+    let auth_thumb = client
+        .get(format!("{}/api/v1/thumbnails/nonexistent-id", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &initial_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(auth_thumb.status(), 404);
+
+    // 3. SEC-35-06: Live token rotation immediately invalidates old token & accepts new token
+    let rotated_token = "tori_rotated_gate35_token_0123456789abcdef".to_string();
+    token_handle.update_token(rotated_token.clone()).await;
+
+    let old_tok_resp = client
+        .get(format!("{}/api/v1/downloads", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &initial_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(old_tok_resp.status(), 401);
+
+    let new_tok_resp = client
+        .get(format!("{}/api/v1/downloads", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &rotated_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(new_tok_resp.status(), 200);
+
+    // 4. SEC-35-02 & SEC-35-07: Media download rejects flag URL, file:// URL, flag format_id, and UNC dest
+    for payload in [
+        serde_json::json!({
+            "url": "--exec=calc.exe",
+            "format_id": "18",
+            "destination": temp_dir.path().to_str().unwrap()
+        }),
+        serde_json::json!({
+            "url": "file:///C:/Windows/win.ini",
+            "format_id": "18",
+            "destination": temp_dir.path().to_str().unwrap()
+        }),
+        serde_json::json!({
+            "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+            "format_id": "--exec=calc",
+            "destination": temp_dir.path().to_str().unwrap()
+        }),
+        serde_json::json!({
+            "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+            "format_id": "18",
+            "destination": r"\\attacker\share\drop"
+        }),
+    ] {
+        let resp = client
+            .post(format!("{}/api/v1/media/download", base_url))
+            .header(HOST, format!("127.0.0.1:{}", port))
+            .header("X-Tori-Token", &rotated_token)
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            400,
+            "Malicious media payload should be rejected with 400: {}",
+            payload
+        );
+    }
+
+    // 5. SEC-35-07: Playlist enqueue rejects UNC destination
+    let unc_playlist = client
+        .post(format!("{}/api/v1/media/playlist/enqueue", base_url))
+        .header(HOST, format!("127.0.0.1:{}", port))
+        .header("X-Tori-Token", &rotated_token)
+        .json(&serde_json::json!({
+            "items": [{ "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ", "title": "Test" }],
+            "destination": r"\\attacker\share\playlist"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unc_playlist.status(), 400);
+
+    // 6. SEC-35-11: Native host binary resolution never falls back to tori-download-manager.exe
+    let fake_install = temp_dir.path().join("install_layout");
+    let res_bin = fake_install.join("resources").join("bin");
+    std::fs::create_dir_all(&res_bin).unwrap();
+    let gui_exe = fake_install.join("tori-download-manager.exe");
+    let host_exe = res_bin.join("tdm-native-host.exe");
+    std::fs::write(&gui_exe, b"gui").unwrap();
+    // Without host_exe present, must return Err rather than returning gui_exe
+    assert!(tdm_native_host::registry::resolve_native_host_binary_from(&gui_exe).is_err());
+    // With resources/bin/tdm-native-host.exe present, must resolve to host_exe
+    std::fs::write(&host_exe, b"host").unwrap();
+    assert_eq!(
+        tdm_native_host::registry::resolve_native_host_binary_from(&gui_exe).unwrap(),
+        host_exe
+    );
 
     shutdown.cancel();
 }

@@ -15,6 +15,9 @@ pub async fn execute_yt_dlp_dump(
     url: &str,
     timeout_dur: Option<Duration>,
 ) -> Result<serde_json::Value> {
+    let parsed_url = crate::resolver::ssrf::validate_http_url_syntax(url)?;
+    let safe_url_str = parsed_url.to_string();
+
     let yt_dlp_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::YtDlp)
         .ok_or_else(|| {
             EngineError::Other(
@@ -27,11 +30,11 @@ pub async fn execute_yt_dlp_dump(
     let timeout = timeout_dur.unwrap_or(DEFAULT_RESOLVER_TIMEOUT);
 
     let mut args: Vec<String> = vec![
+        "--ignore-config".to_string(),
         "--dump-single-json".to_string(),
         "--no-playlist".to_string(),
         "--no-warnings".to_string(),
         "--no-call-home".to_string(),
-        "--no-check-certificates".to_string(),
         "--prefer-free-formats".to_string(),
         "--skip-download".to_string(),
         "--no-color".to_string(),
@@ -48,13 +51,18 @@ pub async fn execute_yt_dlp_dump(
     }
 
     // Pass referer for player.vimeo.com embeds to satisfy Vimeo public embed requirements
-    if url.contains("player.vimeo.com") {
+    if parsed_url
+        .host_str()
+        .map(|h| h.eq_ignore_ascii_case("player.vimeo.com"))
+        .unwrap_or(false)
+    {
         args.push("--referer".to_string());
         args.push("https://vimeo.com/".to_string());
     }
 
-    // Add target URL as the final explicit argument
-    args.push(url.to_string());
+    // Terminate option parsing before passing the target URL
+    args.push("--".to_string());
+    args.push(safe_url_str);
 
     let mut cmd = Command::new(&yt_dlp_bin);
     cmd.args(&args)
@@ -148,6 +156,9 @@ pub async fn execute_yt_dlp_playlist_dump(
     limit: Option<usize>,
     timeout_dur: Option<Duration>,
 ) -> Result<serde_json::Value> {
+    let parsed_url = crate::resolver::ssrf::validate_http_url_syntax(url)?;
+    let safe_url_str = parsed_url.to_string();
+
     let yt_dlp_lease = crate::tools::acquire_global_tool_lease(crate::tools::ToolId::YtDlp)
         .ok_or_else(|| {
             EngineError::Other(
@@ -160,11 +171,11 @@ pub async fn execute_yt_dlp_playlist_dump(
     let timeout = timeout_dur.unwrap_or(DEFAULT_RESOLVER_TIMEOUT);
 
     let mut args: Vec<String> = vec![
+        "--ignore-config".to_string(),
         "-J".to_string(),
         "--flat-playlist".to_string(),
         "--no-warnings".to_string(),
         "--no-call-home".to_string(),
-        "--no-check-certificates".to_string(),
         "--skip-download".to_string(),
         "--no-color".to_string(),
     ];
@@ -183,7 +194,8 @@ pub async fn execute_yt_dlp_playlist_dump(
         }
     }
 
-    args.push(url.to_string());
+    args.push("--".to_string());
+    args.push(safe_url_str);
 
     let mut cmd = Command::new(&yt_dlp_bin);
     cmd.args(&args)

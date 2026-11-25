@@ -426,9 +426,13 @@ pub fn parse_attributes(attr_str: &str) -> HashMap<String, String> {
 }
 
 /// Parses `#EXT-X-BYTERANGE:<length>[@<offset>]`.
+/// Rejects zero-length byte ranges (which would cause range underflow).
 fn parse_byterange_spec(spec: &str) -> Option<(u64, Option<u64>)> {
     let parts: Vec<&str> = spec.split('@').collect();
     let len = parts[0].trim().parse::<u64>().ok()?;
+    if len == 0 {
+        return None;
+    }
     let offset = if parts.len() > 1 {
         parts[1].trim().parse::<u64>().ok()
     } else {

@@ -37,12 +37,19 @@ pub fn find_ffprobe() -> Option<PathBuf> {
 }
 
 /// Creates a safe FFmpeg concat demuxer text file.
-fn create_concat_file(segment_paths: &[PathBuf], concat_txt_path: &Path) -> Result<()> {
+/// Rejects newlines/NUL bytes and properly escapes single quotes using FFmpeg concat syntax (`'\''`).
+pub(crate) fn create_concat_file(segment_paths: &[PathBuf], concat_txt_path: &Path) -> Result<()> {
     let mut content = String::new();
     for p in segment_paths {
         // Normalize path with forward slashes for FFmpeg concat format
         let path_str = p.to_string_lossy().replace('\\', "/");
-        content.push_str(&format!("file '{}'\n", path_str));
+        if path_str.contains('\n') || path_str.contains('\r') || path_str.contains('\0') {
+            return Err(EngineError::Other(
+                "Invalid segment path containing newline or NUL character".to_string(),
+            ));
+        }
+        let escaped = path_str.replace('\'', "'\\''");
+        content.push_str(&format!("file '{}'\n", escaped));
     }
     fs::write(concat_txt_path, content)?;
     Ok(())
@@ -259,5 +266,22 @@ mod tests {
             find_ffprobe().is_some(),
             "FFprobe should be discoverable in test environment"
         );
+    }
+
+    #[test]
+    fn test_sec35_14_concat_file_escapes_quotes_and_rejects_newlines() {
+        let dir = std::env::temp_dir().join(format!("tori_concat_sec35_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let concat_path = dir.join("list.txt");
+
+        let quoted = PathBuf::from(r"C:\Users\O'Brien\seg_0.ts");
+        create_concat_file(&[quoted], &concat_path).unwrap();
+        let txt = fs::read_to_string(&concat_path).unwrap();
+        assert_eq!(txt, "file 'C:/Users/O'\\''Brien/seg_0.ts'\n");
+
+        let newline_injected = PathBuf::from("C:/tmp/seg\nfile '/etc/passwd'");
+        assert!(create_concat_file(&[newline_injected], &concat_path).is_err());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
