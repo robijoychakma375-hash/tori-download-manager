@@ -1,0 +1,191 @@
+﻿diff --git a/_headers b/_headers
+index 75afe7a..47271ed 100644
+--- a/_headers
++++ b/_headers
+@@ -1,4 +1,12 @@
+ # TORI Website - Cloudflare Pages HTTP Headers
++/assets/tori-download-manager-firefox-v1.0.11.xpi
++  Content-Type: application/x-xpinstall
++  Access-Control-Allow-Origin: *
++
++/tori-download-manager-firefox-v1.0.11.xpi
++  Content-Type: application/x-xpinstall
++  Access-Control-Allow-Origin: *
++
+ /assets/tori-download-manager-firefox-v1.0.10.xpi
+   Content-Type: application/x-xpinstall
+   Access-Control-Allow-Origin: *
+diff --git a/index.html b/index.html
+index b87a57b..ffa25b4 100644
+--- a/index.html
++++ b/index.html
+@@ -409,7 +409,7 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+  <div class="pg-h rv"><span class="pill" id="dl-pg-pill"><i></i>v1.0.8 · Latest Stable</span><h2 style="margin-top:18px">Download TORI</h2><p class="lead">Free and open source. One installer for Windows 10 and 11.</p></div>
+  <div class="hx rv"><div>
+   <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 5.5 10.5 4.5v7H3zM11.5 4.4 21 3v8.5h-9.5zM3 12.5h7.5v7L3 18.5zM11.5 12.5H21V21l-9.5-1.4z"/></svg></div>
+-  <h3>TORI for Windows</h3><p class="vs" id="hx-ver-label">Version 1.0.8 · Stable · Installer (Companion v1.0.10)</p>
++  <h3>TORI for Windows</h3><p class="vs" id="hx-ver-label">Version 1.0.8 · Stable · Installer (Companion v1.0.11)</p>
+   <a class="cta-big" id="main-dl-btn" data-l="exe" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/TORI.Download.Manager_1.0.8_x64-setup.exe"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg> Download .exe <small id="hx-size">112.6 MB</small></a>
+   <p class="tr">Ed25519 auto-updater &amp; SHA-256 verified · Free &amp; open source (GPLv3 / MIT)</p>
+   <div class="stats"><div><span>Version</span><b id="stat-ver">1.0.8</b></div><div><span>Size</span><b id="stat-size">112.6 MB</b></div><div><span>Requires</span><b>Win 10 / 11, 64-bit</b></div><div><span>Released</span><b id="stat-date">Nov 23, 2026</b></div></div>
+@@ -417,10 +417,10 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+  <h3 class="sh rv">Get started in 3 steps</h3>
+  <div class="st3 rv">
+   <div><div class="num">1</div><h4>Install TORI</h4><p>Download the installer and run it (click More info &rarr; Run anyway if SmartScreen prompts; Authenticode certificate pending).</p></div>
+-  <a class="st-l" href="#extension"><div class="num">2</div><h4>Add the extension</h4><p>Companion v1.0.10 for Firefox, Chrome or Edge.</p></a>
++  <a class="st-l" href="#extension"><div class="num">2</div><h4>Add the extension</h4><p>Companion v1.0.11 (Security Hotfix) for Firefox, Chrome or Edge.</p></a>
+   <div><div class="num">3</div><h4>Verify (optional)</h4><p>Compare the SHA-256 hash with SHA256SUMS.txt.</p></div>
+  </div>
+- <h3 class="sh rv">What’s new in v1.0.8 &amp; Companion v1.0.10</h3>
++ <h3 class="sh rv">What’s new in v1.0.8 &amp; Companion v1.0.11</h3>
+  <div class="cl rv" id="cl" data-s="a">
+   <div class="cl-top"><div class="cl-f" id="clf"></div><div class="cl-s" id="cls"><em>View</em></div></div>
+   <div class="cl-b">
+@@ -430,9 +430,10 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+    </div></div>
+    <div class="cl-g" data-g="imp"><div class="cl-gh"><span class="tg tg-imp">Improved</span><i>2 changes</i></div><div class="cl-rs">
+     <div class="cl-r" data-t="imp"><span class="ri"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 15h18"/></svg></span><div class="rt"><b>Hardened Independent Tool Updates (yt-dlp, FFmpeg &amp; FFprobe)</b><p>Hardens independent yt-dlp (OpenPGP RSA-4096) and paired FFmpeg/FFprobe (Ed25519 manifest) updates with monotonic anti-replay and expiry bounds, active-download usage leases, atomic paired activation, automatic rollback, and verified bundled fallback.</p></div></div>
+-    <div class="cl-r" data-t="imp"><span class="ri"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></span><div class="rt"><b>Seamless v1.0.7 &rarr; v1.0.8 Upgrade &amp; Companion v1.0.10 Preservation</b><p>Additive SQLite schema preservation retains all existing downloads, incomplete .tdm-part files, user themes, Close-to-Tray settings, and Native Messaging integration for Browser Companion v1.0.10 across Firefox, Chrome, and Edge.</p></div></div>
++    <div class="cl-r" data-t="imp"><span class="ri"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></span><div class="rt"><b>Seamless v1.0.7 &rarr; v1.0.8 Upgrade &amp; Companion v1.0.11 Preservation</b><p>Additive SQLite schema preservation retains all existing downloads, incomplete .tdm-part files, user themes, Close-to-Tray settings, and Native Messaging integration for Browser Companion v1.0.11 across Firefox, Chrome, and Edge.</p></div></div>
+    </div></div>
+-   <div class="cl-g" data-g="fix"><div class="cl-gh"><span class="tg tg-fix">Fixed</span><i>1 change</i></div><div class="cl-rs">
++   <div class="cl-g" data-g="fix"><div class="cl-gh"><span class="tg tg-fix">Fixed</span><i>2 changes</i></div><div class="cl-rs">
++    <div class="cl-r" data-t="fix"><span class="ri"><svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5.5 3.4 10.6 8 12 4.6-1.4 8-6.5 8-12V5l-8-3z"/></svg></span><div class="rt"><b>Browser Companion v1.0.11 Security Hardening (SEC-35-04)</b><p>Removes untrusted webpage-to-extension dispatch interfaces, isolates pairing credentials exclusively inside trusted extension contexts, and enforces strict runtime sender validation across Firefox, Chrome, and Edge.</p></div></div>
+     <div class="cl-r" data-t="fix"><span class="ri"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/></svg></span><div class="rt"><b>Update Reliability &amp; Crash-Safe Tool State Recovery</b><p>Strengthens crash-safe active-tools.json persistence, rollback recovery paths, and multi-revision manifest verification across v1.0.7 and v1.0.8 installations.</p></div></div>
+    </div></div>
+   </div>
+@@ -443,14 +444,14 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+   <div class="rel-h"><svg viewBox="0 0 24 24"><use href="#gh"/></svg><b style="font-size:17px" id="files-title">TORI Download Manager v1.0.8</b><span class="latest">Latest Stable</span></div>
+   <div class="assets">
+    <a class="as" id="asset-installer-row" data-l="exe" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/TORI.Download.Manager_1.0.8_x64-setup.exe"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b id="asset-installer-name">TORI.Download.Manager_1.0.8_x64-setup.exe</b><span id="asset-installer-size">112.6 MB</span></a>
+-   <a class="as" id="asset-firefox-row" data-l="firefox-dl" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/extension-v1.0.10/tori-companion-v1.0.10-firefox-signed.xpi" download="tori-companion-v1.0.10-firefox-signed.xpi"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b id="asset-firefox-name">tori-companion-v1.0.10-firefox-signed.xpi (Firefox v1.0.10)</b><span id="asset-firefox-size">105 KB</span></a>
+-   <a class="as" id="asset-ext-row" data-l="extzip" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/extension-v1.0.10/tori-companion-v1.0.10-chromium.zip" download="tori-companion-v1.0.10-chromium.zip"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b id="asset-ext-name">tori-companion-v1.0.10-chromium.zip (Chrome / Edge v1.0.10)</b><span id="asset-ext-size">89 KB</span></a>
++   <a class="as" id="asset-firefox-row" data-l="firefox-dl" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/extension-v1.0.11/tori-companion-v1.0.11-firefox-signed.xpi" download="tori-companion-v1.0.11-firefox-signed.xpi"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b id="asset-firefox-name">tori-companion-v1.0.11-firefox-signed.xpi (Firefox v1.0.11)</b><span id="asset-firefox-size">109 KB</span></a>
++   <a class="as" id="asset-ext-row" data-l="extzip" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/extension-v1.0.11/tori-companion-v1.0.11-chromium.zip" download="tori-companion-v1.0.11-chromium.zip"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b id="asset-ext-name">tori-companion-v1.0.11-chromium.zip (Chrome / Edge v1.0.11)</b><span id="asset-ext-size">92 KB</span></a>
+    <a class="as" id="asset-sha-row" data-l="sums" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/SHA256SUMS.txt" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b>SHA256SUMS.txt</b><span>Verification hashes</span></a>
+   </div>
+   <pre><code>Get-FileHash .\TORI.Download.Manager_1.0.8_x64-setup.exe -Algorithm SHA256
+ # Installer v1.0.8 : 728d0d253a8fadc3fea5244723237f267dcd13abf65cac49b91a4ec83a3dcffb
+-# Firefox XPI 1.0.10: a93a43872d224426902c49e217e31b2c603263d8c260c429940539b34b2852b8
+-# Chrome ZIP 1.0.10 : f220fab2e26fd54ef7f85fd7e40613faad79e7f9a7f44fadf228ccd0edcc22f1</code></pre>
++# Firefox XPI 1.0.11: 4cd6d6fbf067cb98538fd807eaba360d40b409df07cbfb515b8d9b702b37c0fd
++# Chrome ZIP 1.0.11 : 1e77592bb05e548d832df373331aee4f90788a004cdaef7ca80c97df84b88559</code></pre>
+  </div>
+ 
+  <h3 class="sh rv">Release archive &amp; previous versions</h3>
+@@ -480,17 +481,17 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+   <div>
+    <div class="bc">
+     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+-    <div class="bc-info"><b>Firefox Add-on</b><span>.xpi · Mozilla-signed · 105 KB · v1.0.10</span></div>
++    <div class="bc-info"><b>Firefox Add-on</b><span>.xpi · Mozilla-signed · 109 KB · v1.0.11</span></div>
+     <div class="bc-acts">
+-     <a class="btn pri sm" id="ext-firefox-btn" data-l="firefox-install" href="/assets/tori-download-manager-firefox-v1.0.10.xpi">Install for Firefox</a>
+-     <a class="btn sm" id="ext-firefox-dl-btn" data-l="firefox-dl" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.5/a70ed17e183648a9bcf4-1.0.9.xpi" download="a70ed17e183648a9bcf4-1.0.9.xpi">Download XPI</a>
++     <a class="btn pri sm" id="ext-firefox-btn" data-l="firefox-install" href="/assets/tori-download-manager-firefox-v1.0.11.xpi">Install for Firefox</a>
++     <a class="btn sm" id="ext-firefox-dl-btn" data-l="firefox-dl" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/extension-v1.0.11/tori-companion-v1.0.11-firefox-signed.xpi" download="tori-companion-v1.0.11-firefox-signed.xpi">Download XPI</a>
+     </div>
+    </div>
+    <div class="bc">
+     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+-    <div class="bc-info"><b>Chrome / Edge</b><span>.zip · 89 KB · Load unpacked · v1.0.10</span></div>
++    <div class="bc-info"><b>Chrome / Edge</b><span>.zip · 92 KB · Load unpacked · v1.0.11</span></div>
+     <div class="bc-acts">
+-     <a class="btn sm" id="ext-dl-btn" data-l="extzip" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.5/tori-companion-v1.0.9-chromium.zip" download="tori-companion-v1.0.9-chromium.zip">Download for Chrome / Edge (.zip)</a>
++     <a class="btn sm" id="ext-dl-btn" data-l="extzip" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/extension-v1.0.11/tori-companion-v1.0.11-chromium.zip" download="tori-companion-v1.0.11-chromium.zip">Download for Chrome / Edge (.zip)</a>
+     </div>
+    </div>
+     
+@@ -558,7 +559,7 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+   <div><h5>Resources</h5><a data-l="repo" href="https://github.com/robijoychakma375-hash/tori-download-manager" target="_blank" rel="noopener">GitHub</a><a data-l="releases" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases" target="_blank" rel="noopener">All releases</a><a data-l="issues" href="https://github.com/robijoychakma375-hash/tori-download-manager/issues" target="_blank" rel="noopener">Report an issue</a><a href="https://github.com/robijoychakma375-hash/tori-download-manager/blob/master/LICENSE-GPLv3.txt" target="_blank" rel="noopener">License (GPLv3 / MIT)</a></div>
+   <div><h5>Extension</h5><a href="#extension">Firefox add-on</a><a href="#extension">Chrome / Edge</a><a href="#extension">Install steps</a></div>
+  </div>
+- <div class="fbot"><span>© 2026 TORI Download Manager · Free &amp; Open Source</span><span class="vp" id="footer-ver-badge">v1.0.8 · Windows 10 / 11 (64-bit) · Companion v1.0.10</span><a href="#top">Back to top<svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></a></div>
++ <div class="fbot"><span>© 2026 TORI Download Manager · Free &amp; Open Source</span><span class="vp" id="footer-ver-badge">v1.0.8 · Windows 10 / 11 (64-bit) · Companion v1.0.11</span><a href="#top">Back to top<svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></a></div>
+ </div></footer>
+ 
+ <svg width="0" height="0" style="position:absolute"><symbol id="gh" viewBox="0 0 24 24"><path d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.83 1.18 3.09 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5z"/></symbol></svg>
+@@ -623,17 +624,17 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+   var REPO = 'robijoychakma375-hash/tori-download-manager';
+   var B = 'https://github.com/' + REPO;
+   var D = B + '/releases/download/v1.0.8/';
+-  var D_EXT = B + '/releases/download/extension-v1.0.10/';
++  var D_EXT = B + '/releases/download/extension-v1.0.11/';
+   var U = {
+     repo: B,
+     latest: B + '/releases/tag/v1.0.8',
+-    ext_latest: B + '/releases/tag/extension-v1.0.10',
++    ext_latest: B + '/releases/tag/extension-v1.0.11',
+     releases: B + '/releases',
+     issues: B + '/issues',
+     exe: D + 'TORI.Download.Manager_1.0.8_x64-setup.exe',
+-    'firefox-install': '/assets/tori-download-manager-firefox-v1.0.10.xpi',
+-    'firefox-dl': D_EXT + 'tori-companion-v1.0.10-firefox-signed.xpi',
+-    extzip: D_EXT + 'tori-companion-v1.0.10-chromium.zip',
++    'firefox-install': '/assets/tori-download-manager-firefox-v1.0.11.xpi',
++    'firefox-dl': D_EXT + 'tori-companion-v1.0.11-firefox-signed.xpi',
++    extzip: D_EXT + 'tori-companion-v1.0.11-chromium.zip',
+     sums: D + 'SHA256SUMS.txt'
+   };
+ 
+@@ -647,10 +648,10 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+           a.rel = 'noopener';
+         }
+         if (k === 'extzip') {
+-          a.setAttribute('download', 'tori-companion-v1.0.10-chromium.zip');
++          a.setAttribute('download', 'tori-companion-v1.0.11-chromium.zip');
+         }
+         if (k === 'firefox-dl') {
+-          a.setAttribute('download', 'tori-companion-v1.0.10-firefox-signed.xpi');
++          a.setAttribute('download', 'tori-companion-v1.0.11-firefox-signed.xpi');
+         }
+       }
+     });
+@@ -990,9 +991,9 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+     var pubDate = formatDate(release.published_at);
+ 
+     if (installer) U.exe = installer.browser_download_url;
+-    // Keep Companion v1.0.10 extension package URLs intact
+-    U['firefox-dl'] = D_EXT + 'tori-companion-v1.0.10-firefox-signed.xpi';
+-    U.extzip = D_EXT + 'tori-companion-v1.0.10-chromium.zip';
++    // Keep Companion v1.0.11 extension package URLs intact
++    U['firefox-dl'] = D_EXT + 'tori-companion-v1.0.11-firefox-signed.xpi';
++    U.extzip = D_EXT + 'tori-companion-v1.0.11-chromium.zip';
+     U.sums = checksum ? checksum.browser_download_url : (D + 'SHA256SUMS.txt');
+     U.latest = release.html_url || (B + '/releases/tag/' + tagName);
+     applyUrlMap();
+@@ -1011,7 +1012,7 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+     var dlPgPill = document.getElementById('dl-pg-pill');
+     if (dlPgPill) dlPgPill.textContent = tagName + ' · Latest Stable';
+     var hxVer = document.getElementById('hx-ver-label');
+-    if (hxVer) hxVer.textContent = 'Version ' + cleanVer + ' · Stable · Installer (Companion v1.0.10)';
++    if (hxVer) hxVer.textContent = 'Version ' + cleanVer + ' · Stable · Installer (Companion v1.0.11)';
+     var hxSize = document.getElementById('hx-size');
+     if (hxSize && installer) hxSize.textContent = formatBytes(installer.size);
+ 
+@@ -1036,20 +1037,20 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+     var ffName = document.getElementById('asset-firefox-name');
+     var ffSize = document.getElementById('asset-firefox-size');
+     if (ffName && ffSize) {
+-      ffName.textContent = 'tori-companion-v1.0.10-firefox-signed.xpi (Firefox v1.0.10)';
+-      ffSize.textContent = '105 KB';
++      ffName.textContent = 'tori-companion-v1.0.11-firefox-signed.xpi (Firefox v1.0.11)';
++      ffSize.textContent = '109 KB';
+     }
+ 
+     var extName = document.getElementById('asset-ext-name');
+     var extSize = document.getElementById('asset-ext-size');
+     if (extName && extSize) {
+-      extName.textContent = 'tori-companion-v1.0.10-chromium.zip (Chrome / Edge v1.0.10)';
+-      extSize.textContent = '89 KB';
++      extName.textContent = 'tori-companion-v1.0.11-chromium.zip (Chrome / Edge v1.0.11)';
++      extSize.textContent = '92 KB';
+     }
+ 
+     // 5. Footer version
+     var footVer = document.getElementById('footer-ver-badge');
+-    if (footVer) footVer.textContent = tagName + ' · Windows 10 / 11 (64-bit) · Companion v1.0.10';
++    if (footVer) footVer.textContent = tagName + ' · Windows 10 / 11 (64-bit) · Companion v1.0.11';
+   }
+ 
+   function renderReleaseHistory(releases) {

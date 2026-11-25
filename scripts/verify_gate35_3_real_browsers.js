@@ -151,7 +151,7 @@ function verifyNmRegistryRestored(snap) {
   return { ok: true };
 }
 
-function registerIsolatedNativeHost() {
+function registerIsolatedNativeHost(targetBrowsers = ['chrome', 'edge', 'firefox']) {
   // Wrapper invokes REAL frozen v1.0.8 tdm-native-host.exe strictly inside QA sandbox
   // with TORI_DISABLE_AUTO_SPAWN=1 so it can never touch OEM Desktop or OEM SQLite.
   const cmdBody = [
@@ -197,9 +197,15 @@ function registerIsolatedNativeHost() {
       2
     )
   );
-  execFileSync('reg', ['add', NM_REG_KEYS[0], '/ve', '/t', 'REG_SZ', '/d', chrManifest, '/f'], { stdio: 'ignore', timeout: 4000 });
-  execFileSync('reg', ['add', NM_REG_KEYS[1], '/ve', '/t', 'REG_SZ', '/d', chrManifest, '/f'], { stdio: 'ignore', timeout: 4000 });
-  execFileSync('reg', ['add', NM_REG_KEYS[2], '/ve', '/t', 'REG_SZ', '/d', ffManifest, '/f'], { stdio: 'ignore', timeout: 4000 });
+  if (targetBrowsers.includes('chrome')) {
+    execFileSync('reg', ['add', NM_REG_KEYS[0], '/ve', '/t', 'REG_SZ', '/d', chrManifest, '/f'], { stdio: 'ignore', timeout: 4000 });
+  }
+  if (targetBrowsers.includes('edge')) {
+    execFileSync('reg', ['add', NM_REG_KEYS[1], '/ve', '/t', 'REG_SZ', '/d', chrManifest, '/f'], { stdio: 'ignore', timeout: 4000 });
+  }
+  if (targetBrowsers.includes('firefox')) {
+    execFileSync('reg', ['add', NM_REG_KEYS[2], '/ve', '/t', 'REG_SZ', '/d', ffManifest, '/f'], { stdio: 'ignore', timeout: 4000 });
+  }
 }
 
 function getNmInvocationCount() {
@@ -1263,13 +1269,18 @@ async function main() {
   await startFixtureServers();
 
   regSnapshot = snapshotNmRegistry();
-  registerIsolatedNativeHost();
 
   try {
-    // Edge runs FIRST with Desktop v1.0.8 OFFLINE to verify zero unsolicited spawn on startup,
-    // then boots real frozen Desktop v1.0.8 for Edge, Chrome, and Firefox!
-    await runChromiumFamilyBrowser('Edge', EDGE_EXE, EDGE_CDP_PORT, { checkOfflineStartupFirst: true });
-    await runChromiumFamilyBrowser('Chrome', CHROME_EXE, CHROME_CDP_PORT, { checkOfflineStartupFirst: false });
+    // Register Chrome first (isolated from any unrelated user Edge session) and verify
+    // unpaired startup with Desktop v1.0.8 OFFLINE triggers ZERO unsolicited NM spawns,
+    // then boot real frozen Desktop v1.0.8 and test Chrome, Edge, and Firefox!
+    registerIsolatedNativeHost(['chrome']);
+    await runChromiumFamilyBrowser('Chrome', CHROME_EXE, CHROME_CDP_PORT, { checkOfflineStartupFirst: true });
+
+    registerIsolatedNativeHost(['edge']);
+    await runChromiumFamilyBrowser('Edge', EDGE_EXE, EDGE_CDP_PORT, { checkOfflineStartupFirst: false });
+
+    registerIsolatedNativeHost(['firefox']);
     await runFirefoxBrowser();
   } finally {
     for (const p of trackedProcs) {
