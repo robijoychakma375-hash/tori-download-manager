@@ -28,7 +28,7 @@ const V108_HOST_EXE = path.join(ROOT, 'release', 'v1.0.8-final-rc', 'tdm-native-
 const FFMPEG_EXE = path.join(ROOT, 'resources', 'bin', 'ffmpeg.exe');
 
 const RC11_DIR = path.join(ROOT, 'release', 'v1.0.11-extension-rc');
-const CHR_EXT_DIR = path.join(RC11_DIR, 'tori-companion-v1.0.11-chromium');
+const CHR_EXT_DIR = process.env.TORI_CHR_EXT_DIR || path.join(RC11_DIR, 'tori-companion-v1.0.11-chromium');
 const FF_ZIP_PATH = path.join(RC11_DIR, 'tori-companion-v1.0.11-firefox.zip');
 const EXPECTED_GECKO_ID = 'tori-download-manager@toridm.org';
 const EXPECTED_CHROME_ID = 'jfnfgmcbgapcpieaonbaolgebjaejcdm';

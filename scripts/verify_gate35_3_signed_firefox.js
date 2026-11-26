@@ -39,7 +39,7 @@ const V108_HOST_EXE = path.join(ROOT, 'release', 'v1.0.8-final-rc', 'tdm-native-
 const FFMPEG_EXE = path.join(ROOT, 'resources', 'bin', 'ffmpeg.exe');
 
 const SIGNED_V1010_XPI = path.join(ROOT, 'release', 'v1.0.10-extension-rc', 'tori-companion-v1.0.10-firefox-signed.xpi');
-const SIGNED_V1011_XPI = path.join(ROOT, 'release', 'v1.0.11-extension-rc', 'tori-companion-v1.0.11-firefox-signed.xpi');
+const SIGNED_V1011_XPI = process.env.TORI_SIGNED_V1011_XPI || path.join(ROOT, 'release', 'v1.0.11-extension-rc', 'tori-companion-v1.0.11-firefox-signed.xpi');
 const UNSIGNED_V1011_ZIP = path.join(ROOT, 'release', 'v1.0.11-extension-rc', 'tori-companion-v1.0.11-firefox.zip');
 const CHROMIUM_V1011_ZIP = path.join(ROOT, 'release', 'v1.0.11-extension-rc', 'tori-companion-v1.0.11-chromium.zip');
 
