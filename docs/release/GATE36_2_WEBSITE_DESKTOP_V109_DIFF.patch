@@ -1,0 +1,198 @@
+diff --git a/index.html b/index.html
+index ffa25b4..db66c17 100644
+--- a/index.html
++++ b/index.html
+@@ -44,10 +44,10 @@
+       "applicationCategory": "UtilitiesApplication",
+       "applicationSubCategory": "Download Manager",
+       "url": "https://toridownload.xyz/",
+-      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/TORI.Download.Manager_1.0.8_x64-setup.exe",
+-      "softwareVersion": "1.0.8",
++      "downloadUrl": "https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.9/TORI.Download.Manager_1.0.9_x64-setup.exe",
++      "softwareVersion": "1.0.9",
+       "fileFormat": "application/x-msdos-program",
+-      "fileSize": "112.6MB",
++      "fileSize": "112.7MB",
+       "offers": {
+         "@type": "Offer",
+         "price": "0",
+@@ -355,11 +355,11 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+ 
+ <main id="main">
+ <header class="hero" id="top"><i class="blob b1"></i><i class="blob b2"></i><div class="wrap">
+- <span class="pill" id="hero-pill"><i></i><span id="hero-pill-text">New · v1.0.8 for Windows (Stable)</span></span>
++ <span class="pill" id="hero-pill"><i></i><span id="hero-pill-text">New · v1.0.9 for Windows (Stable)</span></span>
+  <h1>Downloads that feel <em>effortless</em>.</h1>
+  <p class="sub">TORI is a free, open-source download manager for Windows 10 and 11, with up to 32 parallel connections, browser integration and crash-proof pause and resume.</p>
+  <div class="cta">
+-  <a class="btn pri" id="hero-dl-btn" data-l="exe" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/TORI.Download.Manager_1.0.8_x64-setup.exe">
++  <a class="btn pri" id="hero-dl-btn" data-l="exe" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.9/TORI.Download.Manager_1.0.9_x64-setup.exe">
+    <svg viewBox="0 0 24 24"><path d="M3 5.5 10.5 4.5v7H3zM11.5 4.4 21 3v8.5h-9.5zM3 12.5h7.5v7L3 18.5zM11.5 12.5H21V21l-9.5-1.4z"/></svg>Download for Windows
+   </a>
+   <a class="btn" data-l="repo" href="https://github.com/robijoychakma375-hash/tori-download-manager">
+@@ -399,20 +399,20 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+  <h2>Download TORI</h2>
+  <p class="lead">Free and open source for Windows 10 and 11.</p>
+  <div class="card strip" style="margin-top:0;padding:30px">
+-  <div><b style="font-size:19px" id="get-title">TORI for Windows · v1.0.8 Stable</b><span id="get-meta">112.6 MB · Windows 10 / 11, 64-bit · SHA-256 verified</span></div>
+-  <div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn pri" id="get-dl-btn" data-l="exe" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/TORI.Download.Manager_1.0.8_x64-setup.exe">Download .exe</a><a class="btn" href="#download">All downloads</a><a class="btn" href="#extension">Browser extension</a></div>
++  <div><b style="font-size:19px" id="get-title">TORI for Windows · v1.0.9 Stable</b><span id="get-meta">112.7 MB · Windows 10 / 11, 64-bit · SHA-256 verified</span></div>
++  <div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn pri" id="get-dl-btn" data-l="exe" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.9/TORI.Download.Manager_1.0.9_x64-setup.exe">Download .exe</a><a class="btn" href="#download">All downloads</a><a class="btn" href="#extension">Browser extension</a></div>
+  </div>
+ </div></section>
+ 
+ <section id="download"><div class="wrap">
+  <a class="back" href="#top"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>Back to home</a>
+- <div class="pg-h rv"><span class="pill" id="dl-pg-pill"><i></i>v1.0.8 · Latest Stable</span><h2 style="margin-top:18px">Download TORI</h2><p class="lead">Free and open source. One installer for Windows 10 and 11.</p></div>
++ <div class="pg-h rv"><span class="pill" id="dl-pg-pill"><i></i>v1.0.9 · Latest Stable</span><h2 style="margin-top:18px">Download TORI</h2><p class="lead">Free and open source. One installer for Windows 10 and 11.</p></div>
+  <div class="hx rv"><div>
+   <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 5.5 10.5 4.5v7H3zM11.5 4.4 21 3v8.5h-9.5zM3 12.5h7.5v7L3 18.5zM11.5 12.5H21V21l-9.5-1.4z"/></svg></div>
+-  <h3>TORI for Windows</h3><p class="vs" id="hx-ver-label">Version 1.0.8 · Stable · Installer (Companion v1.0.11)</p>
+-  <a class="cta-big" id="main-dl-btn" data-l="exe" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/TORI.Download.Manager_1.0.8_x64-setup.exe"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg> Download .exe <small id="hx-size">112.6 MB</small></a>
++  <h3>TORI for Windows</h3><p class="vs" id="hx-ver-label">Version 1.0.9 · Stable · Installer (Companion v1.0.11)</p>
++  <a class="cta-big" id="main-dl-btn" data-l="exe" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.9/TORI.Download.Manager_1.0.9_x64-setup.exe"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg> Download .exe <small id="hx-size">112.7 MB</small></a>
+   <p class="tr">Ed25519 auto-updater &amp; SHA-256 verified · Free &amp; open source (GPLv3 / MIT)</p>
+-  <div class="stats"><div><span>Version</span><b id="stat-ver">1.0.8</b></div><div><span>Size</span><b id="stat-size">112.6 MB</b></div><div><span>Requires</span><b>Win 10 / 11, 64-bit</b></div><div><span>Released</span><b id="stat-date">Nov 23, 2026</b></div></div>
++  <div class="stats"><div><span>Version</span><b id="stat-ver">1.0.9</b></div><div><span>Size</span><b id="stat-size">112.7 MB</b></div><div><span>Requires</span><b>Win 10 / 11, 64-bit</b></div><div><span>Released</span><b id="stat-date">Nov 26, 2026</b></div></div>
+  </div></div>
+  <h3 class="sh rv">Get started in 3 steps</h3>
+  <div class="st3 rv">
+@@ -420,36 +420,36 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+   <a class="st-l" href="#extension"><div class="num">2</div><h4>Add the extension</h4><p>Companion v1.0.11 (Security Hotfix) for Firefox, Chrome or Edge.</p></a>
+   <div><div class="num">3</div><h4>Verify (optional)</h4><p>Compare the SHA-256 hash with SHA256SUMS.txt.</p></div>
+  </div>
+- <h3 class="sh rv">What’s new in v1.0.8 &amp; Companion v1.0.11</h3>
++ <h3 class="sh rv">What’s new in v1.0.9 &amp; Companion v1.0.11</h3>
+  <div class="cl rv" id="cl" data-s="a">
+   <div class="cl-top"><div class="cl-f" id="clf"></div><div class="cl-s" id="cls"><em>View</em></div></div>
+   <div class="cl-b">
+    <div class="cl-g" data-g="new"><div class="cl-gh"><span class="tg tg-new">New</span><i>2 changes</i></div><div class="cl-rs">
+-    <div class="cl-r" data-t="new"><span class="ri"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg></span><div class="rt"><b>Dedicated External Tools Key-Separation &amp; Stage 1 Dual-Key Trust</b><p>Embeds TORI’s dedicated External Tools Ed25519 public key (<code>C3FD6626A3718E63</code>) alongside the legacy production tools key (<code>CDC23D8CC8DA5397</code>) so v1.0.8 maintains full compatibility with live tools manifest revision 2 while preparing safely for future key rotation.</p></div></div>
+-    <div class="cl-r" data-t="new"><span class="ri"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span><div class="rt"><b>Purpose-Bound Keyring Verification &amp; External Tools Diagnostics</b><p>Adds purpose-bound signing-key separation, revocation-aware keyring verification, anti-trust-escalation manifest guards, and manifest verification status diagnostics in Settings &rarr; External Tools.</p></div></div>
++    <div class="cl-r" data-t="new"><span class="ri"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg></span><div class="rt"><b>Safe HTTP Content-Range Fallback &amp; Data-Corruption Prevention</b><p>Validates <code>Range: bytes=0-0</code> probes, strict <code>206 Content-Range</code> bounds, and <code>ETag</code>/<code>Last-Modified</code> continuity, cleanly draining workers and falling back to a single verified stream on broken CDNs or HTTP 416 responses without touching unrelated <code>.tdm-part</code> files.</p></div></div>
++    <div class="cl-r" data-t="new"><span class="ri"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span><div class="rt"><b>Cross-Process Native-Host Spawn Mutex &amp; Silent Background Startup</b><p>Eliminates concurrent background Desktop spawn stampedes with a pipe-scoped Windows named mutex, keeps <code>--minimized</code> launches hidden in the system tray, and suppresses unsolicited auto-opened failed-download popups.</p></div></div>
+    </div></div>
+    <div class="cl-g" data-g="imp"><div class="cl-gh"><span class="tg tg-imp">Improved</span><i>2 changes</i></div><div class="cl-rs">
+-    <div class="cl-r" data-t="imp"><span class="ri"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 15h18"/></svg></span><div class="rt"><b>Hardened Independent Tool Updates (yt-dlp, FFmpeg &amp; FFprobe)</b><p>Hardens independent yt-dlp (OpenPGP RSA-4096) and paired FFmpeg/FFprobe (Ed25519 manifest) updates with monotonic anti-replay and expiry bounds, active-download usage leases, atomic paired activation, automatic rollback, and verified bundled fallback.</p></div></div>
+-    <div class="cl-r" data-t="imp"><span class="ri"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></span><div class="rt"><b>Seamless v1.0.7 &rarr; v1.0.8 Upgrade &amp; Companion v1.0.11 Preservation</b><p>Additive SQLite schema preservation retains all existing downloads, incomplete .tdm-part files, user themes, Close-to-Tray settings, and Native Messaging integration for Browser Companion v1.0.11 across Firefox, Chrome, and Edge.</p></div></div>
++    <div class="cl-r" data-t="imp"><span class="ri"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 15h18"/></svg></span><div class="rt"><b>Stage 1 Dual-Key External Tools &amp; Post-Release Security Hardening</b><p>Preserves full Stage 1 dual-key trust (<code>CDC23D8CC8DA5397</code> + <code>C3FD6626A3718E63</code>) with live tools manifest revision 2 alongside Gate 35.1 URL/format CLI injection, SSRF redirect, bidi filename, and rollback hardening.</p></div></div>
++    <div class="cl-r" data-t="imp"><span class="ri"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></span><div class="rt"><b>Seamless v1.0.8 &rarr; v1.0.9 Upgrade &amp; Companion v1.0.11 Preservation</b><p>Additive SQLite schema preservation retains all existing downloads, incomplete .tdm-part files, user themes, Close-to-Tray settings, and Native Messaging integration for Browser Companion v1.0.11 across Firefox, Chrome, and Edge.</p></div></div>
+    </div></div>
+    <div class="cl-g" data-g="fix"><div class="cl-gh"><span class="tg tg-fix">Fixed</span><i>2 changes</i></div><div class="cl-rs">
+     <div class="cl-r" data-t="fix"><span class="ri"><svg viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5.5 3.4 10.6 8 12 4.6-1.4 8-6.5 8-12V5l-8-3z"/></svg></span><div class="rt"><b>Browser Companion v1.0.11 Security Hardening (SEC-35-04)</b><p>Removes untrusted webpage-to-extension dispatch interfaces, isolates pairing credentials exclusively inside trusted extension contexts, and enforces strict runtime sender validation across Firefox, Chrome, and Edge.</p></div></div>
+-    <div class="cl-r" data-t="fix"><span class="ri"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/></svg></span><div class="rt"><b>Update Reliability &amp; Crash-Safe Tool State Recovery</b><p>Strengthens crash-safe active-tools.json persistence, rollback recovery paths, and multi-revision manifest verification across v1.0.7 and v1.0.8 installations.</p></div></div>
++    <div class="cl-r" data-t="fix"><span class="ri"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/></svg></span><div class="rt"><b>Windows Startup Popup &amp; Historical Download Replay Prevention</b><p>Prevents browsers from replaying completed downloads on Windows startup and ensures failed or cancelled jobs never flash always-on-top progress popups.</p></div></div>
+    </div></div>
+   </div>
+-  <a class="lnk cl-more" id="cl-more-link" data-l="latest" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/tag/v1.0.8" target="_blank" rel="noopener">Read the full release notes &amp; known limitations on GitHub</a>
++  <a class="lnk cl-more" id="cl-more-link" data-l="latest" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/tag/v1.0.9" target="_blank" rel="noopener">Read the full release notes &amp; known limitations on GitHub</a>
+  </div>
+  <h3 class="sh rv">All files</h3>
+  <div class="card files rv">
+-  <div class="rel-h"><svg viewBox="0 0 24 24"><use href="#gh"/></svg><b style="font-size:17px" id="files-title">TORI Download Manager v1.0.8</b><span class="latest">Latest Stable</span></div>
++  <div class="rel-h"><svg viewBox="0 0 24 24"><use href="#gh"/></svg><b style="font-size:17px" id="files-title">TORI Download Manager v1.0.9</b><span class="latest">Latest Stable</span></div>
+   <div class="assets">
+-   <a class="as" id="asset-installer-row" data-l="exe" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/TORI.Download.Manager_1.0.8_x64-setup.exe"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b id="asset-installer-name">TORI.Download.Manager_1.0.8_x64-setup.exe</b><span id="asset-installer-size">112.6 MB</span></a>
++   <a class="as" id="asset-installer-row" data-l="exe" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.9/TORI.Download.Manager_1.0.9_x64-setup.exe"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b id="asset-installer-name">TORI.Download.Manager_1.0.9_x64-setup.exe</b><span id="asset-installer-size">112.7 MB</span></a>
+    <a class="as" id="asset-firefox-row" data-l="firefox-dl" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/extension-v1.0.11/tori-companion-v1.0.11-firefox-signed.xpi" download="tori-companion-v1.0.11-firefox-signed.xpi"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b id="asset-firefox-name">tori-companion-v1.0.11-firefox-signed.xpi (Firefox v1.0.11)</b><span id="asset-firefox-size">109 KB</span></a>
+    <a class="as" id="asset-ext-row" data-l="extzip" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/extension-v1.0.11/tori-companion-v1.0.11-chromium.zip" download="tori-companion-v1.0.11-chromium.zip"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b id="asset-ext-name">tori-companion-v1.0.11-chromium.zip (Chrome / Edge v1.0.11)</b><span id="asset-ext-size">92 KB</span></a>
+-   <a class="as" id="asset-sha-row" data-l="sums" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.8/SHA256SUMS.txt" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b>SHA256SUMS.txt</b><span>Verification hashes</span></a>
++   <a class="as" id="asset-sha-row" data-l="sums" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/download/v1.0.9/SHA256SUMS.txt" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><b>SHA256SUMS.txt</b><span>Verification hashes</span></a>
+   </div>
+-  <pre><code>Get-FileHash .\TORI.Download.Manager_1.0.8_x64-setup.exe -Algorithm SHA256
+-# Installer v1.0.8 : 728d0d253a8fadc3fea5244723237f267dcd13abf65cac49b91a4ec83a3dcffb
++  <pre><code>Get-FileHash .\TORI.Download.Manager_1.0.9_x64-setup.exe -Algorithm SHA256
++# Installer v1.0.9 : 460f5da00d09267a5f33274645250d92162bbfa3605f0348cc656a39a8a19ead
+ # Firefox XPI 1.0.11: 4cd6d6fbf067cb98538fd807eaba360d40b409df07cbfb515b8d9b702b37c0fd
+ # Chrome ZIP 1.0.11 : 1e77592bb05e548d832df373331aee4f90788a004cdaef7ca80c97df84b88559</code></pre>
+  </div>
+@@ -555,11 +555,11 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+    <p>Free, open-source download manager for Windows with browser capture and up to 32 parallel connections.</p>
+    <a class="ic" data-l="repo" href="https://github.com/robijoychakma375-hash/tori-download-manager" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 24 24"><use href="#gh"/></svg></a>
+   </div>
+-  <div><h5>Product</h5><a href="#shots">Screenshots</a><a href="#download">Download</a><a href="#extension">Extension</a><a href="#faq">FAQ</a><a id="footer-notes-link" data-l="latest" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/tag/v1.0.8" target="_blank" rel="noopener">Release notes</a></div>
++  <div><h5>Product</h5><a href="#shots">Screenshots</a><a href="#download">Download</a><a href="#extension">Extension</a><a href="#faq">FAQ</a><a id="footer-notes-link" data-l="latest" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases/tag/v1.0.9" target="_blank" rel="noopener">Release notes</a></div>
+   <div><h5>Resources</h5><a data-l="repo" href="https://github.com/robijoychakma375-hash/tori-download-manager" target="_blank" rel="noopener">GitHub</a><a data-l="releases" href="https://github.com/robijoychakma375-hash/tori-download-manager/releases" target="_blank" rel="noopener">All releases</a><a data-l="issues" href="https://github.com/robijoychakma375-hash/tori-download-manager/issues" target="_blank" rel="noopener">Report an issue</a><a href="https://github.com/robijoychakma375-hash/tori-download-manager/blob/master/LICENSE-GPLv3.txt" target="_blank" rel="noopener">License (GPLv3 / MIT)</a></div>
+   <div><h5>Extension</h5><a href="#extension">Firefox add-on</a><a href="#extension">Chrome / Edge</a><a href="#extension">Install steps</a></div>
+  </div>
+- <div class="fbot"><span>© 2026 TORI Download Manager · Free &amp; Open Source</span><span class="vp" id="footer-ver-badge">v1.0.8 · Windows 10 / 11 (64-bit) · Companion v1.0.11</span><a href="#top">Back to top<svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></a></div>
++ <div class="fbot"><span>© 2026 TORI Download Manager · Free &amp; Open Source</span><span class="vp" id="footer-ver-badge">v1.0.9 · Windows 10 / 11 (64-bit) · Companion v1.0.11</span><a href="#top">Back to top<svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></a></div>
+ </div></footer>
+ 
+ <svg width="0" height="0" style="position:absolute"><symbol id="gh" viewBox="0 0 24 24"><path d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.83 1.18 3.09 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5z"/></symbol></svg>
+@@ -623,15 +623,15 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+   // Static links mapping
+   var REPO = 'robijoychakma375-hash/tori-download-manager';
+   var B = 'https://github.com/' + REPO;
+-  var D = B + '/releases/download/v1.0.8/';
++  var D = B + '/releases/download/v1.0.9/';
+   var D_EXT = B + '/releases/download/extension-v1.0.11/';
+   var U = {
+     repo: B,
+-    latest: B + '/releases/tag/v1.0.8',
++    latest: B + '/releases/tag/v1.0.9',
+     ext_latest: B + '/releases/tag/extension-v1.0.11',
+     releases: B + '/releases',
+     issues: B + '/issues',
+-    exe: D + 'TORI.Download.Manager_1.0.8_x64-setup.exe',
++    exe: D + 'TORI.Download.Manager_1.0.9_x64-setup.exe',
+     'firefox-install': '/assets/tori-download-manager-firefox-v1.0.11.xpi',
+     'firefox-dl': D_EXT + 'tori-companion-v1.0.11-firefox-signed.xpi',
+     extzip: D_EXT + 'tori-companion-v1.0.11-chromium.zip',
+@@ -752,19 +752,19 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+   var CACHE_TTL = 15 * 60 * 1000;
+ 
+   var FALLBACK_RELEASE = {
+-    tag_name: 'v1.0.8',
+-    name: 'TORI Download Manager v1.0.8',
+-    published_at: '2026-11-23T08:25:29Z',
+-    html_url: B + '/releases/tag/v1.0.8',
++    tag_name: 'v1.0.9',
++    name: 'TORI Download Manager v1.0.9',
++    published_at: '2026-11-26T00:00:00Z',
++    html_url: B + '/releases/tag/v1.0.9',
+     assets: [
+       {
+-        name: 'TORI.Download.Manager_1.0.8_x64-setup.exe',
+-        size: 118110372,
+-        browser_download_url: D + 'TORI.Download.Manager_1.0.8_x64-setup.exe'
++        name: 'TORI.Download.Manager_1.0.9_x64-setup.exe',
++        size: 118170722,
++        browser_download_url: D + 'TORI.Download.Manager_1.0.9_x64-setup.exe'
+       },
+       {
+         name: 'SHA256SUMS.txt',
+-        size: 1319,
++        size: 1000,
+         browser_download_url: D + 'SHA256SUMS.txt'
+       }
+     ]
+@@ -772,6 +772,19 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+ 
+   var FALLBACK_RELEASES = [
+     FALLBACK_RELEASE,
++    {
++      tag_name: 'v1.0.8',
++      name: 'TORI Download Manager v1.0.8',
++      published_at: '2026-11-23T08:25:29Z',
++      html_url: B + '/releases/tag/v1.0.8',
++      assets: [
++        {
++          name: 'TORI.Download.Manager_1.0.8_x64-setup.exe',
++          size: 118110372,
++          browser_download_url: B + '/releases/download/v1.0.8/TORI.Download.Manager_1.0.8_x64-setup.exe'
++        }
++      ]
++    },
+     {
+       tag_name: 'v1.0.7',
+       name: 'TORI Download Manager v1.0.7',
+@@ -986,7 +999,7 @@ footer{margin-top:64px;border-top:1px solid var(--pline);padding:52px 0 26px;fon
+     var extension = findExtensionZip(release.assets);
+     var firefox = findFirefoxXpi(release.assets);
+     var checksum = findShaChecksum(release.assets);
+-    var tagName = release.tag_name || 'v1.0.8';
++    var tagName = release.tag_name || 'v1.0.9';
+     var cleanVer = tagName.replace(/^v/, '');
+     var pubDate = formatDate(release.published_at);
+ 
