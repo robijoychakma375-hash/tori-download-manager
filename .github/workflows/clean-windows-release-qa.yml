@@ -1,0 +1,228 @@
+name: Windows Server Release Smoke QA (Manual Preflight — Not Client Win10/11 VM QA)
+
+# GATE 37.2 / 37.3 HARDENED CI WORKFLOW — MANUAL-ONLY WINDOWS SERVER SMOKE QA
+# SECURITY & CLASSIFICATION GUARANTEES:
+#   1. Read-only permissions (`contents: read`); ZERO signing keys or production credentials
+#   2. Every third-party Action is pinned to an immutable 40-char commit SHA.
+#   3. ZERO raw `${{ inputs.* }}` interpolation inside `run:` shell/PowerShell blocks
+#      (all inputs pass strictly through `env:` and are regex-validated fail-closed).
+#   4. Downloaded installers are treated as untrusted until exact SHA-256 AND Tauri Ed25519
+#      signature + tamper-rejection checks pass.
+#   5. GitHub-hosted `windows-2022` and `windows-2025` runners are Windows Server VMs and are
+#      strictly tagged `WINDOWS_SERVER_CI_RUNNER` — NEVER counted as Win10/Win11 Client VM QA.
+#   6. NEVER publishes releases, alters GitHub Latest Stable, or deploys toridownload.xyz.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Target Desktop SemVer without leading 'v' (e.g. 1.0.9)"
+        required: true
+        type: string
+        default: "1.0.9"
+      release_tag:
+        description: "Immutable GitHub release tag (e.g. v1.0.9)"
+        required: true
+        type: string
+        default: "v1.0.9"
+      expected_sha256:
+        description: "Approved frozen NSIS installer SHA-256 (64 hex chars, fail-closed)"
+        required: true
+        type: string
+        default: "460f5da00d09267a5f33274645250d92162bbfa3605f0348cc656a39a8a19ead"
+      target_qa_profile:
+        description: "Windows Server CI smoke profile"
+        required: true
+        type: choice
+        default: "server-upgrade-smoke"
+        options:
+          - server-smoke
+          - server-upgrade-smoke
+      previous_version:
+        description: "Baseline Desktop version for upgrade smoke (used when target_qa_profile=server-upgrade-smoke)"
+        required: false
+        type: string
+        default: "1.0.8"
+      previous_expected_sha256:
+        description: "Approved SHA-256 of previous_version installer for upgrade smoke"
+        required: false
+        type: string
+        default: "728d0d253a8fadc3fea5244723237f267dcd13abf65cac49b91a4ec83a3dcffb"
+      run_updater_smoke:
+        description: "Validate public latest.json updater metadata & signature parity (read-only)"
+        required: false
+        type: boolean
+        default: true
+      require_authenticode:
+        description: "Fail CI if Windows PE Authenticode is missing or untrusted"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tori-windows-server-smoke-qa-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-server-ci-smoke:
+    name: Windows Server CI Smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      TORI_REPO: "robijoychakma375-hash/tori-download-manager"
+      TORI_REL_VER: ${{ inputs.release_version }}
+      TORI_REL_TAG: ${{ inputs.release_tag }}
+      TORI_EXP_SHA: ${{ inputs.expected_sha256 }}
+      TORI_QA_PROFILE: ${{ inputs.target_qa_profile }}
+      TORI_PREV_VER: ${{ inputs.previous_version }}
+      TORI_PREV_SHA: ${{ inputs.previous_expected_sha256 }}
+      TORI_RUN_UPDATER: ${{ inputs.run_updater_smoke }}
+      TORI_REQ_AUTH: ${{ inputs.require_authenticode }}
+      TORI_RUNNER_LABEL: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository (read-only, SHA-pinned)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js 20 (SHA-pinned)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+
+      - name: Validate workflow inputs & download untrusted release artifacts
+        id: prepare
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:TORI_REL_VER -notmatch '^\d+\.\d+\.\d+$') { throw "INVALID_INPUT: release_version must be X.Y.Z" }
+          if ($env:TORI_REL_TAG -ne "v$($env:TORI_REL_VER)") { throw "INVALID_INPUT: release_tag ($($env:TORI_REL_TAG)) must equal v$($env:TORI_REL_VER)" }
+          if ($env:TORI_EXP_SHA -notmatch '^[a-fA-F0-9]{64}$') { throw "INVALID_INPUT: expected_sha256 must be 64 hex chars" }
+          if ($env:TORI_QA_PROFILE -notin @("server-smoke", "server-upgrade-smoke")) { throw "INVALID_INPUT: unsupported profile" }
+          "artifact_name=windows-server-ci-smoke-v$($env:TORI_REL_VER)-$($env:TORI_RUNNER_LABEL)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          $qaRoot = Join-Path $env:RUNNER_TEMP "tori_ci_qa_root"
+          $dlDir  = Join-Path $qaRoot "downloads"
+          $outDir = Join-Path $qaRoot "out"
+          New-Item -ItemType Directory -Force -Path $dlDir, $outDir | Out-Null
+
+          $instName = "TORI.Download.Manager_$($env:TORI_REL_VER)_x64-setup.exe"
+          $baseUrl  = "https://github.com/$($env:TORI_REPO)/releases/download/$($env:TORI_REL_TAG)"
+          $instPath = Join-Path $dlDir $instName
+          $sigPath  = "$instPath.sig"
+
+          Invoke-WebRequest -Uri "$baseUrl/$instName"     -OutFile $instPath -UseBasicParsing -TimeoutSec 180
+          Invoke-WebRequest -Uri "$baseUrl/$instName.sig" -OutFile $sigPath  -UseBasicParsing -TimeoutSec 60
+
+          $actualSha = (Get-FileHash $instPath -Algorithm SHA256).Hash.ToLower()
+          if ($actualSha -ne $env:TORI_EXP_SHA.ToLower()) {
+            throw "SUPPLY_CHAIN_ABORT: SHA-256 mismatch for $instName (expected=$($env:TORI_EXP_SHA.ToLower()) actual=$actualSha)"
+          }
+
+          "TORI_QA_ROOT=$qaRoot"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TORI_OUT_DIR=$outDir"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TORI_INST_PATH=$instPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TORI_SIG_PATH=$sigPath"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          if ($env:TORI_QA_PROFILE -eq "server-upgrade-smoke") {
+            if ($env:TORI_PREV_VER -notmatch '^\d+\.\d+\.\d+$') { throw "INVALID_INPUT: previous_version must be X.Y.Z for upgrade smoke" }
+            if ($env:TORI_PREV_SHA -notmatch '^[a-fA-F0-9]{64}$') { throw "INVALID_INPUT: previous_expected_sha256 must be 64 hex chars" }
+            $prevName = "TORI.Download.Manager_$($env:TORI_PREV_VER)_x64-setup.exe"
+            $prevPath = Join-Path $dlDir $prevName
+            Invoke-WebRequest -Uri "https://github.com/$($env:TORI_REPO)/releases/download/v$($env:TORI_PREV_VER)/$prevName" -OutFile $prevPath -UseBasicParsing -TimeoutSec 180
+            $prevActual = (Get-FileHash $prevPath -Algorithm SHA256).Hash.ToLower()
+            if ($prevActual -ne $env:TORI_PREV_SHA.ToLower()) {
+              throw "SUPPLY_CHAIN_ABORT: SHA-256 mismatch for previous installer $prevName"
+            }
+            "TORI_PREV_INST_PATH=$prevPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
+      - name: Verify PE Authenticode & Tauri Ed25519 signature BEFORE execution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $verifyArgs = @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\verify_pe_authenticode.ps1",
+            "-TargetPath", $env:TORI_INST_PATH,
+            "-ExpectedSha256", $env:TORI_EXP_SHA,
+            "-TauriSigPath", $env:TORI_SIG_PATH,
+            "-TestTamperRejection",
+            "-JsonOutPath", (Join-Path $env:TORI_OUT_DIR "signature_verification.json")
+          )
+          if ($env:TORI_REQ_AUTH -eq "true") { $verifyArgs += "-RequireSigned" }
+          & powershell @verifyArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Optional read-only public latest.json updater metadata check
+        if: env.TORI_RUN_UPDATER == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ljPath = Join-Path $env:TORI_OUT_DIR "public_latest.json"
+          Invoke-WebRequest -Uri "https://github.com/$($env:TORI_REPO)/releases/latest/download/latest.json" -OutFile $ljPath -UseBasicParsing -TimeoutSec 30
+          $bytes = [System.IO.File]::ReadAllBytes($ljPath)
+          if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            throw "UPDATER_METADATA_ERROR: UTF-8 BOM detected in public latest.json"
+          }
+          $lj = ([System.Text.Encoding]::UTF8.GetString($bytes)) | ConvertFrom-Json
+          $sigRaw = (Get-Content -Raw $env:TORI_SIG_PATH).Trim()
+          if ($lj.version -ne $env:TORI_REL_VER) {
+            throw "UPDATER_METADATA_ERROR: public latest.json version ($($lj.version)) != expected ($($env:TORI_REL_VER))"
+          }
+          if ($lj.platforms.'windows-x86_64'.signature.Trim() -ne $sigRaw) {
+            throw "UPDATER_METADATA_ERROR: latest.json signature does not match verified release .sig"
+          }
+          Write-Host "[PASS] Public latest.json verified (version=$($lj.version), UTF-8 no-BOM, exact .sig parity)"
+
+      - name: Execute Clean Windows Guest QA Harness (WINDOWS_SERVER_CI_RUNNER)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $guestArgs = @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\clean_windows_qa_guest.ps1",
+            "-InstallerPath", $env:TORI_INST_PATH,
+            "-ExpectedInstallerSha256", $env:TORI_EXP_SHA,
+            "-TauriSigPath", $env:TORI_SIG_PATH,
+            "-ExpectedVersion", $env:TORI_REL_VER,
+            "-TestRoot", $env:TORI_QA_ROOT,
+            "-OutputDir", $env:TORI_OUT_DIR,
+            "-RequiredEnvironmentClass", "WINDOWS_SERVER_CI_RUNNER",
+            "-RunnerOrVmId", ("github-hosted-" + $env:TORI_RUNNER_LABEL),
+            "-AllowCleanMachineMutation"
+          )
+          if ($env:TORI_PREV_INST_PATH -and (Test-Path $env:TORI_PREV_INST_PATH)) {
+            $guestArgs += @("-PreviousInstallerPath", $env:TORI_PREV_INST_PATH)
+          }
+          & powershell @guestArgs 2>&1 | Tee-Object -FilePath (Join-Path $env:TORI_OUT_DIR "guest_qa_console.log")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Publish Step Summary (Windows Server CI Smoke Only)
+        if: always()
+        shell: pwsh
+        run: |
+          $sumMd = Join-Path $env:TORI_OUT_DIR "qa-summary.md"
+          if (Test-Path $sumMd) {
+            Get-Content -Raw $sumMd | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          } else {
+            "### Windows Server CI Smoke ($($env:TORI_RUNNER_LABEL)): qa-summary.md not generated (check failure logs)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
+
+      - name: Upload structured QA report & evidence artifacts (SHA-pinned)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.prepare.outputs.artifact_name || format('windows-server-ci-smoke-preflight-{0}', matrix.os) }}
+          path: |
+            ${{ runner.temp }}\tori_ci_qa_root\out\qa-results.json
+            ${{ runner.temp }}\tori_ci_qa_root\out\qa-summary.md
+            ${{ runner.temp }}\tori_ci_qa_root\out\signature_verification.json
+            ${{ runner.temp }}\tori_ci_qa_root\out\guest_qa_console.log
+          if-no-files-found: warn
+          retention-days: 30

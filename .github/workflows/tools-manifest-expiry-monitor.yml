@@ -12,7 +12,7 @@ on:
         type: boolean
         default: true
 
-# Least-privilege permissions: strictly read-only repository access; zero signing secrets
+# Least-privilege permissions: strictly read-only repository access; zero signing credentials
 permissions:
   contents: read
 
@@ -23,20 +23,26 @@ concurrency:
 jobs:
   monitor-expiry:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout repository (SHA-pinned, read-only)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Node.js (SHA-pinned)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
 
       - name: Run UTC External Tools Manifest Expiry & Integrity Check
         id: expiry_check
+        env:
+          TORI_EVENT_NAME: ${{ github.event_name }}
+          TORI_STRICT_EXIT: ${{ inputs.strict_exit }}
         run: |
           STRICT_FLAG="--strict-exit"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.strict_exit }}" = "false" ]; then
+          if [ "$TORI_EVENT_NAME" = "workflow_dispatch" ] && [ "$TORI_STRICT_EXIT" = "false" ]; then
             STRICT_FLAG=""
           fi
           node scripts/monitor_tools_manifest_expiry.js \
@@ -44,9 +50,9 @@ jobs:
             --report-file target/tools_renewal_state/ci_expiry_report.json \
             $STRICT_FLAG
 
-      - name: Upload auditable expiry monitoring report
+      - name: Upload auditable expiry monitoring report (SHA-pinned)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tools-manifest-expiry-monitor-report
           path: target/tools_renewal_state/ci_expiry_report.json
