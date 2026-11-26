@@ -28,7 +28,7 @@ const STAGING_DIR = path.join(ROOT, 'release', 'v1.0.9-public-staging');
 const REPO = 'robijoychakma375-hash/tori-download-manager';
 const TARGET_TAG = 'v1.0.9';
 const VERSION = '1.0.9';
-const RELEASE_NAME = 'TORI Download Manager v1.0.9';
+const RELEASE_NAME = 'TORI Download Manager v1.0.9 — Security & Reliability Update';
 const DEFAULT_TAG_TARGET = 'b60770b1c5124a5a9e5b5c2b883e9a0ecd3fc308';
 const UPDATER_KEY_ID = 'CDC23D8CC8DA5397';
 const DEDICATED_TOOLS_KEY_ID = 'C3FD6626A3718E63';
@@ -270,17 +270,17 @@ function stageLocalPublicAssets(targetCommit) {
     fs.copyFileSync(src, path.join(STAGING_DIR, dst));
   }
 
-  // Copy verified release notes & generate installation guide
-  const notesSrc = path.join(ROOT, 'docs', 'release', 'GATE36_1_DESKTOP_V109_RELEASE_NOTES.md');
+  // Copy verified public stable release notes & generate installation guide
+  const notesSrc = path.join(ROOT, 'docs', 'release', 'GATE36_3_DESKTOP_V109_PUBLIC_RELEASE_NOTES.md');
   fs.copyFileSync(notesSrc, path.join(STAGING_DIR, 'RELEASE_NOTES_v1.0.9.md'));
   fs.writeFileSync(path.join(STAGING_DIR, 'INSTALLATION_AND_UPGRADE.md'), buildInstallationGuideMd(), 'utf8');
 
-  // Convert draft_latest.json -> proposed public latest.json (UTF-8 no-BOM, verified parity)
+  // Convert draft_latest.json -> final public latest.json (UTF-8 no-BOM, verified parity, zero draft markers)
   const draftLatest = JSON.parse(fs.readFileSync(path.join(RC_DIR, 'draft_latest.json'), 'utf8'));
   const proposedLatest = {
     version: VERSION,
     notes:
-      'TORI Download Manager Desktop v1.0.9 — Gate 35.1 security hardening, Gate 35.2 Content-Range mismatch safe single-stream fallback & data-corruption prevention, Windows startup popup & native-host spawn-mutex fixes, Stage 1 dual-key External Tools rev 2 compatibility, and Browser Companion v1.0.11 compatibility.',
+      'TORI Download Manager v1.0.9 — Security & Reliability Update: strict HTTP Content-Range/ETag/416 validation with safe single-stream fallback, Windows silent --minimized startup & native-host spawn mutex, Gate 35.1 security hardening, Stage 1 dual-key External Tools rev 2 compatibility, and Browser Companion v1.0.11 compatibility.',
     pub_date: draftLatest.pub_date,
     platforms: {
       'windows-x86_64': {
@@ -298,27 +298,36 @@ function stageLocalPublicAssets(targetCommit) {
   const rcMeta = JSON.parse(fs.readFileSync(path.join(RC_DIR, 'BUILD_METADATA.json'), 'utf8'));
   const stagedBuildMeta = {
     ...rcMeta,
-    gate: 'Gate 36.2',
-    release_type: 'desktop_v109_local_public_staging_unpublished',
-    proposed_release_tag: TARGET_TAG,
-    proposed_tag_target_commit: targetCommit,
-    published: false,
-    authenticode_status: 'NotSigned',
+    gate: 'Gate 36.3',
+    release_type: 'desktop_v109_public_stable_stage1',
+    release_channel: 'PUBLIC STABLE',
+    release_tag: TARGET_TAG,
+    release_tag_target_commit: targetCommit,
+    published: true,
+    authenticode_status: 'AUTHENTICODE_NOT_SIGNED',
     clean_windows_vm_qa_status: 'CLEAN_WINDOWS_QA_NOT_TESTED',
     dedicated_tools_backup_status: 'BACKUP_RECOVERY_NOT_VERIFIED',
+    owner_accepted_risks_stage1_only: {
+      'RISK-36-01': 'ACCEPTED_FOR_STAGE1_DESKTOP_V109_PUBLIC_RELEASE',
+      'RISK-36-02': 'ACCEPTED_FOR_STAGE1_DESKTOP_V109_PUBLIC_RELEASE',
+      'RISK-36-03': 'ACCEPTED_FOR_STAGE1_DESKTOP_V109_PUBLIC_RELEASE',
+    },
   };
+  delete stagedBuildMeta.artifacts?.draft_latest_json;
   fs.writeFileSync(path.join(STAGING_DIR, 'BUILD_METADATA.json'), JSON.stringify(stagedBuildMeta, null, 2) + '\n', 'utf8');
 
   const releaseManifest = {
     schema_version: 1,
-    gate: 'Gate 36.2',
+    gate: 'Gate 36.3',
     component: 'desktop',
     version: VERSION,
+    release_channel: 'PUBLIC STABLE',
+    release_stage: 'STAGE 1 — LEGACY PRODUCTION SIGNER + DUAL-KEY TRUST COMPATIBILITY',
     tag_name: TARGET_TAG,
     target_commit: targetCommit,
-    status: 'LOCAL_STAGED_UNPUBLISHED',
-    published: false,
-    make_latest_on_authorized_publish: 'true',
+    status: 'OWNER_AUTHORIZED_PUBLIC_STABLE',
+    published: true,
+    make_latest: 'true',
     desktop_updater_key_id: UPDATER_KEY_ID,
     dedicated_tools_key_id: DEDICATED_TOOLS_KEY_ID,
     dedicated_tools_key_sha256: DEDICATED_TOOLS_KEY_FP,
@@ -326,10 +335,10 @@ function stageLocalPublicAssets(targetCommit) {
     dedicated_only_cutover: false,
     compatible_browser_companion: 'v1.0.11',
     compatible_tools_manifest_revision: 2,
-    open_risks_requiring_owner_disposition: {
-      'RISK-36-01': 'BACKUP_RECOVERY_NOT_VERIFIED (dedicated tools key offline backup/recovery unverified)',
-      'RISK-36-02': 'CLEAN_WINDOWS_QA_NOT_TESTED (clean Windows 10/11 OS QA not executed)',
-      'RISK-36-03': 'NotSigned (Windows Authenticode certificate not configured)',
+    owner_accepted_risks_stage1_only: {
+      'RISK-36-01': 'BACKUP_RECOVERY_NOT_VERIFIED — ACCEPTED_FOR_STAGE1_DESKTOP_V109_PUBLIC_RELEASE (Stage 2 blocked)',
+      'RISK-36-02': 'CLEAN_WINDOWS_QA_NOT_TESTED — ACCEPTED_FOR_STAGE1_DESKTOP_V109_PUBLIC_RELEASE',
+      'RISK-36-03': 'AUTHENTICODE_NOT_SIGNED — ACCEPTED_FOR_STAGE1_DESKTOP_V109_PUBLIC_RELEASE',
     },
   };
   fs.writeFileSync(path.join(STAGING_DIR, 'RELEASE_MANIFEST.json'), JSON.stringify(releaseManifest, null, 2) + '\n', 'utf8');
@@ -477,47 +486,101 @@ async function main() {
     return;
   }
 
-  // AUTHORIZED LIVE EXECUTION (STRICTLY GATED ON EXPLICIT OWNER APPROVAL IN A FUTURE RELEASE GATE)
+  // AUTHORIZED LIVE EXECUTION (STRICTLY GATED ON EXPLICIT OWNER APPROVAL)
   const token = await getGitHubToken();
   const remoteTagRef = await requestJson('GET', `/repos/${REPO}/git/ref/tags/${TARGET_TAG}`, token);
   if (remoteTagRef.status !== 200) {
     throw new Error(`Remote tag ${TARGET_TAG} does not exist yet (HTTP ${remoteTagRef.status}). Push signed/annotated tag first!`);
   }
+  let remoteTagCommit = remoteTagRef.data?.object?.sha;
+  if (remoteTagRef.data?.object?.type === 'tag') {
+    const tagObj = await requestJson('GET', `/repos/${REPO}/git/tags/${remoteTagCommit}`, token);
+    if (tagObj.status === 200 && tagObj.data?.object?.sha) remoteTagCommit = tagObj.data.object.sha;
+  }
+  if (remoteTagCommit !== targetCommit) {
+    throw new Error(`Remote tag ${TARGET_TAG} resolves to ${remoteTagCommit}, expected approved source commit ${targetCommit}!`);
+  }
+
   const bodyContent = fs.readFileSync(path.join(STAGING_DIR, 'RELEASE_NOTES_v1.0.9.md'), 'utf8');
   const listRes = await requestJson('GET', `/repos/${REPO}/releases?per_page=30`, token);
   const existing = Array.isArray(listRes.data) ? listRes.data.find((r) => r.tag_name === TARGET_TAG) : null;
+  const evidenceDir = path.join(ROOT, 'target', 'gate36_3_evidence');
+  fs.mkdirSync(evidenceDir, { recursive: true });
 
   if (stageDraftMode) {
     if (existing && !existing.draft) throw new Error(`Release ${TARGET_TAG} is already published!`);
-    let releaseId, uploadUrl;
+    let releaseId, uploadUrl, htmlUrl;
     if (existing) {
       releaseId = existing.id;
       uploadUrl = existing.upload_url;
+      htmlUrl = existing.html_url;
     } else {
       const cr = await requestJson('POST', `/repos/${REPO}/releases`, token, {
         tag_name: TARGET_TAG, target_commitish: targetCommit, name: RELEASE_NAME, body: bodyContent, draft: true, prerelease: false, make_latest: 'false',
       });
-      if (cr.status !== 201) throw new Error(`Failed creating draft release: HTTP ${cr.status}`);
+      if (cr.status !== 201) throw new Error(`Failed creating draft release: HTTP ${cr.status} ${JSON.stringify(cr.data)}`);
       releaseId = cr.data.id;
       uploadUrl = cr.data.upload_url;
+      htmlUrl = cr.data.html_url;
     }
     const curAssets = (await requestJson('GET', `/repos/${REPO}/releases/${releaseId}/assets?per_page=50`, token)).data || [];
+    const uploadedReport = [];
     for (const asset of verifiedAssets) {
       const prev = curAssets.find((a) => a.name === asset.name);
       if (prev) await requestJson('DELETE', `/repos/${REPO}/releases/assets/${prev.id}`, token);
       const up = uploadAssetViaCurl(uploadUrl, path.join(STAGING_DIR, asset.name), asset.name, asset.contentType, token);
       if (up.status !== 201) throw new Error(`Upload failed for ${asset.name}: HTTP ${up.status}`);
       const dl = downloadAssetHashViaCurl(up.data.url, token);
-      if (dl.bytes !== asset.bytes || dl.sha256 !== asset.sha256) throw new Error(`Roundtrip mismatch for ${asset.name}`);
+      if (dl.bytes !== asset.bytes || dl.sha256 !== asset.sha256) {
+        throw new Error(`Roundtrip mismatch for ${asset.name}: remote=(${dl.bytes}, ${dl.sha256}) local=(${asset.bytes}, ${asset.sha256})`);
+      }
+      console.log(`[ASSET VERIFIED] id=${up.data.id} name=${asset.name} bytes=${dl.bytes} sha256=${dl.sha256}`);
+      uploadedReport.push({
+        asset_id: up.data.id,
+        name: asset.name,
+        release_id: releaseId,
+        bytes: dl.bytes,
+        sha256: dl.sha256,
+        browser_download_url: up.data.browser_download_url,
+        roundtrip_verified: true,
+      });
     }
-    console.log(`[DRAFT STAGED & VERIFIED] ID=${releaseId} assets=${verifiedAssets.length}`);
+    const draftReport = {
+      generated_at_utc: new Date().toISOString(),
+      repository: REPO,
+      release_id: releaseId,
+      tag_name: TARGET_TAG,
+      target_commit: targetCommit,
+      name: RELEASE_NAME,
+      draft: true,
+      html_url: htmlUrl,
+      asset_count: uploadedReport.length,
+      assets: uploadedReport,
+    };
+    fs.writeFileSync(path.join(evidenceDir, 'github_draft_staging_report.json'), JSON.stringify(draftReport, null, 2) + '\n', 'utf8');
+    console.log(`[DRAFT STAGED & VERIFIED] ID=${releaseId} assets=${uploadedReport.length} tagCommit=${remoteTagCommit}`);
   } else if (publishDraftMode) {
     if (!existing || !existing.draft) throw new Error(`No staged draft found for ${TARGET_TAG}`);
+    const curAssets = (await requestJson('GET', `/repos/${REPO}/releases/${existing.id}/assets?per_page=50`, token)).data || [];
+    if (curAssets.length !== 16) throw new Error(`Draft release has ${curAssets.length} assets, expected 16!`);
     const pub = await requestJson('PATCH', `/repos/${REPO}/releases/${existing.id}`, token, {
       name: RELEASE_NAME, body: bodyContent, draft: false, prerelease: false, make_latest: 'true',
     });
-    if (pub.status !== 200) throw new Error(`Publish failed: HTTP ${pub.status}`);
-    console.log(`[PUBLISHED OK] ID=${pub.data.id} URL=${pub.data.html_url}`);
+    if (pub.status !== 200) throw new Error(`Publish failed: HTTP ${pub.status} ${JSON.stringify(pub.data)}`);
+    const pubReport = {
+      generated_at_utc: new Date().toISOString(),
+      id: pub.data.id,
+      tag_name: pub.data.tag_name,
+      target_commitish: pub.data.target_commitish,
+      name: pub.data.name,
+      draft: pub.data.draft,
+      prerelease: pub.data.prerelease,
+      published_at: pub.data.published_at,
+      html_url: pub.data.html_url,
+      asset_count: (pub.data.assets || []).length,
+    };
+    fs.writeFileSync(path.join(evidenceDir, 'github_publish_report.json'), JSON.stringify(pubReport, null, 2) + '\n', 'utf8');
+    console.log(`[PUBLISHED OK] ID=${pub.data.id} PUBLISHED_AT=${pub.data.published_at} URL=${pub.data.html_url}`);
   }
 }
 
