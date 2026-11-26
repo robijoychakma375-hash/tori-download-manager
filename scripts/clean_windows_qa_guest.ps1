@@ -324,7 +324,9 @@ function callPair(host) {
     c.stdin.write(Buffer.concat([hdr, body])); c.stdin.end();
   });
 }
-Promise.all([0,1,2,3].map(() => callPair(process.argv[1]))).then((r) => {
+const hostBin = process.argv[process.argv.length - 1];
+if (!hostBin || hostBin === '-') { console.error('INVALID_HOST_ARG'); process.exit(2); }
+Promise.all([0,1,2,3].map(() => callPair(hostBin))).then((r) => {
   const ok = r.filter(x => x.status === 'ok' && x.hasToken).length;
   console.log(JSON.stringify({ concurrentOk: ok, total: r.length, port: r[0]?.port }));
   process.exit(ok === 4 ? 0 : 1);
@@ -344,11 +346,26 @@ Promise.all([0,1,2,3].map(() => callPair(process.argv[1]))).then((r) => {
     $dbExists = Test-Path $dbPath
     $dbIntegrity = "skipped"; $toolsTbl = $false; $appSet = $false
     if ($dbExists -and (Get-Command python -ErrorAction SilentlyContinue)) {
-        $pyOut = & python -c "import json, sqlite3, sys; c=sqlite3.connect(sys.argv[1]); ic=[r[0] for r in c.execute('PRAGMA integrity_check')]; tbls={r[0] for r in c.execute('SELECT name FROM sqlite_master WHERE type=\"table\"')}; st=dict(c.execute('SELECT key,value FROM engine_settings')); print(json.dumps({'ic':ic,'hasApp':('app_settings' in st),'hasTools':('external_tools_registry' in tbls)}))" $dbPath
-        $parsedDb = $pyOut | ConvertFrom-Json
-        $dbIntegrity = ($parsedDb.ic -join ",")
-        $toolsTbl = [bool]$parsedDb.hasTools
-        $appSet = [bool]$parsedDb.hasApp
+        $pyDbScript = @'
+import json, sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+ic = [r[0] for r in c.execute("PRAGMA integrity_check")]
+tbls = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+st = dict(c.execute("SELECT key, value FROM engine_settings")) if "engine_settings" in tbls else {}
+print(json.dumps({"ic": ic, "hasApp": ("app_settings" in st), "hasTools": ("external_tools_registry" in tbls)}))
+'@
+        $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        $pyOut = ($pyDbScript | & python - $dbPath 2>&1 | Out-String).Trim()
+        $pyCode = $LASTEXITCODE
+        $ErrorActionPreference = $prevEap
+        if ($pyCode -eq 0 -and $pyOut) {
+            $parsedDb = $pyOut | ConvertFrom-Json
+            $dbIntegrity = ($parsedDb.ic -join ",")
+            $toolsTbl = [bool]$parsedDb.hasTools
+            $appSet = [bool]$parsedDb.hasApp
+        } else {
+            $dbIntegrity = "python_error(exit=$pyCode)"
+        }
     }
     Record-Case -Suite "persistence" -Id "CWQA-05" -Name "SQLite initialized with PRAGMA integrity_check=ok" `
         -Status $(if ($dbExists -and ($dbIntegrity -eq "ok" -or $dbIntegrity -eq "skipped")) { "PASS" } else { "FAIL" }) -Detail "integrity=$dbIntegrity, toolsTable=$toolsTbl, appSettings=$appSet"

@@ -226,6 +226,39 @@ Write-Output "PS_AST_ZERO_ERRORS files=${psFiles.length}"
   const relOk = rRel.status === 0 && fs.existsSync(relJson) && validateQaResultsSchema(JSON.parse(fs.readFileSync(relJson, 'utf8')));
   record('release_regression', 'REL-DRY-01', 'Parameterized verify_release_upgrade_and_engine.js --dry-run validates v1.0.8/v1.0.9, Ed25519, fixtures & Companion contract',
     relOk, Date.now() - t5, `exit=${rRel.status}`);
+
+  // HARN-01: Regression check for CWQA-19 Node stdin argument indexing (process.argv[last], never "-")
+  const tH1 = Date.now();
+  const guestSrc = fs.readFileSync(GUEST_PS1, 'utf8');
+  const h1NoOldBug = !guestSrc.includes('callPair(process.argv[1])') && guestSrc.includes('const hostBin = process.argv[process.argv.length - 1]');
+  const h1Run = spawnSync('node', ['-', 'C:\\TORI\\bin\\tdm-native-host.exe'], {
+    input: "const hostBin = process.argv[process.argv.length - 1]; console.log(hostBin); process.exit(hostBin && hostBin !== '-' ? 0 : 1);",
+    encoding: 'utf8',
+  });
+  record('local_static', 'HARN-01', 'CWQA-19 regression: Node stdin harness resolves host binary arg instead of "-"',
+    h1NoOldBug && h1Run.status === 0 && (h1Run.stdout || '').trim().endsWith('tdm-native-host.exe'),
+    Date.now() - tH1, `noOldBug=${h1NoOldBug}, arg=${(h1Run.stdout || '').trim()}`);
+
+  // HARN-02: Regression check for CWQA-05 Python SQLite stdin inspection via PowerShell here-string
+  const tH2 = Date.now();
+  const tmpDb = path.join(QA_ROOT, 'harn02_test.sqlite');
+  fs.mkdirSync(QA_ROOT, { recursive: true });
+  spawnSync('python', ['-c', 'import sqlite3, sys; c=sqlite3.connect(sys.argv[1]); c.execute("CREATE TABLE engine_settings (key TEXT, value TEXT)"); c.execute("INSERT INTO engine_settings VALUES (?, ?)", ("app_settings", "{}")); c.execute("CREATE TABLE external_tools_registry (id TEXT)"); c.commit(); c.close()', tmpDb], { encoding: 'utf8' });
+  const h2NoOldBug = !guestSrc.includes('type=\\"table\\"');
+  const h2PyScript = [
+    "import json, sqlite3, sys",
+    "c = sqlite3.connect(sys.argv[1])",
+    "ic = [r[0] for r in c.execute('PRAGMA integrity_check')]",
+    "tbls = {r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table'\")}",
+    "st = dict(c.execute('SELECT key, value FROM engine_settings')) if 'engine_settings' in tbls else {}",
+    "print(json.dumps({'ic': ic, 'hasApp': ('app_settings' in st), 'hasTools': ('external_tools_registry' in tbls)}))",
+  ].join('\n');
+  const h2Run = spawnSync('python', ['-', tmpDb], { input: h2PyScript, encoding: 'utf8' });
+  let h2Json = null;
+  try { h2Json = JSON.parse((h2Run.stdout || '').trim()); } catch {}
+  const h2Ok = Boolean(h2NoOldBug && h2Run.status === 0 && h2Json && h2Json.ic?.[0] === 'ok' && h2Json.hasApp === true && h2Json.hasTools === true);
+  record('local_static', 'HARN-02', 'CWQA-05 regression: Python SQLite stdin integrity check parses cleanly without PowerShell quote breakage',
+    h2Ok, Date.now() - tH2, JSON.stringify(h2Json || (h2Run.stderr || '').slice(0, 120)));
 }
 
 async function runPhase14FailureModes() {
@@ -276,7 +309,7 @@ async function runPhase14FailureModes() {
 
   // FM-06: Invalid test-root path (protected root + traversal)
   const r6a = runPsFile(GUEST_PS1, ['-InstallerPath', V109_INST, '-TestRoot', 'C:\\Windows', '-DryRunValidation']);
-  const r6b = runPsFile(GUEST_PS1, ['-InstallerPath', V109_INST, '-TestRoot', path.join(QA_ROOT, '..', '..'), '-DryRunValidation']);
+  const r6b = runPsFile(GUEST_PS1, ['-InstallerPath', V109_INST, '-TestRoot', QA_ROOT + '\\..\\..\\escape', '-DryRunValidation']);
   let jsRootBlocked = false;
   try { assertSafeTestRoot('C:\\Windows'); } catch (e) { jsRootBlocked = /INVALID_TEST_ROOT/.test(e.message); }
   record('negative_tests', 'FM-06', 'Invalid test-root path (C:\\Windows & .. traversal) rejected fail-closed in PowerShell & Node',
