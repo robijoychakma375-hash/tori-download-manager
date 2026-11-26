@@ -34,8 +34,8 @@ const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const V108_DESKTOP_EXE = path.join(ROOT, 'release', 'v1.0.8-final-rc', 'tori-download-manager.exe');
-const V108_HOST_EXE = path.join(ROOT, 'release', 'v1.0.8-final-rc', 'tdm-native-host.exe');
+const V108_DESKTOP_EXE = process.env.TORI_DESKTOP_EXE || path.join(ROOT, 'release', 'v1.0.8-final-rc', 'tori-download-manager.exe');
+const V108_HOST_EXE = process.env.TORI_HOST_EXE || path.join(ROOT, 'release', 'v1.0.8-final-rc', 'tdm-native-host.exe');
 const FFMPEG_EXE = path.join(ROOT, 'resources', 'bin', 'ffmpeg.exe');
 
 const SIGNED_V1010_XPI = path.join(ROOT, 'release', 'v1.0.10-extension-rc', 'tori-companion-v1.0.10-firefox-signed.xpi');
@@ -100,7 +100,7 @@ function killProcTree(pid) {
   if (!pid) return;
   try {
     execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 });
-  } catch {}
+  } catch { }
 }
 
 function queryRegSz(key) {
@@ -168,7 +168,7 @@ function httpJson({ port, reqPath, method = 'GET', headers = {}, timeoutMs = 400
       res.on('data', (c) => (raw += c));
       res.on('end', () => {
         let data = null;
-        try { data = JSON.parse(raw); } catch {}
+        try { data = JSON.parse(raw); } catch { }
         resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, data, raw });
       });
     });
@@ -393,13 +393,13 @@ class MarionetteClient {
     if (!val?.ok) throw new Error(val?.e || 'Marionette eval failed');
     return val.v;
   }
-  close() { try { this.socket?.destroy(); } catch {} }
+  close() { try { this.socket?.destroy(); } catch { } }
 }
 
 async function waitForCond(fn, timeoutMs = 12000, stepMs = 200) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try { const v = await fn(); if (v) return v; } catch {}
+    try { const v = await fn(); if (v) return v; } catch { }
     await sleep(stepMs);
   }
   return null;
@@ -736,11 +736,11 @@ async function main() {
       `active=${stR2.isActive}, jobsDelta=${jobsAfterR2 - jobsBeforeR2}, nmDelta=${nmAfterR2 - nmBeforeR2}`
     );
   } finally {
-    try { ff?.mar?.close(); } catch {}
+    try { ff?.mar?.close(); } catch { }
     for (const p of trackedProcs) if (p?.pid) killProcTree(p.pid);
     trackedProcs.clear();
-    try { serverA?.close(); } catch {}
-    try { serverB?.close(); } catch {}
+    try { serverA?.close(); } catch { }
+    try { serverB?.close(); } catch { }
     setRegSz(NM_REG_KEY_FF, regBackupVal);
     const restoredVal = queryRegSz(NM_REG_KEY_FF);
     record('REG_RESTORE', 'Host HKCU Mozilla NativeMessagingHosts registry restored bit-for-bit', restoredVal === regBackupVal, `restored=${restoredVal === regBackupVal}`);

@@ -666,16 +666,21 @@ fn test_v108_release_candidate_signature_draft_updater_stage1_keyring_and_rev2_c
     let rev2_tools_sig_path = rev2_dir.join("tools-manifest.json.tools.sig");
     let rev2_race_policy_path = rev2_dir.join("RACE_PRECHECK_POLICY.json");
 
-    // 1. Verify v1.0.8 workspace config, production defaults & Stage 1 TrustedToolsKeyring safety
+    // 1. Verify workspace config (>= 1.0.8), production defaults & Stage 1 TrustedToolsKeyring safety
     let conf_path = root.join("src-tauri").join("tauri.conf.json");
     let conf: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&conf_path).unwrap()).unwrap();
-    assert_eq!(conf["version"].as_str(), Some("1.0.8"));
+    let ws_ver = env!("CARGO_PKG_VERSION");
+    assert_eq!(conf["version"].as_str(), Some(ws_ver));
+    assert!(matches!(
+        tdm_core::tools::compare_semver_versions(ws_ver, "1.0.8"),
+        Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
+    ));
     let pubkey_base64 = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
     assert_eq!(pubkey_base64, tdm_core::tools::TORI_ED25519_PUBKEY_B64);
 
     let tools_cfg = tdm_core::tools::ToolsManagerConfig::default();
-    assert_eq!(tools_cfg.current_tori_version, "1.0.8");
+    assert_eq!(tools_cfg.current_tori_version, ws_ver);
     assert_eq!(
         tools_cfg.signed_manifest_url.as_deref(),
         Some("https://toridownload.xyz/assets/tools/tools-manifest.json")
@@ -838,7 +843,12 @@ fn test_v108_final_rc_production_dedicated_key_and_signature_verification() {
     let conf_path = root.join("src-tauri").join("tauri.conf.json");
     let conf: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&conf_path).unwrap()).unwrap();
-    assert_eq!(conf["version"].as_str(), Some("1.0.8"));
+    let ws_ver = env!("CARGO_PKG_VERSION");
+    assert_eq!(conf["version"].as_str(), Some(ws_ver));
+    assert!(matches!(
+        tdm_core::tools::compare_semver_versions(ws_ver, "1.0.8"),
+        Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
+    ));
     let updater_pub = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
     assert_eq!(updater_pub, tdm_core::tools::TORI_ED25519_PUBKEY_B64);
     assert_ne!(updater_pub, ded_pub);
@@ -923,5 +933,113 @@ fn test_v108_final_rc_production_dedicated_key_and_signature_verification() {
             Some("CDC23D8CC8DA5397")
         );
         assert_eq!(meta["published"].as_bool(), Some(false));
+    }
+}
+
+#[test]
+fn test_gate36_1_v109_release_candidate_cryptographic_and_stage1_dual_key_integrity() {
+    let root = get_project_root();
+
+    // 1. Verify Desktop workspace & Tauri config metadata consistently match 1.0.9
+    let conf_path = root.join("src-tauri").join("tauri.conf.json");
+    let conf: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&conf_path).unwrap()).unwrap();
+    assert_eq!(conf["version"].as_str(), Some("1.0.9"));
+    assert_eq!(env!("CARGO_PKG_VERSION"), "1.0.9");
+
+    let ui_pkg: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("ui").join("package.json")).unwrap())
+            .unwrap();
+    assert_eq!(ui_pkg["version"].as_str(), Some("1.0.9"));
+
+    let updater_pub = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
+    assert_eq!(updater_pub, tdm_core::tools::TORI_ED25519_PUBKEY_B64);
+
+    // 2. Verify Stage 1 dual-key External Tools keyring (legacy CDC23D8CC8DA5397 + dedicated C3FD6626A3718E63)
+    let tools_cfg = tdm_core::tools::ToolsManagerConfig::default();
+    assert_eq!(tools_cfg.current_tori_version, "1.0.9");
+    assert_eq!(
+        tools_cfg.signed_manifest_url.as_deref(),
+        Some("https://toridownload.xyz/assets/tools/tools-manifest.json")
+    );
+    let kr = tools_cfg.effective_tools_keyring();
+    assert!(
+        kr.allow_legacy_shared_key,
+        "Gate 36.1 must keep Stage 1 dual-key transition active (dedicated-only cutover prohibited)"
+    );
+    assert!(kr.has_dedicated_active_key());
+    assert_eq!(kr.keys.len(), 2);
+    kr.validate_safety(chrono::Utc::now(), tools_cfg.max_clock_skew_secs)
+        .expect("v1.0.9 Stage 1 keyring must pass safety validation");
+
+    // 3. Verify frozen release/v1.0.9-rc/ once built & signed
+    let rc_dir = root.join("release").join("v1.0.9-rc");
+    if rc_dir.exists() {
+        let installer_path = rc_dir.join("TORI.Download.Manager_1.0.9_x64-setup.exe");
+        let sig_path = rc_dir.join("TORI.Download.Manager_1.0.9_x64-setup.exe.sig");
+        let draft_latest_path = rc_dir.join("draft_latest.json");
+        let build_meta_path = rc_dir.join("BUILD_METADATA.json");
+
+        assert!(installer_path.exists(), "v1.0.9-rc installer missing");
+        assert!(sig_path.exists(), "v1.0.9-rc .sig missing");
+        assert!(draft_latest_path.exists(), "v1.0.9-rc draft_latest.json missing");
+        assert!(build_meta_path.exists(), "v1.0.9-rc BUILD_METADATA.json missing");
+
+        for entry in fs::read_dir(&rc_dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            assert!(
+                !name.ends_with(".key") && !name.ends_with(".pwd"),
+                "Forbidden secret file found in release/v1.0.9-rc: {}",
+                name
+            );
+        }
+
+        let installer_bytes = fs::read(&installer_path).expect("read v1.0.9 installer");
+        assert!(installer_bytes.starts_with(b"MZ"), "v1.0.9 installer must be Windows PE");
+
+        let sig_str = fs::read_to_string(&sig_path).expect("read v1.0.9 .sig");
+        let sig_text = String::from_utf8(decode_base64_str(&sig_str)).expect("utf8 sig");
+        let signature = Signature::decode(&sig_text).expect("minisign signature decode");
+        let decoded_upd_pub = String::from_utf8(decode_base64_str(updater_pub)).unwrap();
+        let updater_pk = PublicKey::decode(&decoded_upd_pub).expect("updater pubkey decode");
+
+        updater_pk
+            .verify(&installer_bytes, &signature, true)
+            .expect("v1.0.9-rc installer Ed25519 signature must verify under CDC23D8CC8DA5397");
+
+        let mut tampered = installer_bytes.clone();
+        let mid = tampered.len() / 2;
+        tampered[mid] ^= 0x55;
+        assert!(
+            updater_pk.verify(&tampered, &signature, true).is_err(),
+            "Tampered v1.0.9-rc installer must be rejected"
+        );
+
+        let draft: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&draft_latest_path).unwrap()).unwrap();
+        assert_eq!(draft["version"].as_str(), Some("1.0.9"));
+        assert_eq!(
+            tdm_core::tools::compare_semver_versions("1.0.8", "1.0.9"),
+            Some(std::cmp::Ordering::Less)
+        );
+        for key in ["windows-x86_64", "windows-x86_64-nsis"] {
+            assert_eq!(
+                draft["platforms"][key]["signature"].as_str().map(str::trim),
+                Some(sig_str.trim())
+            );
+            assert!(
+                draft["platforms"][key]["url"]
+                    .as_str()
+                    .unwrap()
+                    .contains("/releases/download/v1.0.9/TORI.Download.Manager_1.0.9_x64-setup.exe")
+            );
+        }
+
+        let meta: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&build_meta_path).unwrap()).unwrap();
+        assert_eq!(meta["version"].as_str(), Some("1.0.9"));
+        assert_eq!(meta["published"].as_bool(), Some(false));
+        assert_eq!(meta["desktop_updater_signing_key_id"].as_str(), Some("CDC23D8CC8DA5397"));
+        assert_eq!(meta["dedicated_tools_public_key_id"].as_str(), Some("C3FD6626A3718E63"));
     }
 }

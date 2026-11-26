@@ -23,8 +23,8 @@ const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const V108_DESKTOP_EXE = path.join(ROOT, 'release', 'v1.0.8-final-rc', 'tori-download-manager.exe');
-const V108_HOST_EXE = path.join(ROOT, 'release', 'v1.0.8-final-rc', 'tdm-native-host.exe');
+const V108_DESKTOP_EXE = process.env.TORI_DESKTOP_EXE || path.join(ROOT, 'release', 'v1.0.8-final-rc', 'tori-download-manager.exe');
+const V108_HOST_EXE = process.env.TORI_HOST_EXE || path.join(ROOT, 'release', 'v1.0.8-final-rc', 'tdm-native-host.exe');
 const FFMPEG_EXE = path.join(ROOT, 'resources', 'bin', 'ffmpeg.exe');
 
 const RC11_DIR = path.join(ROOT, 'release', 'v1.0.11-extension-rc');
